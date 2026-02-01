@@ -35,24 +35,27 @@ observations[50] = 90
 
 # --- 2. MODEL PARAMETERS ---
 
+# MATRIX OF TRANSITIONS
+
 # Transition Matrix (must have 0 on diagonal for HSMM)
 # We force a switch: If done with REM, go Deep. If done with Deep, go REM.
-# A[i, j] = P(j | i)
+
 trans_mat = np.array([
     [0.0, 1.0], 
     [1.0, 0.0]
 ])
 
-# Duration Distributions (Non-parametric / Discrete)
-# We define max duration D
-D = 50 
-duration_probs = np.zeros((n_states, D + 1))
+
+# DURATION PROBABILITIES MATRIX
 
 # Define simple duration profiles
 # REM: prefers short-ish durations (centered around 20)
 # Deep: prefers long durations (centered around 40)
 # We verify these sum to 1.0 later in a real app, 
 # but for this demo we fill them with a simple Gaussian-like window.
+
+D = 50
+duration_probs = np.zeros((n_states, D + 1))
 
 def gaussian_window(length, mean, std):
     x = np.arange(length)
@@ -61,6 +64,10 @@ def gaussian_window(length, mean, std):
 
 duration_probs[0, :] = gaussian_window(D + 1, mean=20, std=5) # REM duration
 duration_probs[1, :] = gaussian_window(D + 1, mean=40, std=5) # Deep duration
+
+# PROBS OF DURATION, for every state we have a distribution of length D
+# [[1,...,D],          rem state
+#  [1,...,D]]          deep state
 
 # --- 3. HELPER FUNCTIONS ---
 
@@ -118,16 +125,19 @@ def hsmm_viterbi(obs, trans_mat, duration_probs, means, stds):
                 psi_dur[d-1, j] = d
                 psi_state[d-1, j] = -1 # Indicates start of sequence
 
-    # Recursion
+    # Induction
     # t is the END time of the current segment
     for t in range(T):
         for j in range(N): # Current state
             # Try all possible durations d for state j
             # segment would be from (t - d + 1) to t
             for d in range(1, D + 1):
-                if t - d < 0: continue # Cannot look back past 0 here
+                if t - d < 0: 
+                    continue # Cannot look back past 0 here
                 
                 prev_t = t - d # Time when previous state ended
+
+                # perchè usa log sia per prendere obs, trans e dur
                 
                 # Emission score for this segment (O(1) look up)
                 obs_score = log_B_cum[t+1, j] - log_B_cum[t-d+1, j]
@@ -140,8 +150,10 @@ def hsmm_viterbi(obs, trans_mat, duration_probs, means, stds):
                 best_prev_state = -1
                 
                 for i in range(N):
-                    if i == j: continue # HSMMs handle self-loops via duration
-                    if trans_mat[i, j] == 0: continue
+                    if i == j: 
+                        continue # HSMMs handle self-loops via duration
+                    if trans_mat[i, j] == 0: 
+                        continue # Skip impossibile transitions
                     
                     # Score = Previous Best + Transition + Duration + Emissions
                     trans_score = np.log(trans_mat[i, j] + 1e-9)
