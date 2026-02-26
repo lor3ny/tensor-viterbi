@@ -51,18 +51,13 @@ class HSMM:
             exponent = -0.5 * ((self.obs_seq - means[s])**2) / var
             log_probs[:, s] = exponent - np.log(denom)
         return log_probs
+    
 
-
-    def run_viterbi(self):
-
+    def run_tensor_viterbi(self):
         T = len(self.obs_seq)  # time steps
         N = len(self.states) # states count
         D = self.duration_probs.shape[1] - 1   # duration probabilities count
         smoothing = 1e-10
-
-        # Precompute CUMULATIVE emissions for O(1) segment scoring
-        # pad with 0 at the top for easy indexing
-        #log_B_cum = np.vstack([np.zeros(N), np.cumsum(self.emission_probs, axis=0)])
         
         # Delta: max prob ending at t in state j
         delta = np.full((T, N), -np.inf)
@@ -126,7 +121,10 @@ class HSMM:
                     
                     # Emission score for this segment (O(1) look up)
                     # This should be a productory
+                    # |-|{k = t-d}(b(sj, seq_obs(k)
                     obs_score = 0#log_B_cum[t+1, sj] - log_B_cum[t-d+1, sj]
+                    for k in range(t-d):
+                        obs_score += np.log(self.emission_probs[sj][self.obs_seq[k]])
                     
                     # Duration prob, that's easy why we use np.log? Because we are working in log space to avoid underflow and to turn products into sums for easier maximization.
                     dur_score = np.log(self.duration_probs[sj, d] + smoothing)
@@ -154,12 +152,83 @@ class HSMM:
                         psi_state[t, sj] = best_prev_state
                         psi_dur[t, sj] = d
 
+
+    # We use np.log() + smoothing to transform multiplications in additions
+
+    def run_viterbi(self):
+
+        T = len(self.obs_seq)  # time steps
+        N = len(self.states) # states count
+        D = self.duration_probs.shape[1] - 1   # duration probabilities count
+        smoothing = 1e-10
+        
+        # Delta: max prob ending at t in state j
+        delta = np.full((T, N), -np.inf)
+        
+        # Backpointers to reconstruct path
+        # psi_state[t, j] = previous state i that led to j ending at t
+        # psi_dur[t, j] = duration d that state j held ending at t
+        psi_state = np.zeros((T, N), dtype=int)
+        psi_dur = np.zeros((T, N), dtype=int)
+
+
+        #* INITIALIZATION  t==0
+        #* delta(0,sj) = pi(sj) * b(sj, obs_seq[1])
+
+        #! The gemini proposed version was including also duration, but why? 
+        for state in range(N):
+            obs_prob = self.emission_probs[state][self.obs_seq[0]]
+            start_prob = self.start_probs[state]
             
-            # for t in range(1, T):
+            score = start_prob + obs_prob
+            if score > delta[0, state]:
+                delta[0, state] = score
+                psi_dur[0, state] = 1
+                psi_state[0, state] = -1 # Indicates start of sequence
 
-            #     Sjid = np.zeros((N,N,D), dtype=float)
 
-                
+        #* INDUCTION  1<=t<=T
+        #* delta(t, sj) = max{d} ( max{si} ( delta(t-d,si) * a(si,sj) ) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k)))  
+
+        for t in range(1, T):
+
+            for sj in range(N):
+                for d in range(1, D + 1):
+                    if t - d < 0: 
+                        continue # Cannot look back past 0 here
+                    
+                    #! This productory can be optimized and precomputed
+                    # |-|{k = t-d}(b(sj, seq_obs(k)
+                    obs_score = 0
+                    for k in range(t-d):
+                        obs_score += np.log(self.emission_probs[sj][self.obs_seq[k]])
+                    
+                    # P(Sj|d)
+                    dur_score = np.log(self.duration_probs[sj, d] + smoothing)
+                    
+                    best_prev_score = -np.inf
+                    best_prev_state = -1
+                    for si in range(N):
+
+                        # HSMMs handle self-loops via duration, Skip impossibile transitions
+                        if si == sj or self.trans_mat[si, sj] == 0: 
+                            continue 
+                        
+                        # a(si,sj)
+                        trans_score = np.log(self.trans_mat[si, sj] + smoothing)
+
+                        # Score = delta(t-d,si) + Transition + Duration + Emissions
+                        total_score = delta[t - d, si] + trans_score + dur_score + obs_score
+                        
+                        if total_score > best_prev_score:
+                            best_prev_score = total_score
+                            best_prev_state = si
+                    
+                    # Update Delta if this duration d is better than others for ending at t
+                    if best_prev_score > delta[t, sj]:
+                        delta[t, sj] = best_prev_score
+                        psi_state[t, sj] = best_prev_state
+                        psi_dur[t, sj] = d             
 
 
 
