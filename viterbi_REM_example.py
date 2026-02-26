@@ -58,11 +58,11 @@ class HSMM:
         T = len(self.obs_seq)  # time steps
         N = len(self.states) # states count
         D = self.duration_probs.shape[1] - 1   # duration probabilities count
-        
+        smoothing = 1e-10
 
         # Precompute CUMULATIVE emissions for O(1) segment scoring
         # pad with 0 at the top for easy indexing
-        log_B_cum = np.vstack([np.zeros(N), np.cumsum(self.emission_probs, axis=0)])
+        #log_B_cum = np.vstack([np.zeros(N), np.cumsum(self.emission_probs, axis=0)])
         
         # Delta: max prob ending at t in state j
         delta = np.full((T, N), -np.inf)
@@ -74,13 +74,15 @@ class HSMM:
         psi_dur = np.zeros((T, N), dtype=int)
         
 
+        #? INITIAL - PROPOSED VERSION
+
         #! Why we compute D, I don't think that is needed
         # Initialization (t=0 to D-1 handling is tricky, simplified here)
         # We assume the first segment starts at t=0.
         # for d in range(1, min(D, T) + 1):
 
         #     for state in range(N):
-        #         dur_prob = np.log(self.duration_probs[state, d] + 1e-9)
+        #         dur_prob = np.log(self.duration_probs[state, d] + smoothing)
         #         # Sum of emissions from t=0 to t=d-1
         #         obs_prob = log_B_cum[d, state] - log_B_cum[0, state]
 
@@ -92,6 +94,8 @@ class HSMM:
         #             psi_dur[d-1, state] = d
         #             psi_state[d-1, state] = -1 # Indicates start of sequence
 
+
+        #? INITIAL - MY VERSION
 
         #! We should just compute the inital state without duration
         for state in range(N):
@@ -108,6 +112,8 @@ class HSMM:
         # Induction
         # t is the END time of the current segment
         for t in range(1, T):
+
+
             for sj in range(N): # Current state
                 # Try all possible durations d for state j
                 # segment would be from (t - d + 1) to t
@@ -120,10 +126,10 @@ class HSMM:
                     
                     # Emission score for this segment (O(1) look up)
                     # This should be a productory
-                    obs_score = log_B_cum[t+1, sj] - log_B_cum[t-d+1, sj]
+                    obs_score = 0#log_B_cum[t+1, sj] - log_B_cum[t-d+1, sj]
                     
                     # Duration prob, that's easy why we use np.log? Because we are working in log space to avoid underflow and to turn products into sums for easier maximization.
-                    dur_score = np.log(self.duration_probs[sj, d] + 1e-9)
+                    dur_score = np.log(self.duration_probs[sj, d] + smoothing)
                     
                     # Transition from any previous state i to j
                     best_prev_score = -np.inf
@@ -133,10 +139,9 @@ class HSMM:
                         if si == sj or self.trans_mat[si, sj] == 0: 
                             continue # HSMMs handle self-loops via duration, Skip impossibile transitions
                         
-                        trans_score = np.log(self.trans_mat[si, sj] + 1e-9)
+                        trans_score = np.log(self.trans_mat[si, sj] + smoothing)
 
                         # Score = Previous Best + Transition + Duration + Emissions
-                        
                         total_score = delta[switch_t, si] + trans_score + dur_score + obs_score
                         
                         if total_score > best_prev_score:
@@ -148,6 +153,17 @@ class HSMM:
                         delta[t, sj] = best_prev_score
                         psi_state[t, sj] = best_prev_state
                         psi_dur[t, sj] = d
+
+            
+            # for t in range(1, T):
+
+            #     Sjid = np.zeros((N,N,D), dtype=float)
+
+                
+
+
+
+        #! THIS SECTION CAN BE PORTED ON CPU
 
         # Termination & Backtracking
         path = np.zeros(T, dtype=int)
@@ -196,7 +212,7 @@ if __name__ == "__main__":
 
     # --- 2. MODEL PARAMETERS ---
 
-    # Transition Matrix (must have 0 on diagonal for HSMM)
+    # Transition Matrix (must have 0 on diagonal for HSMM)viterbi
     # We force a switch: If done with REM, go Deep. If done with Deep, go REM.
     rem_trans_mat = np.array([
         [0.0, 1.0], 
@@ -260,7 +276,10 @@ if __name__ == "__main__":
 
     hsmm_sleep = HSMM(rem_states, rem_emissions, rem_trans_mat, rem_emission_probs, rem_start_probs, rem_duration_probs)
     hsmm_sleep.set_obs_sequence(rem_obs_seq)
-    # predicted_states = hsmm_sleep.viterbi()
+    predicted_states = hsmm_sleep.run_viterbi()
+
+    print("Predicted States:")
+    print(predicted_states)
 
 
     # --- 5. RUN AND COMPARE ---
