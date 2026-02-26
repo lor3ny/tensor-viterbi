@@ -59,40 +59,13 @@ class HSMM:
         D = self.duration_probs.shape[1] - 1   # duration probabilities count
         smoothing = 1e-10
         
-        # Delta: max prob ending at t in state j
         delta = np.full((T, N), -np.inf)
         
-        # Backpointers to reconstruct path
-        # psi_state[t, j] = previous state i that led to j ending at t
-        # psi_dur[t, j] = duration d that state j held ending at t
         psi_state = np.zeros((T, N), dtype=int)
         psi_dur = np.zeros((T, N), dtype=int)
         
 
-        #? INITIAL - PROPOSED VERSION
-
-        #! Why we compute D, I don't think that is needed
-        # Initialization (t=0 to D-1 handling is tricky, simplified here)
-        # We assume the first segment starts at t=0.
-        # for d in range(1, min(D, T) + 1):
-
-        #     for state in range(N):
-        #         dur_prob = np.log(self.duration_probs[state, d] + smoothing)
-        #         # Sum of emissions from t=0 to t=d-1
-        #         obs_prob = log_B_cum[d, state] - log_B_cum[0, state]
-
-        #         start_prob = self.start_probs[state]
-                
-        #         score = start_prob + dur_prob + obs_prob
-        #         if score > delta[d-1, state]:
-        #             delta[d-1, state] = score
-        #             psi_dur[d-1, state] = d
-        #             psi_state[d-1, state] = -1 # Indicates start of sequence
-
-
-        #? INITIAL - MY VERSION
-
-        #! We should just compute the inital state without duration
+        #* INITIALIZATION
         for state in range(N):
             obs_prob = self.emission_probs[state][self.obs_seq[0]]
             start_prob = self.start_probs[state]
@@ -103,58 +76,34 @@ class HSMM:
                 psi_dur[0, state] = 1
                 psi_state[0, state] = -1 # Indicates start of sequence
 
-
-        # Induction
-        # t is the END time of the current segment
-        for t in range(1, T):
+        #* INDUCTION
 
 
-            for sj in range(N): # Current state
-                # Try all possible durations d for state j
-                # segment would be from (t - d + 1) to t
-                for d in range(1, D + 1):
-                    if t - d < 0: 
-                        continue # Cannot look back past 0 here
-                    
-                    # Time when previous state ended
-                    switch_t = t - d 
-                    
-                    # Emission score for this segment (O(1) look up)
-                    # This should be a productory
-                    # |-|{k = t-d}(b(sj, seq_obs(k)
-                    obs_score = 0#log_B_cum[t+1, sj] - log_B_cum[t-d+1, sj]
-                    for k in range(t-d):
-                        obs_score += np.log(self.emission_probs[sj][self.obs_seq[k]])
-                    
-                    # Duration prob, that's easy why we use np.log? Because we are working in log space to avoid underflow and to turn products into sums for easier maximization.
-                    dur_score = np.log(self.duration_probs[sj, d] + smoothing)
-                    
-                    # Transition from any previous state i to j
-                    best_prev_score = -np.inf
-                    best_prev_state = -1
-                    
-                    for si in range(N):
-                        if si == sj or self.trans_mat[si, sj] == 0: 
-                            continue # HSMMs handle self-loops via duration, Skip impossibile transitions
-                        
-                        trans_score = np.log(self.trans_mat[si, sj] + smoothing)
-
-                        # Score = Previous Best + Transition + Duration + Emissions
-                        total_score = delta[switch_t, si] + trans_score + dur_score + obs_score
-                        
-                        if total_score > best_prev_score:
-                            best_prev_score = total_score
-                            best_prev_state = si
-                    
-                    # Update Delta if this duration d is better than others for ending at t
-                    if best_prev_score > delta[t, sj]:
-                        delta[t, sj] = best_prev_score
-                        psi_state[t, sj] = best_prev_state
-                        psi_dur[t, sj] = d
+        #! THIS SECTION CAN BE PORTED ON CPU
+        #* TERMINATION
+        path = np.zeros(T, dtype=int)
+        
+        # Find best ending state at T-1
+        t = T - 1
+        best_last_state = np.argmax(delta[t])
+        curr_state = best_last_state
+        
+        while t >= 0:
+            d = psi_dur[t, curr_state]
+            prev_s = psi_state[t, curr_state]
+            
+            # Fill the segment
+            start_t = t - d + 1
+            path[start_t : t+1] = curr_state
+            
+            # Move back
+            t = t - d
+            curr_state = prev_s
+            
+        return path
 
 
     # We use np.log() + smoothing to transform multiplications in additions
-
     def run_viterbi(self):
 
         T = len(self.obs_seq)  # time steps
@@ -203,7 +152,7 @@ class HSMM:
                     for k in range(t-d):
                         obs_score += np.log(self.emission_probs[sj][self.obs_seq[k]])
                     
-                    # P(Sj|d)
+                    # P(d|Sj)
                     dur_score = np.log(self.duration_probs[sj, d] + smoothing)
                     
                     best_prev_score = -np.inf
@@ -215,7 +164,7 @@ class HSMM:
                             continue 
                         
                         # a(si,sj)
-                        trans_score = np.log(self.trans_mat[si, sj] + smoothing)
+                        trans_score = np.log(self.trans_mat[si, sj] + smoothi        # Delta: max prob ending at t in state jng)
 
                         # Score = delta(t-d,si) + Transition + Duration + Emissions
                         total_score = delta[t - d, si] + trans_score + dur_score + obs_score
@@ -233,8 +182,7 @@ class HSMM:
 
 
         #! THIS SECTION CAN BE PORTED ON CPU
-
-        # Termination & Backtracking
+        #* TERMINATION
         path = np.zeros(T, dtype=int)
         
         # Find best ending state at T-1
