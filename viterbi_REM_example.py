@@ -56,10 +56,11 @@ class HSMM:
     def run_tensor_viterbi(self):
         T = len(self.obs_seq)  # time steps
         N = len(self.states) # states count
-        D = self.duration_probs.shape[1] - 1   # duration probabilities count
+        D = self.duration_probs.shape[1]
         smoothing = 1e-10
         
-        delta = np.full((T, N), -np.inf)
+        delta = np.full((T, N), 1.0)
+        delta_Sid = np.full((D, N), 1.0)
         
         psi_state = np.zeros((T, N), dtype=int)
         psi_dur = np.zeros((T, N), dtype=int)
@@ -77,6 +78,42 @@ class HSMM:
                 psi_state[0, state] = -1 # Indicates start of sequence
 
         #* INDUCTION
+
+        T=2
+        for t in range(1, T):
+
+            Sijd_t = np.full((N,N,D), 0.0) # This must be computed
+
+            dur_Sjd = self.duration_probs
+
+            trans_Sij = self.trans_mat
+
+            if t-D < 0:
+                delta_Sid[t-1, :] = delta[t-1, :]
+
+            else:
+                delta_Sid = delta[(t-1) - d, :]
+            delta_Sid = delta_Sid.T
+
+
+            # All these must be broadcasted to shape (N, N, D) for the max operation
+            # These broadcast operations can be avoided?
+            Sijd_t += delta_Sid[:, np.newaxis, :]
+            Sijd_t *= dur_Sjd[np.newaxis, :, :]
+            Sijd_t *= trans_Sij[:, :, np.newaxis]
+
+            # Now we need to find the max over si and d for each sj
+            # delta[t, sj] = max found
+            # after that you can start again
+
+            print("dur_Sjd shape:", dur_Sjd.shape) # Should be (N, D)
+            print(dur_Sjd)
+            print("trans_Sij shape:", trans_Sij.shape) # Should be (N, N)
+            print(trans_Sij)
+            print("delta_Sid shape:", delta_Sid.shape) # Should be (N, D)
+            print(delta_Sid)
+            print("Sijd_t shape:", Sijd_t.shape) # Should be (N, N, D)
+            print(Sijd_t)
 
 
         #! THIS SECTION CAN BE PORTED ON CPU
@@ -294,6 +331,9 @@ if __name__ == "__main__":
     hsmm_sleep = HSMM(rem_states, rem_emissions, rem_trans_mat, rem_emission_probs, rem_start_probs, rem_duration_probs)
     hsmm_sleep.set_obs_sequence(rem_obs_seq)
     predicted_states = hsmm_sleep.run_viterbi()
+
+
+    hsmm_sleep.run_tensor_viterbi()
 
     print("Predicted States:")
     print(predicted_states)
