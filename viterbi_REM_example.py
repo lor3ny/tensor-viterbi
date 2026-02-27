@@ -164,7 +164,7 @@ class HSMM:
                             continue 
                         
                         # a(si,sj)
-                        trans_score = np.log(self.trans_mat[si, sj] + smoothi        # Delta: max prob ending at t in state jng)
+                        trans_score = np.log(self.trans_mat[si, sj] + smoothing)        # Delta: max prob ending at t in state jng)
 
                         # Score = delta(t-d,si) + Transition + Duration + Emissions
                         total_score = delta[t - d, si] + trans_score + dur_score + obs_score
