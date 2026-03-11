@@ -64,7 +64,7 @@ class HSMM:
         AP: NxNxD tensor
         """
         # AP[i,j,d] = A[i,j] * P[i,d]
-        return A[:, :, np.newaxis] * P[:, np.newaxis, :]  # (N,N,1) * (N,1,D) -> NxNxD
+        return A[:, :, np.newaxis] * P[np.newaxis, :, :]  # (N,N,1) * (N,1,D) -> NxNxD
 
 
     def find_t_maxs(self, Sjid):
@@ -139,8 +139,9 @@ class HSMM:
 
         (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(AP) # In questo caso non serve, ma lo calcoliamo per verificare che sia tutto ok
         delta[0, :] = p_maxs 
-        delta_state[0, :] = s_maxs
-        delta_dur[0, :] = d_maxs   
+        delta_state[0, :] = np.array((-1,-1))
+        delta_dur[0, :] = np.array((1,1))
+        
 
         #* INDUCTION
 
@@ -149,13 +150,14 @@ class HSMM:
 
         PAST_DELTA = np.zeros((N, D))
         EMISSION_PROBS = np.ones((N, D)) # Placeholder: replace with real emission computation
+        DELTA_EMISSION = np.zeros((N, N, D))
 
-        T=2
+        T=100
         for t in range(1, T):
             # Slice DELTAS window: shape (N, D) assuming DELTAS is shape (T, N, D)
 
             window = delta[max(0, t-D) : t, :]  # shape: (min(t,D), N)
-            PAST_DELTA[:, -window.shape[0]:] = window.T 
+            PAST_DELTA[:, :window.shape[0]] = window[::-1].T 
 
             #! emission prob computation
             # EMISSION_PROBABILITY = np.ones((N, D))             # 
@@ -175,13 +177,9 @@ class HSMM:
             (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(DELTA_EMISSION)   
             delta[t, :] = p_maxs 
             delta_state[t, :] = s_maxs
-            delta_dur[t, :] = d_maxs   
+            delta_dur[t, :] = d_maxs+1
 
-
-        print(delta)
-
-        path = 0#self.backtracking_termination(delta, delta_state, delta_dur, T)
-
+        path = self.backtracking_termination(delta, delta_state, delta_dur, T)
         
         return path
 
@@ -221,7 +219,7 @@ class HSMM:
         #* INDUCTION  1<=t<=T
         #* delta(t, sj) = max{d} ( max{si} ( delta(t-d,si) * a(si,sj) ) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k)))  
 
-        T=2
+        T=100
         for t in range(1, T):
             for sj in range(N):
                 for d in range(1, D + 1):
@@ -235,15 +233,15 @@ class HSMM:
                         obs_score *= self.emission_probs[self.obs_seq[k]][sj]
                     
                     # P(d|Sj)
-                    dur_score = self.duration_probs[sj, d]
+                    dur_score = self.duration_probs[sj, d-1]
                     
                     best_prev_score = -np.inf
                     best_prev_state = -1
                     for si in range(N):
 
                         # HSMMs handle self-loops via duration, Skip impossibile transitions
-                        if si == sj or self.trans_mat[si, sj] == 0: 
-                            continue 
+                        # if si == sj or self.trans_mat[si, sj] == 0: 
+                        #     continue 
                         
                         # a(si,sj)
                         trans_score = self.trans_mat[si, sj]      # Delta: max prob ending at t in state jng)
@@ -251,8 +249,8 @@ class HSMM:
                         # Score = delta(t-d,si) + Transition + Duration + Emissions
                         total_score = trans_score * dur_score * delta[t - d, si] #* obs_score
 
-                        print(total_score)
-                        
+                        # print(trans_score, dur_score, delta[t - d, si], total_score)
+
                         if total_score > best_prev_score:
                             best_prev_score = total_score
                             best_prev_state = si
@@ -263,9 +261,7 @@ class HSMM:
                         psi_state[t, sj] = best_prev_state
                         psi_dur[t, sj] = d             
 
-        print(delta)
-
-        path = 0#self.backtracking_termination(delta, psi_state, psi_dur, T)
+        path = self.backtracking_termination(delta, psi_state, psi_dur, T)
             
         return path
     
