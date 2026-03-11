@@ -1,3 +1,4 @@
+from curses import window
 import random
 import numpy as np
 import matplotlib.pyplot as plt
@@ -146,45 +147,42 @@ class HSMM:
         AP = self.compute_ap(self.trans_mat, self.duration_probs)  # NxNxD — precomputed outside the loop
 
 
-        PAST_DELTA = np.random.rand(N, D)
-        EMISSION_PROBS = np.random.rand(N, D) # Placeholder: replace with real emission computation
+        PAST_DELTA = np.zeros((N, D))
+        EMISSION_PROBS = np.ones((N, D)) # Placeholder: replace with real emission computation
 
-        T=100
+        T=2
         for t in range(1, T):
             # Slice DELTAS window: shape (N, D) assuming DELTAS is shape (T, N, D)
 
-            #! past delta computation
-            # print(PAST_DELTA)
-            # if t - D < 0:
-            #     PAST_DELTA = delta[t - t : t - 1, :] 
-            # else:
-            #     PAST_DELTA = delta[t - D : t - 1, :]   
-            # print(PAST_DELTA)
-
+            window = delta[max(0, t-D) : t, :]  # shape: (min(t,D), N)
+            PAST_DELTA[:, -window.shape[0]:] = window.T 
 
             #! emission prob computation
             # EMISSION_PROBABILITY = np.ones((N, D))             # 
 
             # # Method A
-            DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] * EMISSION_PROBS[np.newaxis, :, :]  # NxNxD
-            RESULT_A = AP * DELTA_EMISSION  # NxNxD element-wise
+            # DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] * EMISSION_PROBS[np.newaxis, :, :]  # NxNxD
+            # RESULT_A = AP #* DELTA_EMISSION  # NxNxD element-wise
 
             #print(RESULT_A)
 
-            (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(RESULT_A)   
+            # # Method B
+            # Step 1: Y_BroadcastProduct — PAST_DELTA (N,D) broadcast over j-axis of AP (N,N,D)
+            DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] * AP  # (N,1,D) * (N,N,D) -> NxNxD
+            # Step 2: X_BroadcastProduct — EMISSION_PROBABILITY (N,D) broadcast over i-axis
+            #RESULT_B = EMISSION_PROBS[np.newaxis, :, :] * DELTA_EMISSION  # (1,N,D) * (N,N,D) -> NxNxD
+
+            (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(DELTA_EMISSION)   
             delta[t, :] = p_maxs 
             delta_state[t, :] = s_maxs
             delta_dur[t, :] = d_maxs   
-            #print(delta)
 
-            # # Method B
-            # Step 1: Y_BroadcastProduct — PAST_DELTA (N,D) broadcast over j-axis of AP (N,N,D)
-            # DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] * AP  # (N,1,D) * (N,N,D) -> NxNxD
-            # Step 2: X_BroadcastProduct — EMISSION_PROBABILITY (N,D) broadcast over i-axis
-            # RESULT_B = EMISSION_PROBS[np.newaxis, :, :] * DELTA_EMISSION  # (1,N,D) * (N,N,D) -> NxNxD
 
-        path = self.backtracking_termination(delta, delta_state, delta_dur, T)
-            
+        print(delta)
+
+        path = 0#self.backtracking_termination(delta, delta_state, delta_dur, T)
+
+        
         return path
 
 
@@ -214,18 +212,17 @@ class HSMM:
             obs_prob = self.emission_probs[self.obs_seq[0]][state]
             start_prob = self.start_probs[state]
             
-            score = start_prob + obs_prob
+            score = start_prob * obs_prob
             if score > delta[0, state]:
                 delta[0, state] = score
                 psi_dur[0, state] = 1
                 psi_state[0, state] = -1 # Indicates start of sequence
 
-
         #* INDUCTION  1<=t<=T
         #* delta(t, sj) = max{d} ( max{si} ( delta(t-d,si) * a(si,sj) ) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k)))  
 
+        T=2
         for t in range(1, T):
-
             for sj in range(N):
                 for d in range(1, D + 1):
                     if t - d < 0: 
@@ -235,10 +232,10 @@ class HSMM:
                     # |-|{k = t-d}(b(sj, seq_obs(k)
                     obs_score = 0
                     for k in range(t-d):
-                        obs_score += np.log(self.emission_probs[self.obs_seq[k]][sj])
+                        obs_score *= self.emission_probs[self.obs_seq[k]][sj]
                     
                     # P(d|Sj)
-                    dur_score = np.log(self.duration_probs[sj, d] + smoothing)
+                    dur_score = self.duration_probs[sj, d]
                     
                     best_prev_score = -np.inf
                     best_prev_state = -1
@@ -249,10 +246,12 @@ class HSMM:
                             continue 
                         
                         # a(si,sj)
-                        trans_score = np.log(self.trans_mat[si, sj] + smoothing)        # Delta: max prob ending at t in state jng)
+                        trans_score = self.trans_mat[si, sj]      # Delta: max prob ending at t in state jng)
 
                         # Score = delta(t-d,si) + Transition + Duration + Emissions
-                        total_score = delta[t - d, si] + trans_score + dur_score + obs_score
+                        total_score = trans_score * dur_score * delta[t - d, si] #* obs_score
+
+                        print(total_score)
                         
                         if total_score > best_prev_score:
                             best_prev_score = total_score
@@ -264,8 +263,9 @@ class HSMM:
                         psi_state[t, sj] = best_prev_state
                         psi_dur[t, sj] = d             
 
+        print(delta)
 
-        path = self.backtracking_termination(delta, psi_state, psi_dur, T)
+        path = 0#self.backtracking_termination(delta, psi_state, psi_dur, T)
             
         return path
     
