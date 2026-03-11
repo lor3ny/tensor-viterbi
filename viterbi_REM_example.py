@@ -1,6 +1,8 @@
 import random
 import numpy as np
 import matplotlib.pyplot as plt
+import time
+
 
 # --- 3. HELPER FUNCTIONS ---
 
@@ -53,69 +55,46 @@ class HSMM:
         return log_probs
     
 
-    def run_tensor_viterbi(self):
-        T = len(self.obs_seq)  # time steps
-        N = len(self.states) # states count
-        D = self.duration_probs.shape[1]
-        smoothing = 1e-10
+    def compute_ap(self,A, P):
+        """
+        Compute AP = OuterProduct(A[i,j], P[i,d])
+        A: NxN matrix
+        P: NxD matrix
+        AP: NxNxD tensor
+        """
+        # AP[i,j,d] = A[i,j] * P[i,d]
+        return A[:, :, np.newaxis] * P[:, np.newaxis, :]  # (N,N,1) * (N,1,D) -> NxNxD
+
+
+    def find_t_maxs(self, Sjid):
+        """
+        t_MAXs: foreach S[j]-plane (i.e., for each j), find MAX over (i, d)
+        RESULT shape: (N, N, D)
         
-        delta = np.full((T, N), 1.0)
-        delta_Sid = np.full((D, N), 1.0)
+        Returns:
+            max_vals:   (N,) — max probability per j-plane
+            max_states: (N,) — i coordinate (state) of the max per j-plane
+            max_durs:   (N,) — d coordinate (duration) of the max per j-plane
+        """
+        N = Sjid.shape[1]
         
-        psi_state = np.zeros((T, N), dtype=int)
-        psi_dur = np.zeros((T, N), dtype=int)
-        
+        # Reshape each j-plane (N, D) into a flat array, find argmax, then unravel
+        max_vals   = np.zeros(N)
+        max_states = np.zeros(N, dtype=int)
+        max_durs   = np.zeros(N, dtype=int)
 
-        #* INITIALIZATION
-        for state in range(N):
-            obs_prob = self.emission_probs[state][self.obs_seq[0]]
-            start_prob = self.start_probs[state]
-            
-            score = start_prob + obs_prob
-            if score > delta[0, state]:
-                delta[0, state] = score
-                psi_dur[0, state] = 1
-                psi_state[0, state] = -1 # Indicates start of sequence
+        for j in range(N):
+            plane = Sjid[:, j, :]          # shape (N, D) — the j-th plane
+            flat_idx = np.argmax(plane)      # argmax over flattened (N*D)
+            i, d = np.unravel_index(flat_idx, plane.shape)  # recover (i, d) coords
+            max_vals[j]   = plane[i, d]
+            max_states[j] = i               # x coordinate = source state
+            max_durs[j]   = d               # y coordinate = duration
 
-        #* INDUCTION
-
-        T=2
-        for t in range(1, T):
-
-            Sijd_t = np.full((N,N,D), 0.0) # This must be computed
-
-            dur_Sjd = self.duration_probs
-
-            trans_Sij = self.trans_mat
-
-            if t-D < 0:
-                delta_Sid[t-1, :] = delta[t-1, :]
-
-            else:
-                delta_Sid = delta[(t-1) - d, :]
-            delta_Sid = delta_Sid.T
+        return max_vals, max_states, max_durs
 
 
-            # All these must be broadcasted to shape (N, N, D) for the max operation
-            # These broadcast operations can be avoided?
-            Sijd_t += delta_Sid[:, np.newaxis, :]
-            Sijd_t *= dur_Sjd[np.newaxis, :, :]
-            Sijd_t *= trans_Sij[:, :, np.newaxis]
-
-            # Now we need to find the max over si and d for each sj
-            # delta[t, sj] = max found
-            # after that you can start again
-
-            print("dur_Sjd shape:", dur_Sjd.shape) # Should be (N, D)
-            print(dur_Sjd)
-            print("trans_Sij shape:", trans_Sij.shape) # Should be (N, N)
-            print(trans_Sij)
-            print("delta_Sid shape:", delta_Sid.shape) # Should be (N, D)
-            print(delta_Sid)
-            print("Sijd_t shape:", Sijd_t.shape) # Should be (N, N, D)
-            print(Sijd_t)
-
-
+    def backtracking_termination(self, delta, psi_state, psi_dur, T):
         #! THIS SECTION CAN BE PORTED ON CPU
         #* TERMINATION
         path = np.zeros(T, dtype=int)
@@ -136,6 +115,75 @@ class HSMM:
             # Move back
             t = t - d
             curr_state = prev_s
+        return path
+
+    def run_tensor_viterbi(self):
+        T = len(self.obs_seq)  # time steps
+        N = len(self.states) # states count
+        D = self.duration_probs.shape[1]
+        smoothing = 1e-10
+        
+        delta = np.full((T, N), 0.0)        
+        delta_state = np.zeros((T, N), dtype=int)
+        delta_dur = np.zeros((T, N), dtype=int)
+        
+
+        #* INITIALIZATION
+
+        AP = np.zeros((N, N, D)) # Precompute AP outside the loop
+        
+        AP[:, :, :] = self.start_probs[np.newaxis, :, np.newaxis]
+     
+        AP *= self.emission_probs[self.obs_seq[0]][np.newaxis, :, np.newaxis]
+
+        (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(AP) # In questo caso non serve, ma lo calcoliamo per verificare che sia tutto ok
+        delta[0, :] = p_maxs 
+        delta_state[0, :] = s_maxs
+        delta_dur[0, :] = d_maxs   
+
+        #* INDUCTION
+
+        AP = self.compute_ap(self.trans_mat, self.duration_probs)  # NxNxD — precomputed outside the loop
+
+
+        PAST_DELTA = np.random.rand(N, D)
+        EMISSION_PROBS = np.random.rand(N, D) # Placeholder: replace with real emission computation
+
+        T=100
+        for t in range(1, T):
+            # Slice DELTAS window: shape (N, D) assuming DELTAS is shape (T, N, D)
+
+            #! past delta computation
+            # print(PAST_DELTA)
+            # if t - D < 0:
+            #     PAST_DELTA = delta[t - t : t - 1, :] 
+            # else:
+            #     PAST_DELTA = delta[t - D : t - 1, :]   
+            # print(PAST_DELTA)
+
+
+            #! emission prob computation
+            # EMISSION_PROBABILITY = np.ones((N, D))             # 
+
+            # # Method A
+            DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] * EMISSION_PROBS[np.newaxis, :, :]  # NxNxD
+            RESULT_A = AP * DELTA_EMISSION  # NxNxD element-wise
+
+            #print(RESULT_A)
+
+            (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(RESULT_A)   
+            delta[t, :] = p_maxs 
+            delta_state[t, :] = s_maxs
+            delta_dur[t, :] = d_maxs   
+            #print(delta)
+
+            # # Method B
+            # Step 1: Y_BroadcastProduct — PAST_DELTA (N,D) broadcast over j-axis of AP (N,N,D)
+            # DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] * AP  # (N,1,D) * (N,N,D) -> NxNxD
+            # Step 2: X_BroadcastProduct — EMISSION_PROBABILITY (N,D) broadcast over i-axis
+            # RESULT_B = EMISSION_PROBS[np.newaxis, :, :] * DELTA_EMISSION  # (1,N,D) * (N,N,D) -> NxNxD
+
+        path = self.backtracking_termination(delta, delta_state, delta_dur, T)
             
         return path
 
@@ -163,7 +211,7 @@ class HSMM:
 
         #! The gemini proposed version was including also duration, but why? 
         for state in range(N):
-            obs_prob = self.emission_probs[state][self.obs_seq[0]]
+            obs_prob = self.emission_probs[self.obs_seq[0]][state]
             start_prob = self.start_probs[state]
             
             score = start_prob + obs_prob
@@ -187,7 +235,7 @@ class HSMM:
                     # |-|{k = t-d}(b(sj, seq_obs(k)
                     obs_score = 0
                     for k in range(t-d):
-                        obs_score += np.log(self.emission_probs[sj][self.obs_seq[k]])
+                        obs_score += np.log(self.emission_probs[self.obs_seq[k]][sj])
                     
                     # P(d|Sj)
                     dur_score = np.log(self.duration_probs[sj, d] + smoothing)
@@ -217,27 +265,7 @@ class HSMM:
                         psi_dur[t, sj] = d             
 
 
-
-        #! THIS SECTION CAN BE PORTED ON CPU
-        #* TERMINATION
-        path = np.zeros(T, dtype=int)
-        
-        # Find best ending state at T-1
-        t = T - 1
-        best_last_state = np.argmax(delta[t])
-        curr_state = best_last_state
-        
-        while t >= 0:
-            d = psi_dur[t, curr_state]
-            prev_s = psi_state[t, curr_state]
-            
-            # Fill the segment
-            start_t = t - d + 1
-            path[start_t : t+1] = curr_state
-            
-            # Move back
-            t = t - d
-            curr_state = prev_s
+        path = self.backtracking_termination(delta, psi_state, psi_dur, T)
             
         return path
     
@@ -273,42 +301,25 @@ if __name__ == "__main__":
         [1.0, 0.0]
     ])
 
-    rem_emission_probs = [
-        # REM state
-        {
-            40: 0.001,
-            45: 0.001,
-            50: 0.002,
-            55: 0.002,
-            60: 0.002,
-            65: 0.01,
-            70: 0.03,
-            75: 0.25,
-            80: 0.4,
-            85: 0.25,
-            90: 0.03,
-            95: 0.01,
-            100: 0.002
-        },
-        # Deep state
-        {
-            40: 0.01,
-            45: 0.03,
-            50: 0.25,
-            55: 0.4,
-            60: 0.25,
-            65: 0.03,
-            70: 0.01,
-            75: 0.002,
-            80: 0.002,
-            85: 0.002,
-            90: 0.002,
-            95: 0.001,
-            100: 0.001
-        }
-    ]
+    rem_emission_probs = {
+        40:  np.array([0.001, 0.01 ]),
+        45:  np.array([0.001, 0.03 ]),
+        50:  np.array([0.002, 0.25 ]),
+        55:  np.array([0.002, 0.4  ]),
+        60:  np.array([0.002, 0.25 ]),
+        65:  np.array([0.01,  0.03 ]),
+        70:  np.array([0.03,  0.01 ]),
+        75:  np.array([0.25,  0.002]),
+        80:  np.array([0.4,   0.002]),
+        85:  np.array([0.25,  0.002]),
+        90:  np.array([0.03,  0.002]),
+        95:  np.array([0.01,  0.001]),
+        100: np.array([0.002, 0.001]),
+    }
 
-    rem_start_probs = np.array([0.5, 0.5]) # Equal chance to start in either state
+    
+
+    rem_start_probs = np.array([0.7, 0.3]) # Equal chance to start in either state
 
     rem_duration_probs = np.array([
         np.zeros(max_duration),
@@ -330,23 +341,23 @@ if __name__ == "__main__":
 
     hsmm_sleep = HSMM(rem_states, rem_emissions, rem_trans_mat, rem_emission_probs, rem_start_probs, rem_duration_probs)
     hsmm_sleep.set_obs_sequence(rem_obs_seq)
+
+    start_time = time.time()
     predicted_states = hsmm_sleep.run_viterbi()
+    end_time = time.time()
+    execution_time = end_time - start_time
 
+    print(f"Execution time of Vanilla Viterbi: {execution_time:.4f} seconds")
+    print("Predicted States:")
+    print(predicted_states)
 
-    hsmm_sleep.run_tensor_viterbi()
+    start_time = time.time()
+    predicted_states = hsmm_sleep.run_tensor_viterbi()
+    end_time = time.time()
+    execution_time = end_time - start_time
 
+    print(f"Execution time of Tensor Viterbi: {execution_time:.4f} seconds")
     print("Predicted States:")
     print(predicted_states)
 
 
-    # --- 5. RUN AND COMPARE ---
-    
-    # Visualization in text format
-    # print(f"{'Time':<5} | {'Obs (HR)':<10} | {'True':<6} | {'HSMM':<6}")
-    # print("-" * 40)
-    # for t in range(45, 56): # Inspect the noise spike area
-    #     obs_str = f"{rem_obs_seq[t]:.1f}"
-    #     is_spike = "<-- SPIKE" if t == 50 else ""
-    #     print(f"{t:<5} | {obs_str:<10} | {rem_states[ground_true_states[t]]:<6} | {rem_states[predicted_states[t]]:<6} {is_spike}")
-
-    # print("\nAccuracy:", np.mean(predicted_states == ground_true_states))
