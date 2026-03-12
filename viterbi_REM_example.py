@@ -135,7 +135,7 @@ class HSMM:
         
         AP[:, :, :] = self.start_probs[np.newaxis, :, np.newaxis]
      
-        AP *= self.emission_probs[self.obs_seq[0]][np.newaxis, :, np.newaxis]
+        AP *= self.emission_probs[int(self.obs_seq[0]), np.newaxis, :, np.newaxis]
 
         (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(AP) # In questo caso non serve, ma lo calcoliamo per verificare che sia tutto ok
         delta[0, :] = p_maxs 
@@ -149,12 +149,31 @@ class HSMM:
 
 
         PAST_DELTA = np.zeros((N, D))
-        EMISSION_PROBS = np.ones((N, D)) # Placeholder: replace with real emission computation
+        EMISSION_PROBS = np.zeros((N, D)) # Placeholder: replace with real emission computation
         DELTA_EMISSION = np.zeros((N, N, D))
 
-        T=100
+        T=2
         for t in range(1, T):
             # Slice DELTAS window: shape (N, D) assuming DELTAS is shape (T, N, D)
+
+            for d_val in range(1, min(D, t+1)):
+
+                #! qualcosa non torna
+
+                segment_indices = np.array(self.obs_seq[t - d_val : t + 1], dtype=int)
+
+                print(segment_indices)
+                
+                # # 2. Extract the relevant rows from the emission matrix
+                # # This creates a sub-matrix of shape (d, num_states)
+                relevant_probs = self.emission_probs[segment_indices, :]   #DxN
+                
+                print(relevant_probs)
+
+                # # 3. Multiply along the 'duration' axis (axis 0)
+                # # This collapses the (d, num_states) matrix into a (num_states,) vector
+                EMISSION_PROBS[:, d_val - 1] = np.prod(relevant_probs, axis=0)
+
 
             window = delta[max(0, t-D) : t, :]  # shape: (min(t,D), N)
             PAST_DELTA[:, :window.shape[0]] = window[::-1].T 
@@ -172,12 +191,14 @@ class HSMM:
             # Step 1: Y_BroadcastProduct — PAST_DELTA (N,D) broadcast over j-axis of AP (N,N,D)
             DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] * AP  # (N,1,D) * (N,N,D) -> NxNxD
             # Step 2: X_BroadcastProduct — EMISSION_PROBABILITY (N,D) broadcast over i-axis
-            #RESULT_B = EMISSION_PROBS[np.newaxis, :, :] * DELTA_EMISSION  # (1,N,D) * (N,N,D) -> NxNxD
+            RESULT_B = EMISSION_PROBS[np.newaxis, :, :] * DELTA_EMISSION  # (1,N,D) * (N,N,D) -> NxNxD
 
-            (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(DELTA_EMISSION)   
+            (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(RESULT_B)   
             delta[t, :] = p_maxs 
             delta_state[t, :] = s_maxs
             delta_dur[t, :] = d_maxs+1
+
+        print(EMISSION_PROBS)
 
         path = self.backtracking_termination(delta, delta_state, delta_dur, T)
         
@@ -207,7 +228,8 @@ class HSMM:
 
         #! The gemini proposed version was including also duration, but why? 
         for state in range(N):
-            obs_prob = self.emission_probs[self.obs_seq[0]][state]
+            obs_index = int(self.obs_seq[0])
+            obs_prob = self.emission_probs[obs_index, state]
             start_prob = self.start_probs[state]
             
             score = start_prob * obs_prob
@@ -219,7 +241,9 @@ class HSMM:
         #* INDUCTION  1<=t<=T
         #* delta(t, sj) = max{d} ( max{si} ( delta(t-d,si) * a(si,sj) ) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k)))  
 
-        T=100
+        EMISSION = np.zeros((N, D)) # Placeholder: replace with real emission computation
+
+        T=2
         for t in range(1, T):
             for sj in range(N):
                 for d in range(1, D + 1):
@@ -228,9 +252,12 @@ class HSMM:
                     
                     #! This productory can be optimized and precomputed
                     # |-|{k = t-d}(b(sj, seq_obs(k)
-                    obs_score = 0
+                    obs_score = 1.0
                     for k in range(t-d):
-                        obs_score *= self.emission_probs[self.obs_seq[k]][sj]
+                        obs_index = int(self.obs_seq[k])
+                        obs_score *= self.emission_probs[obs_index, sj]
+
+                    EMISSION[sj, d-1] = obs_score
                     
                     # P(d|Sj)
                     dur_score = self.duration_probs[sj, d-1]
@@ -247,7 +274,7 @@ class HSMM:
                         trans_score = self.trans_mat[si, sj]      # Delta: max prob ending at t in state jng)
 
                         # Score = delta(t-d,si) + Transition + Duration + Emissions
-                        total_score = trans_score * dur_score * delta[t - d, si] #* obs_score
+                        total_score = trans_score * dur_score * delta[t - d, si] * obs_score
 
                         # print(trans_score, dur_score, delta[t - d, si], total_score)
 
@@ -261,6 +288,8 @@ class HSMM:
                         psi_state[t, sj] = best_prev_state
                         psi_dur[t, sj] = d             
 
+        print(EMISSION)
+
         path = self.backtracking_termination(delta, psi_state, psi_dur, T)
             
         return path
@@ -273,18 +302,18 @@ if __name__ == "__main__":
     # States: 0 = REM (High HR, var), 1 = Deep Sleep (Low HR, stable)
     rem_states = ["REM", "Deep"]
     # Emissions: Heart Rate (HR) in bpm, discretized for simplicity
-    rem_emissions = [40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100]
+    rem_emissions: np.ndarray = np.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], dtype=int)
     time_steps = 100 # Time steps (e.g., minutes of sleep)
     max_duration = 50 # Max duration for any state
 
     rem_obs_seq = np.zeros(time_steps)
     for i in range(time_steps):
         if i < 30: # Deep Sleep
-            rem_obs_seq[i] = random.choice([40, 45, 50, 55, 60]) # Low HR, low variance
+            rem_obs_seq[i] = random.choice([0, 1, 2, 3, 4]) # Low HR, low variance
         elif i < 70: # REM Sleep
-            rem_obs_seq[i] = random.choice([80, 85, 90, 95, 100]) # High HR, high variance
+            rem_obs_seq[i] = random.choice([5, 6, 7, 8, 9]) # High HR, high variance
         else: # Deep Sleep again
-            rem_obs_seq[i] = random.choice([40, 45, 50, 55, 60])
+            rem_obs_seq[i] = random.choice([0, 1, 2, 3, 4])
     print("Generated Observations (Heart Rate):", rem_obs_seq)
 
 
@@ -297,21 +326,21 @@ if __name__ == "__main__":
         [1.0, 0.0]
     ])
 
-    rem_emission_probs = {
-        40:  np.array([0.001, 0.01 ]),
-        45:  np.array([0.001, 0.03 ]),
-        50:  np.array([0.002, 0.25 ]),
-        55:  np.array([0.002, 0.4  ]),
-        60:  np.array([0.002, 0.25 ]),
-        65:  np.array([0.01,  0.03 ]),
-        70:  np.array([0.03,  0.01 ]),
-        75:  np.array([0.25,  0.002]),
-        80:  np.array([0.4,   0.002]),
-        85:  np.array([0.25,  0.002]),
-        90:  np.array([0.03,  0.002]),
-        95:  np.array([0.01,  0.001]),
-        100: np.array([0.002, 0.001]),
-    }
+    rem_emission_probs = np.array([
+        [0.001, 0.01 ],
+        [0.001, 0.03 ],
+        [0.002, 0.25 ],
+        [0.002, 0.4  ],
+        [0.002, 0.25 ],
+        [0.01,  0.03 ],
+        [0.03,  0.01 ],
+        [0.25,  0.002],
+        [0.4,   0.002],
+        [0.25,  0.002],
+        [0.03,  0.002],
+        [0.01,  0.001],
+        [0.002, 0.001],
+    ])
 
     
 
