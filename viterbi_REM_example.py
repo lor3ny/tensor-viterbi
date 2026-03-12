@@ -152,25 +152,16 @@ class HSMM:
         EMISSION_PROBS = np.zeros((N, D)) # Placeholder: replace with real emission computation
         DELTA_EMISSION = np.zeros((N, N, D))
 
-        T=2
+        T=100
         for t in range(1, T):
             # Slice DELTAS window: shape (N, D) assuming DELTAS is shape (T, N, D)
 
             for d_val in range(1, min(D, t+1)):
-
-                #! qualcosa non torna
-
-                segment_indices = np.array(self.obs_seq[t - d_val : t + 1], dtype=int)
-
-                print(segment_indices)
-                
+                segment_indices = np.array(self.obs_seq[t - d_val : t], dtype=int)
                 # # 2. Extract the relevant rows from the emission matrix
                 # # This creates a sub-matrix of shape (d, num_states)
                 relevant_probs = self.emission_probs[segment_indices, :]   #DxN
-                
-                print(relevant_probs)
-
-                # # 3. Multiply along the 'duration' axis (axis 0)
+                  # # 3. Multiply along the 'duration' axis (axis 0)
                 # # This collapses the (d, num_states) matrix into a (num_states,) vector
                 EMISSION_PROBS[:, d_val - 1] = np.prod(relevant_probs, axis=0)
 
@@ -197,8 +188,6 @@ class HSMM:
             delta[t, :] = p_maxs 
             delta_state[t, :] = s_maxs
             delta_dur[t, :] = d_maxs+1
-
-        print(EMISSION_PROBS)
 
         path = self.backtracking_termination(delta, delta_state, delta_dur, T)
         
@@ -243,7 +232,7 @@ class HSMM:
 
         EMISSION = np.zeros((N, D)) # Placeholder: replace with real emission computation
 
-        T=2
+        T=100
         for t in range(1, T):
             for sj in range(N):
                 for d in range(1, D + 1):
@@ -253,8 +242,8 @@ class HSMM:
                     #! This productory can be optimized and precomputed
                     # |-|{k = t-d}(b(sj, seq_obs(k)
                     obs_score = 1.0
-                    for k in range(t-d):
-                        obs_index = int(self.obs_seq[k])
+                    for k in range(d):
+                        obs_index = int(self.obs_seq[t-k-1])
                         obs_score *= self.emission_probs[obs_index, sj]
 
                     EMISSION[sj, d-1] = obs_score
@@ -269,6 +258,7 @@ class HSMM:
                         # HSMMs handle self-loops via duration, Skip impossibile transitions
                         # if si == sj or self.trans_mat[si, sj] == 0: 
                         #     continue 
+                        # 
                         
                         # a(si,sj)
                         trans_score = self.trans_mat[si, sj]      # Delta: max prob ending at t in state jng)
