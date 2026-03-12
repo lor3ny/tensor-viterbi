@@ -139,8 +139,8 @@ class HSMM:
 
         (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(AP) # In questo caso non serve, ma lo calcoliamo per verificare che sia tutto ok
         delta[0, :] = p_maxs 
-        delta_state[0, :] = np.array((-1,-1))
-        delta_dur[0, :] = np.array((1,1))
+        delta_state[0, :] = np.array((-1,-1,-1,-1))
+        delta_dur[0, :] = np.array((1,1,1,1))
         
 
         #* INDUCTION
@@ -152,7 +152,6 @@ class HSMM:
         EMISSION_PROBS = np.zeros((N, D)) # Placeholder: replace with real emission computation
         DELTA_EMISSION = np.zeros((N, N, D))
 
-        T=100
         for t in range(1, T):
             # Slice DELTAS window: shape (N, D) assuming DELTAS is shape (T, N, D)
 
@@ -232,7 +231,6 @@ class HSMM:
 
         EMISSION = np.zeros((N, D)) # Placeholder: replace with real emission computation
 
-        T=100
         for t in range(1, T):
             for sj in range(N):
                 for d in range(1, D + 1):
@@ -278,8 +276,6 @@ class HSMM:
                         psi_state[t, sj] = best_prev_state
                         psi_dur[t, sj] = d             
 
-        print(EMISSION)
-
         path = self.backtracking_termination(delta, psi_state, psi_dur, T)
             
         return path
@@ -287,75 +283,85 @@ class HSMM:
 
 if __name__ == "__main__":
 
-    # --- 1. CONFIGURATION & DATA GENERATION ---
 
-    # States: 0 = REM (High HR, var), 1 = Deep Sleep (Low HR, stable)
-    rem_states = ["REM", "Deep"]
-    # Emissions: Heart Rate (HR) in bpm, discretized for simplicity
-    rem_emissions: np.ndarray = np.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], dtype=int)
-    time_steps = 100 # Time steps (e.g., minutes of sleep)
-    max_duration = 50 # Max duration for any state
+    # States: 0=Awake, 1=Light, 2=Deep, 3=REM
+    sleep_states = ["Awake", "Light", "Deep", "REM"]
 
-    rem_obs_seq = np.zeros(time_steps)
+    # Emissions: Heart Rate (HR) discretized into 13 bins (0-12)
+    # 0-4: Very Low/Stable, 5-8: Moderate, 9-12: High/Variable
+    sleep_emissions = np.arange(13)
+
+    time_steps = 1000
+    max_duration = 100 # Increased to accommodate longer sleep cycles
+
+    sleep_obs_seq = np.zeros(time_steps)
     for i in range(time_steps):
         if i < 30: # Deep Sleep
-            rem_obs_seq[i] = random.choice([0, 1, 2, 3, 4]) # Low HR, low variance
+            sleep_obs_seq[i] = random.choice([0, 1, 2, 3, 4]) # Low HR, low variance
         elif i < 70: # REM Sleep
-            rem_obs_seq[i] = random.choice([5, 6, 7, 8, 9]) # High HR, high variance
+            sleep_obs_seq[i] = random.choice([5, 6, 7, 8, 9]) # High HR, high variance
         else: # Deep Sleep again
-            rem_obs_seq[i] = random.choice([0, 1, 2, 3, 4])
-    print("Generated Observations (Heart Rate):", rem_obs_seq)
+            sleep_obs_seq[i] = random.choice([0, 1, 2, 3, 4])
+    print("Generated Observations (Heart Rate):", sleep_obs_seq)
 
 
-    # --- 2. MODEL PARAMETERS ---
 
-    # Transition Matrix (must have 0 on diagonal for HSMM)viterbi
-    # We force a switch: If done with REM, go Deep. If done with Deep, go REM.
-    rem_trans_mat = np.array([
-        [0.0, 1.0], 
-        [1.0, 0.0]
+    # --- 2. TRANSITION MATRIX (A) ---
+    # Diagonal must be 0.0. Transitions represent where you go AFTER a duration ends.
+    # Structure: [To Awake, To Light, To Deep, To REM]
+    sleep_trans_mat = np.array([
+        [0.0, 0.9, 0.0, 0.1], # From Awake: Mostly to Light
+        [0.1, 0.0, 0.5, 0.4], # From Light: To Deep, REM, or briefly Awake
+        [0.0, 1.0, 0.0, 0.0], # From Deep: Almost always back to Light first
+        [0.2, 0.8, 0.0, 0.0]  # From REM: To Light or wake up
     ])
 
-    rem_emission_probs = np.array([
-        [0.001, 0.01 ],
-        [0.001, 0.03 ],
-        [0.002, 0.25 ],
-        [0.002, 0.4  ],
-        [0.002, 0.25 ],
-        [0.01,  0.03 ],
-        [0.03,  0.01 ],
-        [0.25,  0.002],
-        [0.4,   0.002],
-        [0.25,  0.002],
-        [0.03,  0.002],
-        [0.01,  0.001],
-        [0.002, 0.001],
+    # --- 3. EMISSION PROBABILITIES (B) ---
+    # Each column represents a state; rows represent the 13 HR bins.
+    # We use a distribution where Deep is low HR, Awake/REM are higher HR.
+    sleep_emission_probs = np.array([
+        # HR Bin | Awake | Light | Deep  | REM
+        [0.001,  0.010,  0.150,  0.001], # Bin 0 (Lowest HR)
+        [0.001,  0.030,  0.300,  0.001],
+        [0.002,  0.100,  0.350,  0.002],
+        [0.002,  0.250,  0.150,  0.002],
+        [0.002,  0.300,  0.040,  0.002], # Bin 4
+        [0.010,  0.200,  0.005,  0.010],
+        [0.030,  0.080,  0.002,  0.030],
+        [0.150,  0.020,  0.001,  0.200], # Bin 7 (Moderate)
+        [0.300,  0.005,  0.001,  0.400],
+        [0.300,  0.002,  0.001,  0.250],
+        [0.150,  0.001,  0.000,  0.080],
+        [0.040,  0.001,  0.000,  0.020],
+        [0.012,  0.001,  0.000,  0.002], # Bin 12 (Highest HR)
     ])
 
-    
+    # --- 4. START & DURATION PROBABILITIES ---
 
-    rem_start_probs = np.array([0.7, 0.3]) # Equal chance to start in either state
-
-    rem_duration_probs = np.array([
-        np.zeros(max_duration),
-        np.zeros(max_duration)
-    ])
+    # Most people start "Awake" (1.0) or "Light Sleep" (0.0)
+    sleep_start_probs = np.array([0.9, 0.1, 0.0, 0.0])
 
     def gaussian_window(length, mean, std):
         x = np.arange(length)
+        # Using LaTeX for the Gaussian distribution logic
+        # $$G(x) = \exp\left(-\frac{(x - \mu)^2}{2\sigma^2}\right)$$
         g = np.exp(-0.5 * ((x - mean) / std)**2)
         return g / g.sum()
 
-    rem_duration_probs[0, :] = gaussian_window(max_duration, mean=20, std=5) # REM duration
-    rem_duration_probs[1, :] = gaussian_window(max_duration, mean=40, std=5) # Deep duration
+    sleep_duration_probs = np.zeros((4, max_duration))
 
+    # Define distinct durations for each state
+    sleep_duration_probs[0, :] = gaussian_window(max_duration, mean=5,  std=2)  # Awake: Short bursts
+    sleep_duration_probs[1, :] = gaussian_window(max_duration, mean=30, std=8)  # Light: Moderate
+    sleep_duration_probs[2, :] = gaussian_window(max_duration, mean=50, std=10) # Deep: Long
+    sleep_duration_probs[3, :] = gaussian_window(max_duration, mean=25, std=5)  # REM: Medium
 
-    print("Transition Matrix:\n", rem_trans_mat)
-    print("Emission Probabilities:\n", rem_emission_probs)
-    print("Duration Probabilities:\n", rem_duration_probs)
+    print("Transition Matrix:\n", sleep_trans_mat)
+    print("Emission Probabilities:\n", sleep_emission_probs)
+    print("Duration Probabilities:\n", sleep_duration_probs)
 
-    hsmm_sleep = HSMM(rem_states, rem_emissions, rem_trans_mat, rem_emission_probs, rem_start_probs, rem_duration_probs)
-    hsmm_sleep.set_obs_sequence(rem_obs_seq)
+    hsmm_sleep = HSMM(sleep_states, sleep_emissions, sleep_trans_mat, sleep_emission_probs, sleep_start_probs, sleep_duration_probs)
+    hsmm_sleep.set_obs_sequence(sleep_obs_seq)
 
     start_time = time.time()
     predicted_states = hsmm_sleep.run_viterbi()
