@@ -54,17 +54,6 @@ class HSMM:
             exponent = -0.5 * ((self.obs_seq - means[s])**2) / var
             log_probs[:, s] = exponent - np.log(denom)
         return log_probs
-    
-
-    def compute_ap(self,A, P):
-        """
-        Compute AP = OuterProduct(A[i,j], P[i,d])
-        A: NxN matrix
-        P: NxD matrix
-        AP: NxNxD tensor
-        """
-        # AP[i,j,d] = A[i,j] * P[i,d]
-        return A[:, :, np.newaxis] * P[np.newaxis, :, :]  # (N,N,1) * (N,1,D) -> NxNxD
 
 
     def find_t_maxs(self, Sjid):
@@ -122,46 +111,42 @@ class HSMM:
         T = len(self.obs_seq)  # time steps
         N = len(self.states) # states count
         D = self.duration_probs.shape[1]
-        smoothing = 1e-10
         
         delta = np.full((T, N), 0.0)        
         delta_state = np.zeros((T, N), dtype=int)
         delta_dur = np.zeros((T, N), dtype=int)
+
+        PAST_DELTA = np.zeros((N, D))
+        EMISSION_PROBS = np.zeros((N, D))
+        DELTA_EMISSION = np.zeros((N, N, D))
+        AP = np.zeros((N, N, D)) # Precompute AP outside the loop
         
 
         #* INITIALIZATION
-
-        AP = np.zeros((N, N, D)) # Precompute AP outside the loop
-        
         AP[:, :, :] = self.start_probs[np.newaxis, :, np.newaxis]
      
         AP *= self.emission_probs[int(self.obs_seq[0]), np.newaxis, :, np.newaxis]
 
-        (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(AP) # In questo caso non serve, ma lo calcoliamo per verificare che sia tutto ok
+        (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(AP)  #! In questo caso non serve, ma lo calcoliamo per verificare che sia tutto ok
         delta[0, :] = p_maxs 
         delta_state[0, :] = np.array((-1,-1,-1,-1))
         delta_dur[0, :] = np.array((1,1,1,1))
         
-
         #* INDUCTION
-
-        AP = self.compute_ap(self.trans_mat, self.duration_probs)  # NxNxD — precomputed outside the loop
-
-
-        PAST_DELTA = np.zeros((N, D))
-        EMISSION_PROBS = np.zeros((N, D)) # Placeholder: replace with real emission computation
-        DELTA_EMISSION = np.zeros((N, N, D))
-
+        """
+        Compute AP = OuterProduct(A[i,j], P[i,d])
+        A: NxN matrix
+        P: NxD matrix
+        AP: NxNxD tensor
+        """
+        AP = self.trans_mat[:, :, np.newaxis] * self.duration_probs[np.newaxis, :, :]  # (N,N,1) * (N,1,D) -> NxNxD
+ 
         for t in range(1, T):
-            # Slice DELTAS window: shape (N, D) assuming DELTAS is shape (T, N, D)
 
+            # Slice DELTAS window: shape (N, D) assuming DELTAS is shape (T, N, D)
             for d_val in range(1, min(D, t+1)):
                 segment_indices = np.array(self.obs_seq[t - d_val : t], dtype=int)
-                # # 2. Extract the relevant rows from the emission matrix
-                # # This creates a sub-matrix of shape (d, num_states)
-                relevant_probs = self.emission_probs[segment_indices, :]   #DxN
-                  # # 3. Multiply along the 'duration' axis (axis 0)
-                # # This collapses the (d, num_states) matrix into a (num_states,) vector
+                relevant_probs = self.emission_probs[segment_indices, :]   # DxN
                 EMISSION_PROBS[:, d_val - 1] = np.prod(relevant_probs, axis=0)
 
 
@@ -174,8 +159,6 @@ class HSMM:
             # # Method A
             # DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] * EMISSION_PROBS[np.newaxis, :, :]  # NxNxD
             # RESULT_A = AP #* DELTA_EMISSION  # NxNxD element-wise
-
-            #print(RESULT_A)
 
             # # Method B
             # Step 1: Y_BroadcastProduct — PAST_DELTA (N,D) broadcast over j-axis of AP (N,N,D)
@@ -199,7 +182,6 @@ class HSMM:
         T = len(self.obs_seq)  # time steps
         N = len(self.states) # states count
         D = self.duration_probs.shape[1] - 1   # duration probabilities count
-        smoothing = 1e-10
         
         # Delta: max prob ending at t in state j
         delta = np.full((T, N), -np.inf)
@@ -213,8 +195,6 @@ class HSMM:
 
         #* INITIALIZATION  t==0
         #* delta(0,sj) = pi(sj) * b(sj, obs_seq[1])
-
-        #! The gemini proposed version was including also duration, but why? 
         for state in range(N):
             obs_index = int(self.obs_seq[0])
             obs_prob = self.emission_probs[obs_index, state]
@@ -228,23 +208,17 @@ class HSMM:
 
         #* INDUCTION  1<=t<=T
         #* delta(t, sj) = max{d} ( max{si} ( delta(t-d,si) * a(si,sj) ) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k)))  
-
-        EMISSION = np.zeros((N, D)) # Placeholder: replace with real emission computation
-
         for t in range(1, T):
             for sj in range(N):
                 for d in range(1, D + 1):
                     if t - d < 0: 
                         continue # Cannot look back past 0 here
                     
-                    #! This productory can be optimized and precomputed
                     # |-|{k = t-d}(b(sj, seq_obs(k)
                     obs_score = 1.0
                     for k in range(d):
                         obs_index = int(self.obs_seq[t-k-1])
                         obs_score *= self.emission_probs[obs_index, sj]
-
-                    EMISSION[sj, d-1] = obs_score
                     
                     # P(d|Sj)
                     dur_score = self.duration_probs[sj, d-1]
@@ -252,19 +226,13 @@ class HSMM:
                     best_prev_score = -np.inf
                     best_prev_state = -1
                     for si in range(N):
-
-                        # HSMMs handle self-loops via duration, Skip impossibile transitions
+                        # HSMMs handle self-loops via duration, Skip impossibile transitions. 
+                        #! But with product is necessary, maybe can be inserted but doesn't change much in terms of performance
                         # if si == sj or self.trans_mat[si, sj] == 0: 
-                        #     continue 
-                        # 
-                        
-                        # a(si,sj)
-                        trans_score = self.trans_mat[si, sj]      # Delta: max prob ending at t in state jng)
+                        #     continue
 
-                        # Score = delta(t-d,si) + Transition + Duration + Emissions
-                        total_score = trans_score * dur_score * delta[t - d, si] * obs_score
-
-                        # print(trans_score, dur_score, delta[t - d, si], total_score)
+                        # Score = delta(t-d,si) + a(si,sj)-Transition + Duration + Emissions
+                        total_score = delta[t - d, si] * self.trans_mat[si, sj] * dur_score * obs_score 
 
                         if total_score > best_prev_score:
                             best_prev_score = total_score
@@ -286,7 +254,6 @@ if __name__ == "__main__":
 
     # States: 0=Awake, 1=Light, 2=Deep, 3=REM
     sleep_states = ["Awake", "Light", "Deep", "REM"]
-
     # Emissions: Heart Rate (HR) discretized into 13 bins (0-12)
     # 0-4: Very Low/Stable, 5-8: Moderate, 9-12: High/Variable
     sleep_emissions = np.arange(13)
@@ -337,8 +304,6 @@ if __name__ == "__main__":
     ])
 
     # --- 4. START & DURATION PROBABILITIES ---
-
-    # Most people start "Awake" (1.0) or "Light Sleep" (0.0)
     sleep_start_probs = np.array([0.9, 0.1, 0.0, 0.0])
 
     def gaussian_window(length, mean, std):
@@ -367,18 +332,15 @@ if __name__ == "__main__":
     predicted_states = hsmm_sleep.run_viterbi()
     end_time = time.time()
     execution_time = end_time - start_time
-
-    print(f"Execution time of Vanilla Viterbi: {execution_time:.4f} seconds")
     print("Predicted States:")
     print(predicted_states)
+    print(f"Execution time of Vanilla Viterbi: {execution_time:.4f} seconds")
 
     start_time = time.time()
     predicted_states = hsmm_sleep.run_tensor_viterbi()
     end_time = time.time()
     execution_time = end_time - start_time
 
-    print(f"Execution time of Tensor Viterbi: {execution_time:.4f} seconds")
     print("Predicted States:")
     print(predicted_states)
-
-
+    print(f"Execution time of Tensor Viterbi: {execution_time:.4f} seconds")
