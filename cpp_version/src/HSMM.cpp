@@ -101,8 +101,13 @@ std::vector<int> HSMM::backtracking_termination(const std::vector<double>& delta
     return {};
 }
  
+std::vector<int> HSMM::decoding_vanilla_viterbi()
+{
+    // TODO: implement tensor Viterbi
+    return {};
+}
 
-std::vector<int> HSMM::run_tensor_viterbi()
+std::vector<int> HSMM::decoding_tensor_viterbi()
 {
     // TODO: implement tensor Viterbi
     //
