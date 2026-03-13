@@ -18,9 +18,9 @@ HSMM::HSMM(const std::vector<std::string>&  states,
 
 HSMM::HSMM(const std::string& json_data_path){
 
-    std::ifstream file(json_path);
+    std::ifstream file(json_data_path);
     if (!file.is_open())
-        throw std::runtime_error("load_sleep_model: cannot open \"" + json_path + "\"");
+        throw std::runtime_error("load_sleep_model: cannot open \"" + json_data_path + "\"");
  
     nlohmann::json cfg;
     file >> cfg;
@@ -74,9 +74,8 @@ HSMM::HSMM(const std::string& json_data_path){
                     sleep_start_probs,
                     sleep_duration_probs);
  
-    hsmm_sleep.set_obs_sequence(sleep_obs_seq);
- 
-    return hsmm_sleep;
+    hsmm_sleep.set_obs_seq(sleep_obs_seq);
+    return;
 }
 
 

@@ -5,6 +5,8 @@
 #include <tuple>
 #include <limits>
 #include <stdexcept>
+#include <fstream>
+
 #include "json.hpp"
 
 class HSMM {
@@ -49,8 +51,12 @@ public:
     int num_emissions() const { return static_cast<int>(emissions_.size()); }
     int max_duration()  const { return D_; }
     int obs_length()    const { return static_cast<int>(obs_seq_.size()); }
+    void set_obs_seq(const std::vector<int>& obs_seq){ this->obs_seq_ = obs_seq; }
 
-    void set_obs_sequence(const std::vector<int>& obs_seq);
+
+    // ------------------------------------------------------------------ //
+    // Viterbi Algorithm
+    // ------------------------------------------------------------------ //
 
     void find_t_maxs(const std::vector<double>& Sjid,
                      std::vector<double>&        max_vals,
@@ -61,10 +67,6 @@ public:
                                               const std::vector<int>&    psi_state,
                                               const std::vector<int>&    psi_dur,
                                               int                        T) const;
-
-    // ------------------------------------------------------------------ //
-    // Viterbi Algorithm
-    // ------------------------------------------------------------------ //
 
     std::vector<int> decoding_tensor_viterbi();
 
