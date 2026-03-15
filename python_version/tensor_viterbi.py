@@ -1,6 +1,7 @@
 from curses import window
 import random
 import numpy as np
+import cupy as cp
 import matplotlib.pyplot as plt
 import time
 import json
@@ -17,8 +18,8 @@ def get_log_emission_probs(obs, means, stds):
         # Log PDF of Gaussian
         var = stds[s]**2
         denom = np.sqrt(2 * np.pi * var)
-        exponent = -0.5 * ((obs - means[s])**2) / var
-        log_probs[:, s] = exponent - np.log(denom)
+        ecponent = -0.5 * ((obs - means[s])**2) / var
+        log_probs[:, s] = ecponent - np.log(denom)
     return log_probs
 
 # --- 4. HSMM VITERBI ALGORITHM ---
@@ -52,8 +53,8 @@ class HSMM:
             # Log PDF of Gaussian
             var = stds[s]**2
             denom = np.sqrt(2 * np.pi * var)
-            exponent = -0.5 * ((self.obs_seq - means[s])**2) / var
-            log_probs[:, s] = exponent - np.log(denom)
+            ecponent = -0.5 * ((self.obs_seq - means[s])**2) / var
+            log_probs[:, s] = ecponent - np.log(denom)
         return log_probs
 
 
@@ -81,6 +82,21 @@ class HSMM:
             max_vals[j]   = plane[i, d]
             max_states[j] = i               # x coordinate = source state
             max_durs[j]   = d               # y coordinate = duration
+
+        return max_vals, max_states, max_durs
+    
+    def find_t_maxs_cupy(self, Sjid):
+
+        N, _, D = Sjid.shape
+
+        # (N, N, D) → per ogni j, flatten il piano (i, d) → (N, N*D)
+        flat = Sjid.transpose(1, 0, 2).reshape(N, -1)  # (j, i*D)
+
+        flat_idx   = cp.argmax(flat, axis=1)            # (N,) — argmax per ogni j
+
+        max_vals   = flat[cp.arange(N), flat_idx]       # (N,)
+        max_states = flat_idx // D                       # i coordinate
+        max_durs   = flat_idx  % D                       # d coordinate
 
         return max_vals, max_states, max_durs
 
@@ -122,14 +138,8 @@ class HSMM:
         DELTA_EMISSION = np.zeros((N, N, D))
         AP = np.zeros((N, N, D)) # Precompute AP outside the loop
         
-
-        #* INITIALIZATION
-        AP[:, :, :] = self.start_probs[np.newaxis, :, np.newaxis]
-     
-        AP *= self.emission_probs[int(self.obs_seq[0]), np.newaxis, :, np.newaxis]
-
-        (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(AP)  #! In questo caso non serve, ma lo calcoliamo per verificare che sia tutto ok
-        delta[0, :] = p_maxs 
+        #* INITIALIZATION        
+        delta[0, :] = self.start_probs * self.emission_probs[int(self.obs_seq[0]), :]
         delta_state[0, :] = np.array((-1,-1,-1,-1))
         delta_dur[0, :] = np.array((1,1,1,1))
         
@@ -174,6 +184,68 @@ class HSMM:
 
         path = self.backtracking_termination(delta, delta_state, delta_dur, T)
         
+        return path
+    
+    def run_tensor_viterbi_cupy(self):
+        T = len(self.obs_seq)
+        N = len(self.states)
+        D = self.duration_probs.shape[1]
+
+        # ── Trasferimento dati sul device ────────────────────────────────────────
+        obs_seq_gpu  = cp.array(self.obs_seq, dtype=cp.int32)
+        emission_gpu = cp.array(self.emission_probs)   # (vocab, N)
+        trans_gpu    = cp.array(self.trans_mat)         # (N, N)
+        duration_gpu = cp.array(self.duration_probs)    # (N, D)
+        start_gpu    = cp.array(self.start_probs)       # (N,)
+
+        delta       = cp.full((T, N), 0.0)
+        delta_state = cp.zeros((T, N), dtype=cp.int32)
+        delta_dur   = cp.zeros((T, N), dtype=cp.int32)
+
+        EMISSION_PROBS = cp.zeros((N, D))
+        PAST_DELTA     = cp.zeros((N, D))
+
+        # ── INITIALIZATION ───────────────────────────────────────────────────────
+        delta[0, :]       = start_gpu * emission_gpu[int(obs_seq_gpu[0]), :]
+        delta_state[0, :] = cp.array([-1, -1, -1, -1], dtype=cp.int32)
+        delta_dur[0, :]   = cp.array([ 1,  1,  1,  1], dtype=cp.int32)
+
+        # ── AP precomputato fuori dal loop ───────────────────────────────────────
+        AP = trans_gpu[:, :, cp.newaxis] * duration_gpu[cp.newaxis, :, :]  # (N, N, D)
+
+        # ── INDUCTION ────────────────────────────────────────────────────────────
+        for t in range(1, T):
+
+            # Emission probs vettorizzate con cumprod ─────────────────────────────
+            window_obs = obs_seq_gpu[max(0, t - D):t]
+            window_em  = emission_gpu[window_obs, :]
+            cum_em     = cp.cumprod(cp.flip(window_em, axis=0), axis=0)  # (min(t,D), N)
+
+            #EMISSION_PROBS[:] = 0.0
+            EMISSION_PROBS[:, :cum_em.shape[0]] = cum_em.T      # (N, min(t,D))
+            
+            # Past delta window ───────────────────────────────────────────────────
+            window = delta[max(0, t - D):t, :]
+            #PAST_DELTA[:] = 0.0
+            PAST_DELTA[:, :window.shape[0]] = cp.flip(window, axis=0).T
+
+            # Score tensor ────────────────────────────────────────────────────────
+            DELTA_EMISSION = PAST_DELTA[:, cp.newaxis, :] * AP        # (N, N, D)
+            RESULT_B       = EMISSION_PROBS[cp.newaxis, :, :] * DELTA_EMISSION
+
+            # Find max over (i, d) for each j-plane ───────────────────────────────
+            p_maxs, s_maxs, d_maxs = self.find_t_maxs_cupy(RESULT_B)
+            delta[t, :]       = p_maxs
+            delta_state[t, :] = s_maxs
+            delta_dur[t, :]   = d_maxs + 1
+
+        # ── Backtracking ─────────────────────────────────────────────────────────
+        path = self.backtracking_termination(
+            cp.asnumpy(delta),
+            cp.asnumpy(delta_state),
+            cp.asnumpy(delta_dur),
+            T,
+        )
         return path
 
 
@@ -373,8 +445,8 @@ if __name__ == "__main__":
 
     # def gaussian_window(length, mean, std):
     #     x = np.arange(length)
-    #     # $$G(x) = \exp\left(-\frac{(x - \mu)^2}{2\sigma^2}\right)$$
-    #     g = np.exp(-0.5 * ((x - mean) / std) ** 2)
+    #     # $$G(x) = \ecp\left(-\frac{(x - \mu)^2}{2\sigma^2}\right)$$
+    #     g = np.ecp(-0.5 * ((x - mean) / std) ** 2)
     #     return g / g.sum()
 
     # sleep_duration_probs = np.zeros((4, max_duration))
@@ -392,25 +464,47 @@ if __name__ == "__main__":
     # hsmm_sleep = HSMM(sleep_states, sleep_emissions, sleep_trans_mat, sleep_emission_probs, sleep_start_probs, sleep_duration_probs)
     # hsmm_sleep.set_obs_sequence(sleep_obs_seq)
 
-    hsmm_sleep = load_sleep_model("sleep_data.json")
+    hsmm_sleep = load_sleep_model("../data/sleep_data_1000_4.json")
+#    hsmm_sleep = load_sleep_model("../data/sleep_data_big.json")
 
     start_time = time.time()
-    predicted_states = hsmm_sleep.run_viterbi()
+    predicted_states_vanilla = hsmm_sleep.run_viterbi()
     end_time = time.time()
     execution_time = end_time - start_time
     print("Predicted States:")
-    print(predicted_states)
+    print(predicted_states_vanilla)
     print(f"Execution time of Vanilla Viterbi: {execution_time:.4f} seconds")
 
     start_time = time.time()
-    predicted_states = hsmm_sleep.run_tensor_viterbi()
+    predicted_states_tensor = hsmm_sleep.run_tensor_viterbi()
     end_time = time.time()
     execution_time = end_time - start_time
-
     print("Predicted States:")
-    print(predicted_states)
+    print(predicted_states_tensor)
     print(f"Execution time of Tensor Viterbi: {execution_time:.4f} seconds")
 
+    start_time = time.time()
+    predicted_states_cupy = hsmm_sleep.run_tensor_viterbi_cupy()
+    end_time = time.time()
+    execution_time = end_time - start_time
+    print("Predicted States:")
+    print(predicted_states_cupy)
+    print(f"Execution time of Tensor Viterbi (CuPy): {execution_time:.4f} seconds")
+
+    # ── Result Correctness ───────────────────────────────────────────
+    np.testing.assert_array_equal(
+        predicted_states_vanilla,
+        predicted_states_tensor,
+        err_msg="❌ [FAIL] Tensor Viterbi different from Vanilla!"
+    )
+
+    np.testing.assert_array_equal(
+        predicted_states_vanilla,
+        predicted_states_cupy,
+        err_msg="❌ [FAIL] CuPy Viterbi different from Vanilla!"
+    )
+
+    print("✅ [SUCCESS] All results are the same!")
 
     #acc = compute_accuracy(sleep_stat_seq, predicted_states)
     #print(f"Accuracy: {acc:.2%}") 
