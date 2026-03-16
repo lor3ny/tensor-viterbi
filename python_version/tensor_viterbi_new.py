@@ -2,8 +2,33 @@ from curses import window
 import random
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
 import time
 import json
+
+
+
+# ----- DEBUG VOXEL
+
+
+def debug_visualize(input):
+    # Map values to colors using a colormap
+    norm = mcolors.Normalize(vmin=input.min(), vmax=input.max())
+    colormap = cm.viridis
+
+    # voxels() needs a (X, Y, Z, 4) RGBA inputay for facecolors
+    colors = colormap(norm(input))  # shape: (5, 5, 5, 4)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.voxels(input, facecolors=colors, edgecolor='k', linewidth=0.3)
+
+    # Add colorbar
+    sm = cm.ScalarMappable(cmap=colormap, norm=norm)
+    plt.colorbar(sm, ax=ax, shrink=0.5, label='Value')
+
+    plt.show()
 
 
 # --- 3. HELPER FUNCTIONS ---
@@ -74,8 +99,6 @@ class HSMM:
         max_states = np.zeros(N, dtype=int)
         max_durs   = np.zeros(N, dtype=int)
 
-        print(Sjid)
-
         for j in range(N):
             plane = Sjid[:, j, :]          # shape (N, D) — the j-th plane
             #print(plane)
@@ -109,8 +132,15 @@ class HSMM:
             # Move back
             t = t - d
             curr_state = prev_s
-            print(curr_state)
+  
         return path
+    
+
+    # In a 3D NumPy array with shape (a, b, c):
+
+    # axis 0 → depth (z) — the first index, selects a 2D "slice"
+    # axis 1 → rows — the second index, selects a row within a slice
+    # axis 2 → columns — the third index, selects a column within a row
 
     def run_tensor_viterbi(self):
         T = len(self.obs_seq)  # time steps
@@ -129,25 +159,40 @@ class HSMM:
 
         #* INITIALIZATION
 
-        AP[:, :, :] = self.start_probs[np.newaxis, :, np.newaxis] * self.duration_probs[np.newaxis, :, :]
 
-        print(AP)
+        #! PHASE 1 - INITIALIZATION: t=0 PROBABILMENTE VA LEVATO
 
-        for t in range(0, D):
-            #! Perchè non consideriamo l'emissione attuale?
+        AP[:,:,:] = self.start_probs[np.newaxis,:, np.newaxis]
+        AP *= self.emission_probs[int(self.obs_seq[0]), np.newaxis, :, np.newaxis]
+        delta[0, :] = AP[0,:,0]
+        delta_state[0, :] = -np.ones(N, dtype=int)
+        delta_dur[0, :] = np.ones(N, dtype=int) 
+
+        print(delta)
+
+        #! PHASE 2 - INITIALIZATION 0<t<D
+        #* Qui il concetto di durata è strambo, cercare di capirlo meglio in base al vanilla.
+        #* UNa volta capito va integrato con EMISSION_PROBS
+        PAST_DELTA = self.start_probs[:,np.newaxis] * self.duration_probs
+
+        delta[1:D+1] = PAST_DELTA.T
+
+        for t in range(1, D):
             for d_val in range(0, t):
                 segment_indices = np.array(self.obs_seq[t - d_val : t], dtype=int)
                 relevant_probs = self.emission_probs[segment_indices, :]   # DxN
                 EMISSION_PROBS[:, d_val - 1] = np.prod(relevant_probs, axis=0)
             
             #AP *= EMISSION_PROBS[np.newaxis, :, :]
+            delta_state[t, :] = -1
+            delta_dur[t, :] = t
 
-            (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(AP)  #! In questo caso non serve, ma lo calcoliamo per verificare che sia tutto ok
-            delta[t, :] = p_maxs 
-            delta_state[t, :] = np.array((-1,-1,-1,-1))
-            delta_dur[t, :] = d_maxs + 1
+        print(delta)    
 
-        #* INDUCTION
+
+        #print(delta)
+
+        # #! PHASE 3 - INDUCTION  t>0
         """
         Compute AP = OuterProduct(A[i,j], P[i,d])
         A: NxN matrix
@@ -208,33 +253,43 @@ class HSMM:
         psi_dur = np.zeros((T, N), dtype=int)
 
 
-        #* INITIALIZATION  t==0
-        #* delta(0,sj) = pi(sj) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k))
-        for t in range(0, D):
-            for state in range(N):
+        #! PHASE 1 - INITIALIZATION: t=0
+        for sj in range(N):
+            start_prob = self.start_probs[sj]
+            obs_index = int(self.obs_seq[0])
+            obs_score = self.emission_probs[obs_index, sj]
 
-                if t == 0:
-                    obs_score = int(self.obs_seq[0])
-                else:
-                    obs_score = 1.0
-                    
+            score = start_prob * obs_score
+            if score > delta[0, sj]:
+                    delta[0, sj] = score
+                    psi_dur[0, sj] = 1
+                    psi_state[0, sj] = -1 # Indicates start of sequence
+
+        #! PHASE 2 - INITIALIZATION 0<t<D
+        #* delta(0,sj) = pi(sj) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k))
+        # Per ogni stato j e per ogni possibile durata iniziale d (da 1 a dmax​), 
+        # calcoliamo la probabilità che il sistema inizi nello stato j e vi rimanga per il tempo d:
+        for state in range(N):
+            for t in range(1, D):
+                obs_score = 1.0    
                 for tau in range(0,t):
                     obs_index = int(self.obs_seq[tau])
                     obs_score *= self.emission_probs[obs_index, state]
 
-                dur_score = self.duration_probs[state, t]
-
+                dur_score = self.duration_probs[state, t-1]
                 start_prob = self.start_probs[state]
 
                 score = start_prob *  dur_score #* obs_score
                 if score > delta[t, state]:
                     delta[t, state] = score
                     psi_dur[t, state] = t
-                    psi_state[t, state] = -1 # Indicates start of sequence
+                    psi_state[t, state] = state
 
         print(delta)
 
-        # #* INDUCTION  1<=t<=T
+        #print(delta)
+
+        # #! PHASE 3 - INDUCTION  t>0
         # #* delta(t, sj) = max{d} ( max{si} ( delta(t-d,si) * a(si,sj) ) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k)))  
         # for t in range(1, T):
         #     for sj in range(N):
@@ -306,7 +361,7 @@ def load_sleep_model(json_path: str = "hsmm_config.json") -> HSMM:
     )                                                            # shape (4, 13)
     sleep_emission_probs = emission_by_state.T                   # shape (13, 4)
  
-    sleep_start_probs = np.array(cfg["pi"], dtype=float)        # shape (4,)
+    sleep_start_probs = np.array(cfg["pi"], dtype=float)        # shape (4,4)
  
     sleep_duration_probs = np.array(
         [s["duration_probs"] for s in cfg["states"]], dtype=float
