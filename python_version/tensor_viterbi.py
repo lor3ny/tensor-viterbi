@@ -182,7 +182,7 @@ class HSMM:
 
         T = len(self.obs_seq)  # time steps
         N = len(self.states) # states count
-        D = self.duration_probs.shape[1] - 1   # duration probabilities count
+        D = self.duration_probs.shape[1] # duration probabilities count
         
         # Delta: max prob ending at t in state j
         delta = np.full((T, N), -np.inf)
@@ -209,16 +209,16 @@ class HSMM:
 
         #* INDUCTION  1<=t<=T
         #* delta(t, sj) = max{d} ( max{si} ( delta(t-d,si) * a(si,sj) ) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k)))  
-        for t in range(1, T):
+        for t in range(D, T):
             for sj in range(N):
-                for d in range(1, D + 1):
+                for d in range(1, D+1):
                     if t - d < 0: 
                         continue # Cannot look back past 0 here
                     
                     # |-|{k = t-d}(b(sj, seq_obs(k)
                     obs_score = 1.0
-                    for k in range(d):
-                        obs_index = int(self.obs_seq[t-k-1])
+                    for tau in range(0,d):
+                        obs_index = int(self.obs_seq[t-tau])
                         obs_score *= self.emission_probs[obs_index, sj]
                     
                     # P(d|Sj)

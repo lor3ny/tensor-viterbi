@@ -74,8 +74,11 @@ class HSMM:
         max_states = np.zeros(N, dtype=int)
         max_durs   = np.zeros(N, dtype=int)
 
+        print(Sjid)
+
         for j in range(N):
             plane = Sjid[:, j, :]          # shape (N, D) — the j-th plane
+            #print(plane)
             flat_idx = np.argmax(plane)      # argmax over flattened (N*D)
             i, d = np.unravel_index(flat_idx, plane.shape)  # recover (i, d) coords
             max_vals[j]   = plane[i, d]
@@ -95,7 +98,7 @@ class HSMM:
         best_last_state = np.argmax(delta[t])
         curr_state = best_last_state
         
-        while t >= 0:
+        while t > 0:
             d = psi_dur[t, curr_state]
             prev_s = psi_state[t, curr_state]
             
@@ -106,6 +109,7 @@ class HSMM:
             # Move back
             t = t - d
             curr_state = prev_s
+            print(curr_state)
         return path
 
     def run_tensor_viterbi(self):
@@ -127,25 +131,22 @@ class HSMM:
 
         AP[:, :, :] = self.start_probs[np.newaxis, :, np.newaxis] * self.duration_probs[np.newaxis, :, :]
 
+        print(AP)
+
         for t in range(0, D):
-     
             #! Perchè non consideriamo l'emissione attuale?
-            for d_val in range(1, t+1):
+            for d_val in range(0, t):
                 segment_indices = np.array(self.obs_seq[t - d_val : t], dtype=int)
                 relevant_probs = self.emission_probs[segment_indices, :]   # DxN
                 EMISSION_PROBS[:, d_val - 1] = np.prod(relevant_probs, axis=0)
             
-            AP *= EMISSION_PROBS[np.newaxis, :, :]
+            #AP *= EMISSION_PROBS[np.newaxis, :, :]
 
             (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(AP)  #! In questo caso non serve, ma lo calcoliamo per verificare che sia tutto ok
             delta[t, :] = p_maxs 
-            if t == 0:
-                delta_state[t, :] = np.array((-1,-1,-1,-1))
-                delta_dur[t, :] = np.array((1,1,1,1))
-            else:
-                delta_state[t, :] = s_maxs
-                delta_dur[t, :] = d_maxs + 1
-        
+            delta_state[t, :] = np.array((-1,-1,-1,-1))
+            delta_dur[t, :] = d_maxs + 1
+
         #* INDUCTION
         """
         Compute AP = OuterProduct(A[i,j], P[i,d])
@@ -153,41 +154,41 @@ class HSMM:
         P: NxD matrix
         AP: NxNxD tensor
         """
-        AP = self.trans_mat[:, :, np.newaxis] * self.duration_probs[np.newaxis, :, :]  # (N,N,1) * (N,1,D) -> NxNxD
+        # AP = self.trans_mat[:, :, np.newaxis] * self.duration_probs[np.newaxis, :, :]  # (N,N,1) * (N,1,D) -> NxNxD
  
-        for t in range(D, T):
+        # for t in range(D, T):
 
-            # Slice DELTAS window: shape (N, D) assuming DELTAS is shape (T, N, D)
-            for d_val in range(1, D):
-                segment_indices = np.array(self.obs_seq[t - d_val : t], dtype=int)
-                relevant_probs = self.emission_probs[segment_indices, :]   # DxN
-                EMISSION_PROBS[:, d_val - 1] = np.prod(relevant_probs, axis=0)
+        #     # Slice DELTAS window: shape (N, D) assuming DELTAS is shape (T, N, D)
+        #     for d_val in range(1, D):
+        #         segment_indices = np.array(self.obs_seq[t - d_val : t], dtype=int)
+        #         relevant_probs = self.emission_probs[segment_indices, :]   # DxN
+        #         EMISSION_PROBS[:, d_val - 1] = np.prod(relevant_probs, axis=0)
 
 
-            window = delta[t-D : t, :]
-            PAST_DELTA[:, :window.shape[0]] = window[::-1].T 
+        #     window = delta[t-D : t, :]
+        #     PAST_DELTA[:, :window.shape[0]] = window[::-1].T 
 
-            #! emission prob computation
-            # EMISSION_PROBABILITY = np.ones((N, D))             # 
+        #     #! emission prob computation
+        #     # EMISSION_PROBABILITY = np.ones((N, D))             # 
 
-            # # Method A
-            # DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] * EMISSION_PROBS[np.newaxis, :, :]  # NxNxD
-            # RESULT_A = AP #* DELTA_EMISSION  # NxNxD element-wise
+        #     # # Method A
+        #     # DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] * EMISSION_PROBS[np.newaxis, :, :]  # NxNxD
+        #     # RESULT_A = AP #* DELTA_EMISSION  # NxNxD element-wise
 
-            # # Method B
-            # Step 1: Y_BroadcastProduct — PAST_DELTA (N,D) broadcast over j-axis of AP (N,N,D)
-            DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] * AP  # (N,1,D) * (N,N,D) -> NxNxD
-            # Step 2: X_BroadcastProduct — EMISSION_PROBABILITY (N,D) broadcast over i-axis
-            RESULT_B = EMISSION_PROBS[np.newaxis, :, :] * DELTA_EMISSION  # (1,N,D) * (N,N,D) -> NxNxD
+        #     # # Method B
+        #     # Step 1: Y_BroadcastProduct — PAST_DELTA (N,D) broadcast over j-axis of AP (N,N,D)
+        #     DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] * AP  # (N,1,D) * (N,N,D) -> NxNxD
+        #     # Step 2: X_BroadcastProduct — EMISSION_PROBABILITY (N,D) broadcast over i-axis
+        #     RESULT_B = EMISSION_PROBS[np.newaxis, :, :] * DELTA_EMISSION  # (1,N,D) * (N,N,D) -> NxNxD
 
-            (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(RESULT_B)   
-            delta[t, :] = p_maxs 
-            delta_state[t, :] = s_maxs
-            delta_dur[t, :] = d_maxs+1
+        #     (p_maxs, s_maxs, d_maxs) = self.find_t_maxs(RESULT_B)   
+        #     delta[t, :] = p_maxs 
+        #     delta_state[t, :] = s_maxs
+        #     delta_dur[t, :] = d_maxs+1
 
-        path = self.backtracking_termination(delta, delta_state, delta_dur, T)
+        # path = self.backtracking_termination(delta, delta_state, delta_dur, T)
         
-        return path
+        # return path
 
 
     # We use np.log() + smoothing to transform multiplications in additions
@@ -195,7 +196,7 @@ class HSMM:
 
         T = len(self.obs_seq)  # time steps
         N = len(self.states) # states count
-        D = self.duration_probs.shape[1] - 1   # duration probabilities count
+        D = self.duration_probs.shape[1]  # duration probabilities count
         
         # Delta: max prob ending at t in state j
         delta = np.full((T, N), -np.inf)
@@ -209,91 +210,71 @@ class HSMM:
 
         #* INITIALIZATION  t==0
         #* delta(0,sj) = pi(sj) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k))
-        # for t in range(0, D):
-        #     for state in range(N):
+        for t in range(0, D):
+            for state in range(N):
 
-        #         obs_score = 1.0
-        #         for k in range(t):
-        #             obs_index = int(self.obs_seq[t-k])
-        #             obs_score *= self.emission_probs[obs_index, state]
-
-        #         dur_score = self.duration_probs[state, t]
-
-        #         start_prob = self.start_probs[state]
-
-        #         if t == 0:
-        #             obs_score =  int(self.obs_seq[0])
-
-        #         score = start_prob * obs_score * dur_score
-        #         if score > delta[t, state]:
-        #             delta[t, state] = score
-        #             psi_dur[t, state] = t
-        #             psi_state[t, state] = -1 # Indicates start of sequence
-
-
-        #! Non mi torna
-        for state in range(N):
-            for d in range(1, D+1):
-                # Log-sum of emissions for the duration d
-                obs_score = 1.0
-                for k in range(d):
-                    obs_index = int(self.obs_seq[d-k])
+                if t == 0:
+                    obs_score = int(self.obs_seq[0])
+                else:
+                    obs_score = 1.0
+                    
+                for tau in range(0,t):
+                    obs_index = int(self.obs_seq[tau])
                     obs_score *= self.emission_probs[obs_index, state]
 
-                dur_score = self.duration_probs[state, d]
+                dur_score = self.duration_probs[state, t]
 
                 start_prob = self.start_probs[state]
-                
-                score = start_prob * dur_score + obs_score
-                
-                # We track the best way to end at time d-1
-                if score > delta[d-1, state]:
-                    delta[d-1, state] = score
-                    psi_state[d-1, state] = -1 # Root
-                    psi_dur[d-1, state] = d
 
+                score = start_prob *  dur_score #* obs_score
+                if score > delta[t, state]:
+                    delta[t, state] = score
+                    psi_dur[t, state] = t
+                    psi_state[t, state] = -1 # Indicates start of sequence
 
-        #* INDUCTION  1<=t<=T
-        #* delta(t, sj) = max{d} ( max{si} ( delta(t-d,si) * a(si,sj) ) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k)))  
-        for t in range(D, T):
-            for sj in range(N):
-                for d in range(1, D + 1):
-                    if t - d < 0: 
-                        continue # Cannot look back past 0 here
+        print(delta)
+
+        # #* INDUCTION  1<=t<=T
+        # #* delta(t, sj) = max{d} ( max{si} ( delta(t-d,si) * a(si,sj) ) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k)))  
+        # for t in range(1, T):
+        #     for sj in range(N):
+        #         for d in range(1, D+1):
+        #             if t - d < 0: 
+        #                 continue # Cannot look back past 0 here
                     
-                    # |-|{k = t-d}(b(sj, seq_obs(k)
-                    obs_score = 1.0
-                    for k in range(d):
-                        obs_index = int(self.obs_seq[t-k-1])
-                        obs_score *= self.emission_probs[obs_index, sj]
+        #             # |-|{k = t-d}(b(sj, seq_obs(k)
+        #             obs_score = 1.0
+        #             for tau in range(0,d):
+        #                 obs_index = int(self.obs_seq[t-tau])
+        #                 obs_score *= self.emission_probs[obs_index, sj]
                     
-                    # P(d|Sj)
-                    dur_score = self.duration_probs[sj, d-1]
+        #             # P(d|Sj)
+        #             dur_score = self.duration_probs[sj, d-1]
                     
-                    best_prev_score = -np.inf
-                    best_prev_state = -1
-                    for si in range(N):
-                        # HSMMs handle self-loops via duration, Skip impossibile transitions. 
-                        #! But with product is necessary, maybe can be inserted but doesn't change much in terms of performance
-                        # if si == sj or self.trans_mat[si, sj] == 0: 
-                        #     continue
+        #             best_prev_score = -np.inf
+        #             best_prev_state = -1
+        #             for si in range(N):
+        #                 # HSMMs handle self-loops via duration, Skip impossibile transitions. 
+        #                 #! But with product is necessary, maybe can be inserted but doesn't change much in terms of performance
+        #                 # if si == sj or self.trans_mat[si, sj] == 0: 
+        #                 #     continue
 
-                        # Score = delta(t-d,si) + a(si,sj)-Transition + Duration + Emissions
-                        total_score = delta[t - d, si] * self.trans_mat[si, sj] * dur_score * obs_score 
+        #                 # Score = delta(t-d,si) + a(si,sj)-Transition + Duration + Emissions
+        #                 total_score = delta[t - d, si] * self.trans_mat[si, sj] * dur_score * obs_score 
 
-                        if total_score > best_prev_score:
-                            best_prev_score = total_score
-                            best_prev_state = si
+        #                 if total_score > best_prev_score:
+        #                     best_prev_score = total_score
+        #                     best_prev_state = si
                     
-                    # Update Delta if this duration d is better than others for ending at t
-                    if best_prev_score > delta[t, sj]:
-                        delta[t, sj] = best_prev_score
-                        psi_state[t, sj] = best_prev_state
-                        psi_dur[t, sj] = d             
+        #             # Update Delta if this duration d is better than others for ending at t
+        #             if best_prev_score > delta[t, sj]:
+        #                 delta[t, sj] = best_prev_score
+        #                 psi_state[t, sj] = best_prev_state
+        #                 psi_dur[t, sj] = d             
 
-        path = self.backtracking_termination(delta, psi_state, psi_dur, T)
+        # path = self.backtracking_termination(delta, psi_state, psi_dur, T)
             
-        return path
+        # return path
     
 
 
@@ -352,93 +333,95 @@ def compute_accuracy(true_states, predicted_states):
 if __name__ == "__main__":
 
 
-    # States: 0=Awake, 1=Light, 2=Deep, 3=REM
-    sleep_states = ["Awake", "Light", "Deep", "REM"]
-    # Emissions: Heart Rate (HR) discretized into 13 bins (0-12)
-    # 0-4: Very Low/Stable, 5-8: Moderate, 9-12: High/Variable
-    sleep_emissions = np.arange(13)
+    # # States: 0=Awake, 1=Light, 2=Deep, 3=REM
+    # sleep_states = ["Awake", "Light", "Deep", "REM"]
+    # # Emissions: Heart Rate (HR) discretized into 13 bins (0-12)
+    # # 0-4: Very Low/Stable, 5-8: Moderate, 9-12: High/Variable
+    # sleep_emissions = np.arange(13)
 
-    time_steps = 38
-    # --- CONFIGURATION ---
-    max_duration = 30  # HB extended to 30
+    # time_steps = 38
+    # # --- CONFIGURATION ---
+    # max_duration = 30  # HB extended to 30
 
-    # --- 1. TRANSITION MATRIX (A) ---
-    sleep_trans_mat = np.array([
-        [0.0, 0.9, 0.0, 0.1],  # From Awake: Mostly to Light
-        [0.1, 0.0, 0.5, 0.4],  # From Light: To Deep, REM, or briefly Awake
-        [0.0, 1.0, 0.0, 0.0],  # From Deep: Almost always back to Light first
-        [0.2, 0.8, 0.0, 0.0]   # From REM: To Light or wake up
-    ])
+    # # --- 1. TRANSITION MATRIX (A) ---
+    # sleep_trans_mat = np.array([
+    #     [0.0, 0.9, 0.0, 0.1],  # From Awake: Mostly to Light
+    #     [0.1, 0.0, 0.5, 0.4],  # From Light: To Deep, REM, or briefly Awake
+    #     [0.0, 1.0, 0.0, 0.0],  # From Deep: Almost always back to Light first
+    #     [0.2, 0.8, 0.0, 0.0]   # From REM: To Light or wake up
+    # ])
 
-    sleep_stat_seq = [0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1]
+    # sleep_stat_seq = [0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1]
 
-    sleep_obs_seq = [18, 17, 14, 14, 12, 20, 17, 18, 10, 13, 13, 13, 14, 15, 15, 14, 15, 13, 14, 14, 5, 7, 7, 3, 7, 5, 3, 11, 12, 9, 6, 4, 8, 2, 0, 5, 1, 3, 2, 3, 3, 1, 7, 4, 6, 5, 4, 5, 3, 6, 6, 6, 9, 6, 6, 7, 4, 9, 4, 17, 8, 4, 3, 4, 4, 0, 2, 0, 5, 3, 6, 6, 8, 8, 10, 7, 4, 8, 8, 2, 3, 2, 0, 0, 0, 3, 2, 2, 5, 1, 2, 4, 1, 0, 1, 1, 6, 9, 9, 5]
+    # sleep_obs_seq = [18, 17, 14, 14, 12, 20, 17, 18, 10, 13, 13, 13, 14, 15, 15, 14, 15, 13, 14, 14, 5, 7, 7, 3, 7, 5, 3, 11, 12, 9, 6, 4, 8, 2, 0, 5, 1, 3, 2, 3, 3, 1, 7, 4, 6, 5, 4, 5, 3, 6, 6, 6, 9, 6, 6, 7, 4, 9, 4, 17, 8, 4, 3, 4, 4, 0, 2, 0, 5, 3, 6, 6, 8, 8, 10, 7, 4, 8, 8, 2, 3, 2, 0, 0, 0, 3, 2, 2, 5, 1, 2, 4, 1, 0, 1, 1, 6, 9, 9, 5]
 
-    # --- 2. EMISSION PROBABILITIES (B) ---
-    # Each column represents a state; rows represent the 30 HR bins.
-    # Deep sleep = low HR, Awake/REM = higher HR.
-    sleep_emission_probs = np.array([
-        # Awake  | Light  | Deep   | REM
-        [0.0001,  0.005,   0.120,   0.0001],  # Bin 0  (Lowest HR)
-        [0.0001,  0.010,   0.180,   0.0001],  # Bin 1
-        [0.0005,  0.020,   0.220,   0.0005],  # Bin 2
-        [0.001,   0.040,   0.200,   0.001 ],  # Bin 3
-        [0.001,   0.080,   0.130,   0.001 ],  # Bin 4
-        [0.001,   0.130,   0.080,   0.001 ],  # Bin 5
-        [0.002,   0.180,   0.040,   0.002 ],  # Bin 6
-        [0.002,   0.200,   0.015,   0.002 ],  # Bin 7
-        [0.003,   0.160,   0.007,   0.003 ],  # Bin 8
-        [0.005,   0.100,   0.003,   0.005 ],  # Bin 9
-        [0.010,   0.060,   0.002,   0.010 ],  # Bin 10
-        [0.020,   0.030,   0.001,   0.025 ],  # Bin 11
-        [0.040,   0.015,   0.001,   0.060 ],  # Bin 12
-        [0.080,   0.008,   0.001,   0.130 ],  # Bin 13
-        [0.120,   0.004,   0.001,   0.200 ],  # Bin 14  (Mid-range)
-        [0.160,   0.003,   0.000,   0.250 ],  # Bin 15
-        [0.180,   0.002,   0.000,   0.180 ],  # Bin 16
-        [0.160,   0.002,   0.000,   0.080 ],  # Bin 17
-        [0.120,   0.001,   0.000,   0.040 ],  # Bin 18
-        [0.080,   0.001,   0.000,   0.015 ],  # Bin 19
-        [0.060,   0.001,   0.000,   0.008 ],  # Bin 20
-        [0.040,   0.001,   0.000,   0.004 ],  # Bin 21
-        [0.030,   0.001,   0.000,   0.002 ],  # Bin 22
-        [0.020,   0.001,   0.000,   0.001 ],  # Bin 23
-        [0.015,   0.001,   0.000,   0.001 ],  # Bin 24
-        [0.010,   0.001,   0.000,   0.001 ],  # Bin 25
-        [0.006,   0.001,   0.000,   0.001 ],  # Bin 26
-        [0.004,   0.001,   0.000,   0.001 ],  # Bin 27
-        [0.003,   0.001,   0.000,   0.001 ],  # Bin 28
-        [0.002,   0.001,   0.000,   0.001 ],  # Bin 29 (Highest HR)
-    ])
+    # # --- 2. EMISSION PROBABILITIES (B) ---
+    # # Each column represents a state; rows represent the 30 HR bins.
+    # # Deep sleep = low HR, Awake/REM = higher HR.
+    # sleep_emission_probs = np.array([
+    #     # Awake  | Light  | Deep   | REM
+    #     [0.0001,  0.005,   0.120,   0.0001],  # Bin 0  (Lowest HR)
+    #     [0.0001,  0.010,   0.180,   0.0001],  # Bin 1
+    #     [0.0005,  0.020,   0.220,   0.0005],  # Bin 2
+    #     [0.001,   0.040,   0.200,   0.001 ],  # Bin 3
+    #     [0.001,   0.080,   0.130,   0.001 ],  # Bin 4
+    #     [0.001,   0.130,   0.080,   0.001 ],  # Bin 5
+    #     [0.002,   0.180,   0.040,   0.002 ],  # Bin 6
+    #     [0.002,   0.200,   0.015,   0.002 ],  # Bin 7
+    #     [0.003,   0.160,   0.007,   0.003 ],  # Bin 8
+    #     [0.005,   0.100,   0.003,   0.005 ],  # Bin 9
+    #     [0.010,   0.060,   0.002,   0.010 ],  # Bin 10
+    #     [0.020,   0.030,   0.001,   0.025 ],  # Bin 11
+    #     [0.040,   0.015,   0.001,   0.060 ],  # Bin 12
+    #     [0.080,   0.008,   0.001,   0.130 ],  # Bin 13
+    #     [0.120,   0.004,   0.001,   0.200 ],  # Bin 14  (Mid-range)
+    #     [0.160,   0.003,   0.000,   0.250 ],  # Bin 15
+    #     [0.180,   0.002,   0.000,   0.180 ],  # Bin 16
+    #     [0.160,   0.002,   0.000,   0.080 ],  # Bin 17
+    #     [0.120,   0.001,   0.000,   0.040 ],  # Bin 18
+    #     [0.080,   0.001,   0.000,   0.015 ],  # Bin 19
+    #     [0.060,   0.001,   0.000,   0.008 ],  # Bin 20
+    #     [0.040,   0.001,   0.000,   0.004 ],  # Bin 21
+    #     [0.030,   0.001,   0.000,   0.002 ],  # Bin 22
+    #     [0.020,   0.001,   0.000,   0.001 ],  # Bin 23
+    #     [0.015,   0.001,   0.000,   0.001 ],  # Bin 24
+    #     [0.010,   0.001,   0.000,   0.001 ],  # Bin 25
+    #     [0.006,   0.001,   0.000,   0.001 ],  # Bin 26
+    #     [0.004,   0.001,   0.000,   0.001 ],  # Bin 27
+    #     [0.003,   0.001,   0.000,   0.001 ],  # Bin 28
+    #     [0.002,   0.001,   0.000,   0.001 ],  # Bin 29 (Highest HR)
+    # ])
 
-    # Normalize each column so probabilities sum to 1
-    sleep_emission_probs = sleep_emission_probs / sleep_emission_probs.sum(axis=0, keepdims=True)
+    # # Normalize each column so probabilities sum to 1
+    # sleep_emission_probs = sleep_emission_probs / sleep_emission_probs.sum(axis=0, keepdims=True)
 
-    # --- 3. START & DURATION PROBABILITIES ---
-    sleep_start_probs = np.array([0.9, 0.1, 0.0, 0.0])
+    # # --- 3. START & DURATION PROBABILITIES ---
+    # sleep_start_probs = np.array([0.9, 0.1, 0.0, 0.0])
 
-    def gaussian_window(length, mean, std):
-        x = np.arange(length)
-        # $$G(x) = \exp\left(-\frac{(x - \mu)^2}{2\sigma^2}\right)$$
-        g = np.exp(-0.5 * ((x - mean) / std) ** 2)
-        return g / g.sum()
+    # def gaussian_window(length, mean, std):
+    #     x = np.arange(length)
+    #     # $$G(x) = \exp\left(-\frac{(x - \mu)^2}{2\sigma^2}\right)$$
+    #     g = np.exp(-0.5 * ((x - mean) / std) ** 2)
+    #     return g / g.sum()
 
-    sleep_duration_probs = np.zeros((4, max_duration))
+    # sleep_duration_probs = np.zeros((4, max_duration))
 
-    # Durations scaled for max_duration=30
-    sleep_duration_probs[0, :] = gaussian_window(max_duration, mean=5,  std=2)  # Awake: Short bursts
-    sleep_duration_probs[1, :] = gaussian_window(max_duration, mean=10, std=3)  # Light: Moderate
-    sleep_duration_probs[2, :] = gaussian_window(max_duration, mean=15, std=3)  # Deep:  Long
-    sleep_duration_probs[3, :] = gaussian_window(max_duration, mean=8,  std=2)  # REM:dow(max_duration, mean=3, std=1)  # REM: Medium
+    # # Durations scaled for max_duration=30
+    # sleep_duration_probs[0, :] = gaussian_window(max_duration, mean=5,  std=2)  # Awake: Short bursts
+    # sleep_duration_probs[1, :] = gaussian_window(max_duration, mean=10, std=3)  # Light: Moderate
+    # sleep_duration_probs[2, :] = gaussian_window(max_duration, mean=15, std=3)  # Deep:  Long
+    # sleep_duration_probs[3, :] = gaussian_window(max_duration, mean=8,  std=2)  # REM:dow(max_duration, mean=3, std=1)  # REM: Medium
 
-    print("Transition Matrix:\n", sleep_trans_mat)
-    print("Emission Probabilities:\n", sleep_emission_probs)
-    print("Duration Probabilities:\n", sleep_duration_probs)
+    # print("Transition Matrix:\n", sleep_trans_mat)
+    # print("Emission Probabilities:\n", sleep_emission_probs)
+    # print("Duration Probabilities:\n", sleep_duration_probs)
 
-    hsmm_sleep = HSMM(sleep_states, sleep_emissions, sleep_trans_mat, sleep_emission_probs, sleep_start_probs, sleep_duration_probs)
-    hsmm_sleep.set_obs_sequence(sleep_obs_seq)
+    # hsmm_sleep = HSMM(sleep_states, sleep_emissions, sleep_trans_mat, sleep_emission_probs, sleep_start_probs, sleep_duration_probs)
+    # hsmm_sleep.set_obs_sequence(sleep_obs_seq)
 
-    # hsmm_sleep = load_sleep_model("sleep_data.json")
+    print("---------------------------------------")
+
+    hsmm_sleep = load_sleep_model("sleep_data.json")
 
     start_time = time.time()
     v_predicted_states = hsmm_sleep.run_viterbi()
