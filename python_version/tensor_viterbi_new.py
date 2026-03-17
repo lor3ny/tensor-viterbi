@@ -159,33 +159,37 @@ class HSMM:
 
         #* INITIALIZATION
 
-
-        #! PHASE 1 - INITIALIZATION: t=0 PROBABILMENTE VA LEVATO
-
-        AP[:,:,:] = self.start_probs[np.newaxis,:, np.newaxis]
-        AP *= self.emission_probs[int(self.obs_seq[0]), np.newaxis, :, np.newaxis]
-        delta[0, :] = AP[0,:,0]
-        delta_state[0, :] = -np.ones(N, dtype=int)
-        delta_dur[0, :] = np.ones(N, dtype=int) 
-
-        print(delta)
-
-        #! PHASE 2 - INITIALIZATION 0<t<D
+        #! PHASE 1 - INITIALIZATION 0<=t<D
         #* Qui il concetto di durata è strambo, cercare di capirlo meglio in base al vanilla.
         #* UNa volta capito va integrato con EMISSION_PROBS
         PAST_DELTA = self.start_probs[:,np.newaxis] * self.duration_probs
 
-        delta[1:D+1] = PAST_DELTA.T
 
-        for t in range(1, D):
-            for d_val in range(0, t):
-                segment_indices = np.array(self.obs_seq[t - d_val : t], dtype=int)
-                relevant_probs = self.emission_probs[segment_indices, :]   # DxN
-                EMISSION_PROBS[:, d_val - 1] = np.prod(relevant_probs, axis=0)
+        #* METHOD 1
+        for d in range(0,D):
+            obs = int(self.obs_seq[d])
+            self.emission_probs[obs, :]
+            EMISSION_PROBS[:,d:] *= self.emission_probs[obs, :].T[:,np.newaxis]
+
+        #* METHOD 2
+        # obs_indices = self.obs_seq[:D].astype(int)  # shape: (D,)
+        # emission_rows = self.emission_probs[obs_indices, :]
+        # cum_product = np.cumprod(emission_rows, axis=0)  # shape: (D, num_states)
+        # EMISSION_PROBS *= cum_product.T  # shape: (num_states, D)
+
+        delta[0:D] = (PAST_DELTA * EMISSION_PROBS).T
+
+
+        # for t in range(0, D):
+        #     for d_val in range(0, t):
+        #         segment_indices = np.array(self.obs_seq[t - d_val : t], dtype=int)
+        #         relevant_probs = self.emission_probs[segment_indices, :]   # DxN
+        #         EMISSION_PROBS[:, d_val - 1] = np.prod(relevant_probs, axis=0)
             
-            #AP *= EMISSION_PROBS[np.newaxis, :, :]
-            delta_state[t, :] = -1
-            delta_dur[t, :] = t
+        #     print(EMISSION_PROBS)
+        #     #AP *= EMISSION_PROBS[np.newaxis, :, :]
+        #     delta_state[t, :] = -1
+        #     delta_dur[t, :] = t
 
         print(delta)    
 
@@ -247,43 +251,28 @@ class HSMM:
         delta = np.full((T, N), -np.inf)
         
         # Backpointers to reconstruct path
-        # psi_state[t, j] = previous state i that led to j ending at t
-        # psi_dur[t, j] = duration d that state j held ending at t
         psi_state = np.zeros((T, N), dtype=int)
         psi_dur = np.zeros((T, N), dtype=int)
 
 
-        #! PHASE 1 - INITIALIZATION: t=0
-        for sj in range(N):
-            start_prob = self.start_probs[sj]
-            obs_index = int(self.obs_seq[0])
-            obs_score = self.emission_probs[obs_index, sj]
-
-            score = start_prob * obs_score
-            if score > delta[0, sj]:
-                    delta[0, sj] = score
-                    psi_dur[0, sj] = 1
-                    psi_state[0, sj] = -1 # Indicates start of sequence
-
-        #! PHASE 2 - INITIALIZATION 0<t<D
+        #! PHASE 1 - INITIALIZATION 0<=t<D
         #* delta(0,sj) = pi(sj) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k))
         # Per ogni stato j e per ogni possibile durata iniziale d (da 1 a dmax​), 
         # calcoliamo la probabilità che il sistema inizi nello stato j e vi rimanga per il tempo d:
         for state in range(N):
-            for t in range(1, D):
+            for d in range(0, D):
                 obs_score = 1.0    
-                for tau in range(0,t):
+                for tau in range(0,d+1):
                     obs_index = int(self.obs_seq[tau])
                     obs_score *= self.emission_probs[obs_index, state]
 
-                dur_score = self.duration_probs[state, t-1]
+                dur_score = self.duration_probs[state, d]
                 start_prob = self.start_probs[state]
-
-                score = start_prob *  dur_score #* obs_score
-                if score > delta[t, state]:
-                    delta[t, state] = score
-                    psi_dur[t, state] = t
-                    psi_state[t, state] = state
+                score = start_prob *  dur_score * obs_score
+                if score > delta[d, state]:
+                    delta[d, state] = score
+                    psi_dur[d, state] = d
+                    psi_state[d, state] = state
 
         print(delta)
 
