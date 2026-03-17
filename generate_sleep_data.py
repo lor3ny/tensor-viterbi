@@ -12,8 +12,8 @@ random.seed(42)
  
 sleep_states    = ["Awake", "Light", "Deep", "REM"]
 sleep_emissions = np.arange(13)
-time_steps      = 20
-max_duration    = 5
+time_steps      = 300
+max_duration    = 10
  
 # --- Observation sequence ----------------------------------------------------
 sleep_obs_seq = np.zeros(time_steps)
