@@ -6,7 +6,10 @@ import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 import time
 import json
+import sys
 
+
+from validation.hsmmlearn_viterbi import validate
 
 
 # ----- DEBUG VOXEL
@@ -259,15 +262,12 @@ class HSMM:
                 score = start_prob *  dur_score * obs_score
                 if score > delta[d, state]:
                     delta[d, state] = score
-                    if(d+1) == 0:
-                        print("here")
                     psi_dur[d, state] = d+1
                     psi_state[d, state] = state
 
         #! PHASE 2 - INDUCTION  t>0
         #* delta(t, sj) = max{d} ( max{si} ( delta(t-d,si) * a(si,sj) ) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k)))  
         for t in range(1, T):
-            print(t)
             for sj in range(N):
                 for d in range(1, D+1):
                     if t - d < 0: 
@@ -301,7 +301,6 @@ class HSMM:
                     if best_prev_score > delta[t, sj]:
                         delta[t, sj] = best_prev_score
                         psi_state[t, sj] = best_prev_state
-                        print(d)
                         psi_dur[t, sj] = d
 
         path = self.backtracking_termination(delta, psi_state, psi_dur, T)
@@ -356,101 +355,8 @@ def load_sleep_model(json_path: str = "hsmm_config.json") -> HSMM:
 
     return hsmm_sleep
 
-def compute_accuracy(true_states, predicted_states):
-    true_states = np.array(true_states)
-    predicted_states = np.array(predicted_states)
-    return np.sum(true_states == predicted_states) / len(true_states)
-
 
 if __name__ == "__main__":
-
-
-    # # States: 0=Awake, 1=Light, 2=Deep, 3=REM
-    # sleep_states = ["Awake", "Light", "Deep", "REM"]
-    # # Emissions: Heart Rate (HR) discretized into 13 bins (0-12)
-    # # 0-4: Very Low/Stable, 5-8: Moderate, 9-12: High/Variable
-    # sleep_emissions = np.arange(13)
-
-    # time_steps = 38
-    # # --- CONFIGURATION ---
-    # max_duration = 30  # HB extended to 30
-
-    # # --- 1. TRANSITION MATRIX (A) ---
-    # sleep_trans_mat = np.array([
-    #     [0.0, 0.9, 0.0, 0.1],  # From Awake: Mostly to Light
-    #     [0.1, 0.0, 0.5, 0.4],  # From Light: To Deep, REM, or briefly Awake
-    #     [0.0, 1.0, 0.0, 0.0],  # From Deep: Almost always back to Light first
-    #     [0.2, 0.8, 0.0, 0.0]   # From REM: To Light or wake up
-    # ])
-
-    # sleep_stat_seq = [0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1]
-
-    # sleep_obs_seq = [18, 17, 14, 14, 12, 20, 17, 18, 10, 13, 13, 13, 14, 15, 15, 14, 15, 13, 14, 14, 5, 7, 7, 3, 7, 5, 3, 11, 12, 9, 6, 4, 8, 2, 0, 5, 1, 3, 2, 3, 3, 1, 7, 4, 6, 5, 4, 5, 3, 6, 6, 6, 9, 6, 6, 7, 4, 9, 4, 17, 8, 4, 3, 4, 4, 0, 2, 0, 5, 3, 6, 6, 8, 8, 10, 7, 4, 8, 8, 2, 3, 2, 0, 0, 0, 3, 2, 2, 5, 1, 2, 4, 1, 0, 1, 1, 6, 9, 9, 5]
-
-    # # --- 2. EMISSION PROBABILITIES (B) ---
-    # # Each column represents a state; rows represent the 30 HR bins.
-    # # Deep sleep = low HR, Awake/REM = higher HR.
-    # sleep_emission_probs = np.array([
-    #     # Awake  | Light  | Deep   | REM
-    #     [0.0001,  0.005,   0.120,   0.0001],  # Bin 0  (Lowest HR)
-    #     [0.0001,  0.010,   0.180,   0.0001],  # Bin 1
-    #     [0.0005,  0.020,   0.220,   0.0005],  # Bin 2
-    #     [0.001,   0.040,   0.200,   0.001 ],  # Bin 3
-    #     [0.001,   0.080,   0.130,   0.001 ],  # Bin 4
-    #     [0.001,   0.130,   0.080,   0.001 ],  # Bin 5
-    #     [0.002,   0.180,   0.040,   0.002 ],  # Bin 6
-    #     [0.002,   0.200,   0.015,   0.002 ],  # Bin 7
-    #     [0.003,   0.160,   0.007,   0.003 ],  # Bin 8
-    #     [0.005,   0.100,   0.003,   0.005 ],  # Bin 9
-    #     [0.010,   0.060,   0.002,   0.010 ],  # Bin 10
-    #     [0.020,   0.030,   0.001,   0.025 ],  # Bin 11
-    #     [0.040,   0.015,   0.001,   0.060 ],  # Bin 12
-    #     [0.080,   0.008,   0.001,   0.130 ],  # Bin 13
-    #     [0.120,   0.004,   0.001,   0.200 ],  # Bin 14  (Mid-range)
-    #     [0.160,   0.003,   0.000,   0.250 ],  # Bin 15
-    #     [0.180,   0.002,   0.000,   0.180 ],  # Bin 16
-    #     [0.160,   0.002,   0.000,   0.080 ],  # Bin 17
-    #     [0.120,   0.001,   0.000,   0.040 ],  # Bin 18
-    #     [0.080,   0.001,   0.000,   0.015 ],  # Bin 19
-    #     [0.060,   0.001,   0.000,   0.008 ],  # Bin 20
-    #     [0.040,   0.001,   0.000,   0.004 ],  # Bin 21
-    #     [0.030,   0.001,   0.000,   0.002 ],  # Bin 22
-    #     [0.020,   0.001,   0.000,   0.001 ],  # Bin 23
-    #     [0.015,   0.001,   0.000,   0.001 ],  # Bin 24
-    #     [0.010,   0.001,   0.000,   0.001 ],  # Bin 25
-    #     [0.006,   0.001,   0.000,   0.001 ],  # Bin 26
-    #     [0.004,   0.001,   0.000,   0.001 ],  # Bin 27
-    #     [0.003,   0.001,   0.000,   0.001 ],  # Bin 28
-    #     [0.002,   0.001,   0.000,   0.001 ],  # Bin 29 (Highest HR)
-    # ])
-
-    # # Normalize each column so probabilities sum to 1
-    # sleep_emission_probs = sleep_emission_probs / sleep_emission_probs.sum(axis=0, keepdims=True)
-
-    # # --- 3. START & DURATION PROBABILITIES ---
-    # sleep_start_probs = np.array([0.9, 0.1, 0.0, 0.0])
-
-    # def gaussian_window(length, mean, std):
-    #     x = np.arange(length)
-    #     # $$G(x) = \exp\left(-\frac{(x - \mu)^2}{2\sigma^2}\right)$$
-    #     g = np.exp(-0.5 * ((x - mean) / std) ** 2)
-    #     return g / g.sum()
-
-    # sleep_duration_probs = np.zeros((4, max_duration))
-
-    # # Durations scaled for max_duration=30
-    # sleep_duration_probs[0, :] = gaussian_window(max_duration, mean=5,  std=2)  # Awake: Short bursts
-    # sleep_duration_probs[1, :] = gaussian_window(max_duration, mean=10, std=3)  # Light: Moderate
-    # sleep_duration_probs[2, :] = gaussian_window(max_duration, mean=15, std=3)  # Deep:  Long
-    # sleep_duration_probs[3, :] = gaussian_window(max_duration, mean=8,  std=2)  # REM:dow(max_duration, mean=3, std=1)  # REM: Medium
-
-    # print("Transition Matrix:\n", sleep_trans_mat)
-    # print("Emission Probabilities:\n", sleep_emission_probs)
-    # print("Duration Probabilities:\n", sleep_duration_probs)
-
-    # hsmm_sleep = HSMM(sleep_states, sleep_emissions, sleep_trans_mat, sleep_emission_probs, sleep_start_probs, sleep_duration_probs)
-    # hsmm_sleep.set_obs_sequence(sleep_obs_seq)
-
 
     hsmm_sleep = load_sleep_model("sleep_data.json")
 
@@ -458,8 +364,8 @@ if __name__ == "__main__":
     v_predicted_states, delta_v = hsmm_sleep.run_viterbi()
     end_time = time.time()
     execution_time = end_time - start_time
-    print("Predicted States:")
-    print(v_predicted_states)
+    # print("Predicted States:")
+    # print(v_predicted_states)
     print(f"Execution time of Vanilla Viterbi: {execution_time:.4f} seconds")
 
     start_time = time.time()
@@ -467,8 +373,8 @@ if __name__ == "__main__":
     end_time = time.time()
     execution_time = end_time - start_time
 
-    print("Predicted States:")
-    print(t_predicted_states)
+    # print("Predicted States:")
+    # print(t_predicted_states)
     print(f"Execution time of Tensor Viterbi: {execution_time:.4f} seconds")
 
     np.testing.assert_allclose(
@@ -481,9 +387,4 @@ if __name__ == "__main__":
 
     # print(delta_t)
     # print(delta_v)
-
-    print(ground_truth.shape)
-    print(t_predicted_states.shape)
-
-    acc = compute_accuracy(ground_truth, t_predicted_states)
-    print(f"Accuracy: {acc:.2%}") 
+    validate(t_predicted_states)

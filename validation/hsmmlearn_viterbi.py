@@ -60,9 +60,13 @@ def load_sleep_model_hsmmlearn(json_path: str = "hsmm_config.json"):
 
     return model, obs_seq
 
+def compute_accuracy(true_states, predicted_states):
+    true_states = np.array(true_states)
+    predicted_states = np.array(predicted_states)
+    return np.sum(true_states == predicted_states) / len(true_states)
 
-# ── usage ─────────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
+
+def validate(computed_states: np.ndarray):
     model, obs_seq = load_sleep_model_hsmmlearn("sleep_data.json")
 
     start_time = time.time()
@@ -70,5 +74,7 @@ if __name__ == "__main__":
     end_time = time.time()
     execution_time = end_time - start_time
 
-    print("Decoded states:", decoded_states.tolist())
-    print(f"Execution time of Tensor Viterbi: {execution_time:.4f} seconds")
+    print(f"Baseline HSMMLearn Viterbi: {execution_time:.4f} seconds")
+
+    acc = compute_accuracy(decoded_states, computed_states)
+    print(f"Accuracy: {acc:.2%}") 
