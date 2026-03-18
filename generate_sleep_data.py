@@ -163,7 +163,7 @@ config = {
 # =============================================================================
 # 4.  WRITE JSON
 # =============================================================================
-out_path = "sleep_data_10states.json"
+out_path = f"data/sleep_data_10states_{time_steps}_{max_duration}.json"
 with open(out_path, "w") as f:
     json.dump(config, f, indent=2)
 
