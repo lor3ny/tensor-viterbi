@@ -52,7 +52,8 @@ public:
     int max_duration()  const { return D_; }
     int obs_length()    const { return static_cast<int>(obs_seq_.size()); }
     void set_obs_seq(const std::vector<int>& obs_seq){ this->obs_seq_ = obs_seq; }
-
+    
+    void print() const;
 
     // ------------------------------------------------------------------ //
     // Viterbi Algorithm

@@ -1,6 +1,5 @@
 #include "hsmm.hpp"
 
-
 HSMM::HSMM(const std::vector<std::string>&  states,
            const std::vector<std::string>&  emissions,
            const std::vector<double>&       trans_mat,
@@ -8,74 +7,158 @@ HSMM::HSMM(const std::vector<std::string>&  states,
            const std::vector<double>&       start_probs,
            const std::vector<double>&       duration_probs)
 {
-    this->states_ = states;
-    this->emissions_ = emissions;
-    this->trans_mat_ = trans_mat;
-    this->emission_probs_ = emission_probs;
-    this->start_probs_ = start_probs;
-    this->duration_probs_ = duration_probs;
+    states_           = states;
+    emissions_        = emissions;
+    trans_mat_        = trans_mat;
+    emission_probs_   = emission_probs;
+    start_probs_      = start_probs;
+    duration_probs_   = duration_probs;
+
+    // ✅ set dimensioni
+    N_ = static_cast<int>(states_.size());
+    O_ = static_cast<int>(emissions_.size());
 }
 
-HSMM::HSMM(const std::string& json_data_path){
-
+HSMM::HSMM(const std::string& json_data_path)
+{
     std::ifstream file(json_data_path);
     if (!file.is_open())
         throw std::runtime_error("load_sleep_model: cannot open \"" + json_data_path + "\"");
- 
+
     nlohmann::json cfg;
     file >> cfg;
 
-    const int n_bins       = cfg["n_bins"].get<int>();      // O — emission bins
+    const int O = cfg["n_bins"].get<int>();
 
-    std::vector<std::string> sleep_states;
+    // -------- STATES --------
+    std::vector<std::string> states;
     for (const auto& s : cfg["states"])
-        sleep_states.push_back(s["name"].get<std::string>());
- 
-    const int N = static_cast<int>(sleep_states.size());
+        states.push_back(s["name"].get<std::string>());
 
-    std::vector<std::string> sleep_emissions(n_bins);
-    for (int o = 0; o < n_bins; ++o)
-        sleep_emissions[o] = std::to_string(o);
+    const int N = static_cast<int>(states.size());
 
+    // -------- EMISSIONS --------
+    std::vector<std::string> emissions(O);
+    for (int o = 0; o < O; ++o)
+        emissions[o] = std::to_string(o);
+
+    // -------- OBS SEQ --------
     const auto& raw_obs = cfg["obs_seq"];
-    std::vector<int> sleep_obs_seq(raw_obs.size());
+    std::vector<int> obs_seq(raw_obs.size());
     for (std::size_t t = 0; t < raw_obs.size(); ++t)
-        sleep_obs_seq[t] = raw_obs[t].get<int>() - 1;   // 1-based → 0-based
- 
+        obs_seq[t] = raw_obs[t].get<int>() - 1;
 
-    std::vector<double> sleep_trans_mat;
-    sleep_trans_mat.reserve(N * N);
+    // -------- TRANS --------
+    std::vector<double> trans_mat;
+    trans_mat.reserve(N * N);
     for (const auto& row : cfg["trans_mat"])
         for (const auto& val : row)
-            sleep_trans_mat.push_back(val.get<double>());
- 
+            trans_mat.push_back(val.get<double>());
 
-    std::vector<double> sleep_emission_probs(n_bins * N, 0.0);
+    // -------- EMISSION PROBS --------
+    std::vector<double> emission_probs(O * N, 0.0);
     for (int s = 0; s < N; ++s) {
         const auto& ep = cfg["states"][s]["emission_probs"];
-        for (int o = 0; o < n_bins; ++o)
-            sleep_emission_probs[o * N + s] = ep[o].get<double>();
+        for (int o = 0; o < O; ++o)
+            emission_probs[o * N + s] = ep[o].get<double>();
     }
- 
 
-    std::vector<double> sleep_start_probs = cfg["pi"].get<std::vector<double>>();
- 
-    std::vector<double> sleep_duration_probs;
+    // -------- START --------
+    std::vector<double> start_probs =
+        cfg["pi"].get<std::vector<double>>();
+
+    // -------- DURATION --------
+    const int D = cfg["states"][0]["duration_probs"].size();
+
+    // check consistenza
+    for (int s = 1; s < N; ++s) {
+        if (cfg["states"][s]["duration_probs"].size() != D)
+            throw std::runtime_error("Inconsistent duration sizes");
+    }
+
+    std::vector<double> duration_probs;
+    duration_probs.reserve(N * D);
+
     for (int s = 0; s < N; ++s) {
         const auto& dp = cfg["states"][s]["duration_probs"];
         for (const auto& val : dp)
-            sleep_duration_probs.push_back(val.get<double>());
+            duration_probs.push_back(val.get<double>());
     }
- 
-    HSMM hsmm_sleep(sleep_states,
-                    sleep_emissions,
-                    sleep_trans_mat,
-                    sleep_emission_probs,
-                    sleep_start_probs,
-                    sleep_duration_probs);
- 
-    hsmm_sleep.set_obs_seq(sleep_obs_seq);
-    return;
+
+    // ✅ assegnazione DIRETTA (NO *this = ...)
+    states_           = states;
+    emissions_        = emissions;
+    trans_mat_        = trans_mat;
+    emission_probs_   = emission_probs;
+    start_probs_      = start_probs;
+    duration_probs_   = duration_probs;
+
+    N_ = N;
+    O_ = O;
+    D_ = D;
+
+    obs_seq_ = obs_seq;
+}
+
+#include <iostream>
+#include <iomanip>
+
+void HSMM::print() const {
+    const int N = num_states();
+    const int O = num_emissions();
+    const int D = 4;
+
+    std::cout << "===== HSMM MODEL =====\n";
+
+    // Stati
+    std::cout << "\nStates (" << N << "):\n";
+    for (int i = 0; i < N; ++i)
+        std::cout << "  [" << i << "] " << states_[i] << "\n";
+
+    // Emissioni
+    std::cout << "\nEmissions (" << O << "):\n";
+    for (int o = 0; o < O; ++o)
+        std::cout << "  [" << o << "] " << emissions_[o] << "\n";
+
+    // Start probabilities
+    std::cout << "\nStart probabilities (pi):\n";
+    for (int i = 0; i < N; ++i)
+        std::cout << "  " << states_[i] << ": " << start_probs_[i] << "\n";
+
+    // Transition matrix
+    std::cout << "\nTransition matrix (N x N):\n";
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            std::cout << std::setw(8) << trans_mat_[i * N + j] << " ";
+        }
+        std::cout << "\n";
+    }
+
+    // Emission probabilities
+    std::cout << "\nEmission probabilities (O x N):\n";
+    for (int o = 0; o < O; ++o) {
+        std::cout << "Obs " << o << ": ";
+        for (int s = 0; s < N; ++s) {
+            std::cout << std::setw(8) << emission_probs_[o * N + s] << " ";
+        }
+        std::cout << "\n";
+    }
+
+
+    // Duration probabilities
+    std::cout << "\nDuration probabilities:\n";
+    for (int s = 0; s < N; ++s) {
+        std::cout << "State " << states_[s] << ": [ ";
+
+        for (int d = 0; d < D; ++d) {
+            int idx = s * D + d;
+            std::cout << duration_probs_[idx] << " ";
+        }
+
+        std::cout << "]\n";
+    }
+
+    std::cout << "\n======================\n";
 }
 
 

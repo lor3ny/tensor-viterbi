@@ -5,7 +5,9 @@
 int main() {
   
 
-    HSMM("sleep_data.json");
+    HSMM model = HSMM("sleep_data.json");
+
+    model.print();
     
     return 0;
 }
