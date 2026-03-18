@@ -14,7 +14,6 @@ HSMM::HSMM(const std::vector<std::string>&  states,
     start_probs_      = start_probs;
     duration_probs_   = duration_probs;
 
-    // ✅ set dimensioni
     N_ = static_cast<int>(states_.size());
     O_ = static_cast<int>(emissions_.size());
 }
@@ -64,17 +63,10 @@ HSMM::HSMM(const std::string& json_data_path)
     }
 
     // -------- START --------
-    std::vector<double> start_probs =
-        cfg["pi"].get<std::vector<double>>();
+    std::vector<double> start_probs = cfg["pi"].get<std::vector<double>>();
 
-    // -------- DURATION --------
+    // -------- DURATIONS --------
     const int D = cfg["states"][0]["duration_probs"].size();
-
-    // check consistenza
-    for (int s = 1; s < N; ++s) {
-        if (cfg["states"][s]["duration_probs"].size() != D)
-            throw std::runtime_error("Inconsistent duration sizes");
-    }
 
     std::vector<double> duration_probs;
     duration_probs.reserve(N * D);
@@ -85,7 +77,6 @@ HSMM::HSMM(const std::string& json_data_path)
             duration_probs.push_back(val.get<double>());
     }
 
-    // ✅ assegnazione DIRETTA (NO *this = ...)
     states_           = states;
     emissions_        = emissions;
     trans_mat_        = trans_mat;

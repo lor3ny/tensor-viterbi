@@ -564,7 +564,7 @@ if __name__ == "__main__":
     # execution_time = end_time - start_time
     # print(f"Execution time of Tensor Viterbi: {execution_time:.4f} seconds")
 
-    hsmm_sleep = load_sleep_model("sleep_data_10states.json")
+    hsmm_sleep = load_sleep_model("data/sleep_data.json")
 
     start_time = time.time()
     t_predicted_states, delta_t = hsmm_sleep.run_log_tensor_viterbi()
@@ -588,4 +588,4 @@ if __name__ == "__main__":
 
     # print(delta_t)
     # print(delta_v)
-    validate(t_predicted_states)
+    validate(t_predicted_states, "data/sleep_data.json")

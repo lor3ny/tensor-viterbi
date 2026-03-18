@@ -66,8 +66,8 @@ def compute_accuracy(true_states, predicted_states):
     return np.sum(true_states == predicted_states) / len(true_states)
 
 
-def validate(computed_states: np.ndarray):
-    model, obs_seq = load_sleep_model_hsmmlearn("sleep_data_10states.json")
+def validate(computed_states: np.ndarray, json_file: str):
+    model, obs_seq = load_sleep_model_hsmmlearn(json_file)
 
     start_time = time.time()
     decoded_states = model.decode(obs_seq)
