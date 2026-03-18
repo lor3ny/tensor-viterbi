@@ -205,23 +205,22 @@ class HSMM:
         for t in range(1, T):
 
             #! ----- TOO SLOW -----
-            start_time = time.time()
             # Slice DELTAS window: shape (N, D) assuming DELTAS is shape (T, N, D)
-            EMISSION_PROBS = np.ones((D, N))
-
+            #EMISSION_PROBS = np.ones((D, N))
             # for d_val in range(0,  min(D, t)):
             #     segment_indices = np.array(self.obs_seq[t - d_val : t+1], dtype=int)
             #     relevant_probs = self.emission_probs[segment_indices, :]   # DxN
             #     EMISSION_PROBS[d_val, :] = np.prod(relevant_probs, axis=0)
-            
-            segment_indices = self.obs_seq[max(0, t - D):t].astype(int)  # shape: (D,)
+            #! ----- TOO SLOW -----
+
+            start_time = time.time()
+            segment_indices = self.obs_seq[max(0, t - D + 1):t+1].astype(int)  # shape: (D,)
             relevant_probs = self.emission_probs[segment_indices, :]
             cum_product = np.cumprod(np.flip(relevant_probs, axis=0), axis=0)  # shape: (D, num_states)
-            EMISSION_PROBS *= cum_product  # shape: (num_states, D)
+            EMISSION_PROBS[:cum_product.shape[0],:] = cum_product  # shape: (num_states, D)
             
             end_time = time.time()
             execution_time_tens += end_time - start_time
-            #! ----- TOO SLOW -----
 
             window = delta[max(0, t-D) : t, :]
             PAST_DELTA[:window.shape[0], :] = window[::-1]
