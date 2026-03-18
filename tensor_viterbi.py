@@ -181,16 +181,16 @@ class HSMM:
         PAST_DELTA = self.duration_probs * self.start_probs[np.newaxis,:]
   
         #* METHOD 1
-        for d in range(0,D):
-            obs = int(self.obs_seq[d])
-            self.emission_probs[obs, :]
-            EMISSION_PROBS[d:,:] *= self.emission_probs[obs, :][:,np.newaxis].T
+        # for d in range(0,D):
+        #     obs = int(self.obs_seq[d])
+        #     self.emission_probs[obs, :]
+        #     EMISSION_PROBS[d:,:] *= self.emission_probs[obs, :][:,np.newaxis].T
 
         #* METHOD 2
-        # obs_indices = self.obs_seq[:D].astype(int)  # shape: (D,)
-        # emission_rows = self.emission_probs[obs_indices, :]
-        # cum_product = np.cumprod(emission_rows, axis=0)  # shape: (D, num_states)
-        # EMISSION_PROBS *= cum_product.T  # shape: (num_states, D)
+        obs_indices = self.obs_seq[:D].astype(int)  # shape: (D,)
+        emission_rows = self.emission_probs[obs_indices, :]
+        cum_product = np.cumprod(emission_rows, axis=0)  # shape: (D, num_states)
+        EMISSION_PROBS *= cum_product  # shape: (num_states, D)
 
         #? POTREMMO RIMUOVERE LA TRASPOSIZIONE
         delta[0:D] = (PAST_DELTA * EMISSION_PROBS)
@@ -208,10 +208,17 @@ class HSMM:
             start_time = time.time()
             # Slice DELTAS window: shape (N, D) assuming DELTAS is shape (T, N, D)
             EMISSION_PROBS = np.ones((D, N))
-            for d_val in range(0,  min(D, t)):
-                segment_indices = np.array(self.obs_seq[t - d_val : t+1], dtype=int)
-                relevant_probs = self.emission_probs[segment_indices, :]   # DxN
-                EMISSION_PROBS[d_val, :] = np.prod(relevant_probs, axis=0)
+
+            # for d_val in range(0,  min(D, t)):
+            #     segment_indices = np.array(self.obs_seq[t - d_val : t+1], dtype=int)
+            #     relevant_probs = self.emission_probs[segment_indices, :]   # DxN
+            #     EMISSION_PROBS[d_val, :] = np.prod(relevant_probs, axis=0)
+            
+            segment_indices = self.obs_seq[max(0, t - D):t].astype(int)  # shape: (D,)
+            relevant_probs = self.emission_probs[segment_indices, :]
+            cum_product = np.cumprod(np.flip(relevant_probs, axis=0), axis=0)  # shape: (D, num_states)
+            EMISSION_PROBS *= cum_product  # shape: (num_states, D)
+            
             end_time = time.time()
             execution_time_tens += end_time - start_time
             #! ----- TOO SLOW -----
@@ -400,6 +407,12 @@ if __name__ == "__main__":
     # print(t_predicted_states)
     print(f"Execution time of Tensor Viterbi: {execution_time:.4f} seconds")
 
+    np.testing.assert_array_equal(
+        t_predicted_states,
+        v_predicted_states,
+        err_msg="Predicted state sequences are different"
+    )
+    
     np.testing.assert_allclose(
         delta_v,
         delta_t,
