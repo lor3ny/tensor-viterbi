@@ -265,6 +265,9 @@ class HSMM:
         
         return path
 
+
+
+
     #? We use the official signature of Numpy for 3D tensors (d,y,x)
     #? axis 0 → depth (z) — the first index, selects a 2D "slice"
     #? axis 1 → rows — the second index, selects a row within a slice
@@ -477,7 +480,7 @@ def load_sleep_model(json_path: str = "hsmm_config.json") -> HSMM:
     )      
     
 
-    smoothness = 1e-20
+    smoothness = 1e-30
     hsmm_sleep = HSMM(
         sleep_states, 
         sleep_emissions, 
@@ -495,13 +498,15 @@ if __name__ == "__main__":
 
     data_path = "data/sleep_data_10states_10000_100.json"
 
-    # hsmm_sleep = load_sleep_model(data_path)
+    hsmm_sleep = load_sleep_model(data_path)
 
-    # start_time = time.time()
-    # v_predicted_states = hsmm_sleep.run_vanilla_viterbi()
-    # end_time = time.time()
-    # execution_time = end_time - start_time
-    # print(f"Execution time of Vanilla Viterbi: {execution_time:.4f} seconds")
+    start_time = time.time()
+    v_predicted_states = hsmm_sleep.run_vanilla_viterbi()
+    end_time = time.time()
+    execution_time = end_time - start_time
+    print(f"Execution time of Vanilla Viterbi: {execution_time:.4f} seconds")
+
+    validate("Vanilla vs Baseline", v_predicted_states, data_path)
 
     # start_time = time.time()
     # t_predicted_states, delta_t = hsmm_sleep.run_tensor_viterbi()
@@ -509,7 +514,7 @@ if __name__ == "__main__":
     # execution_time = end_time - start_time
     # print(f"Execution time of Tensor Viterbi: {execution_time:.4f} seconds")
 
-    hsmm_sleep = load_sleep_model("data/sleep_data.json")
+    hsmm_sleep = load_sleep_model(data_path)
 
     start_time = time.time()
     t_predicted_states = hsmm_sleep.run_log_tensor_viterbi()
@@ -523,6 +528,4 @@ if __name__ == "__main__":
     #     err_msg="Vanilla is different from Tensor based."
     # )
 
-    # print(delta_t)
-    # print(delta_v)
-    validate(t_predicted_states, "data/sleep_data.json")
+    validate("Tensor vs Baseline", t_predicted_states, data_path)

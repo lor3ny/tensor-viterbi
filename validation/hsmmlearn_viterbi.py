@@ -66,7 +66,7 @@ def compute_accuracy(true_states, predicted_states):
     return np.sum(true_states == predicted_states) / len(true_states)
 
 
-def validate(computed_states: np.ndarray, json_file: str):
+def validate(title_str: str, computed_states: np.ndarray, json_file: str):
     model, obs_seq = load_sleep_model_hsmmlearn(json_file)
 
     start_time = time.time()
@@ -77,4 +77,4 @@ def validate(computed_states: np.ndarray, json_file: str):
     print(f"Baseline HSMMLearn Viterbi: {execution_time:.4f} seconds")
 
     acc = compute_accuracy(decoded_states, computed_states)
-    print(f"Accuracy: {acc:.2%}") 
+    print(f"{title_str} Accuracy - {acc:.2%}") 
