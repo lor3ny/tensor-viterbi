@@ -248,7 +248,18 @@ class HSMM:
                 else:
                     max_vals[j] = plane[d, i]
                     max_states[j] = i               
-                    max_durs[j]   = d              
+                    max_durs[j]   = d      
+
+                    N, _, D = Sjid.shape
+
+            # (N, N, D) → per ogni j, flatten il piano (i, d) → (N, N*D)
+            # flat = Sjid.transpose(1, 0, 2).reshape(N, -1)  # (j, i*D)
+
+            # flat_idx   = cp.argmax(flat, axis=1)            # (N,) — argmax per ogni j
+
+            # max_vals   = flat[cp.arange(N), flat_idx]       # (N,)
+            # max_states = flat_idx // D                       # i coordinate
+            # max_durs   = flat_idx  % D                       # d coordinate        
 
             delta[t, :] = max_vals 
             delta_state[t, :] = max_states
