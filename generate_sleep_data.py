@@ -25,8 +25,8 @@ sleep_states = [
 J = len(sleep_states)          # 10
 
 sleep_emissions = np.arange(13)   # 13 HR bins (unchanged)
-time_steps      = 300
-max_duration    = 20
+time_steps      = 10000
+max_duration    = 100
 
 # --- Observation sequence (unchanged logic) ----------------------------------
 sleep_obs_seq = np.zeros(time_steps)
