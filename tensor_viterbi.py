@@ -152,6 +152,7 @@ class HSMM:
     # axis 2 → columns — the third index, selects a column within a row
 
     def run_tensor_viterbi(self):
+
         T = len(self.obs_seq)  # time steps
         N = len(self.states) # states count
         D = self.duration_probs.shape[1]
@@ -159,23 +160,31 @@ class HSMM:
         delta = np.full((T, N), 0.0)        
         delta_state = np.zeros((T, N), dtype=int)
         delta_dur = np.zeros((T, N), dtype=int)
+        max_vals   = np.zeros(N)
+        max_states = np.zeros(N, dtype=int)
+        max_durs   = np.zeros(N, dtype=int)
 
-        PAST_DELTA = np.ones((N, D))
-        EMISSION_PROBS = np.ones((N, D))
+        #PAST_DELTA = np.ones((D, N))
+
+        #self.emission_probs = self.emission_probs.T
+        self.duration_probs = self.duration_probs.T
+        self.trans_mat = self.trans_mat.T
+        
+        EMISSION_PROBS = np.ones((D,N))
         DELTA_EMISSION = np.ones((N, N, D))
         AP = np.ones((N, N, D)) # Precompute AP outside the loop
         
 
         #* INITIALIZATION
         #! PHASE 1 - INITIALIZATION 0<=t<D
-        PAST_DELTA = self.start_probs[:,np.newaxis] * self.duration_probs
 
-
+        PAST_DELTA = self.duration_probs * self.start_probs[np.newaxis,:]
+  
         #* METHOD 1
         for d in range(0,D):
             obs = int(self.obs_seq[d])
             self.emission_probs[obs, :]
-            EMISSION_PROBS[:,d:] *= self.emission_probs[obs, :].T[:,np.newaxis]
+            EMISSION_PROBS[d:,:] *= self.emission_probs[obs, :][:,np.newaxis].T
 
         #* METHOD 2
         # obs_indices = self.obs_seq[:D].astype(int)  # shape: (D,)
@@ -183,36 +192,43 @@ class HSMM:
         # cum_product = np.cumprod(emission_rows, axis=0)  # shape: (D, num_states)
         # EMISSION_PROBS *= cum_product.T  # shape: (num_states, D)
 
-        delta[0:D] = (PAST_DELTA * EMISSION_PROBS).T
+        #? POTREMMO RIMUOVERE LA TRASPOSIZIONE
+        delta[0:D] = (PAST_DELTA * EMISSION_PROBS)
 
 
-        #! PHASE 2 - INDUCTION  t>0        
-        AP = self.trans_mat.T[np.newaxis, :, :] * self.duration_probs.T[ :, :, np.newaxis]  # (N,N,1) * (N,1,D) -> NxNxD  
+        #! PHASE 2 - INDUCTION  t>0   
+
+        execution_time_max = 0.0
+        execution_time_tens = 0.0
+
+        AP = self.trans_mat[np.newaxis, :, :] * self.duration_probs[ :, :, np.newaxis]  # (N,N,1) * (N,1,D) -> NxNxD  
         for t in range(1, T):
 
+            #! ----- TOO SLOW -----
+            start_time = time.time()
             # Slice DELTAS window: shape (N, D) assuming DELTAS is shape (T, N, D)
-            EMISSION_PROBS = np.ones((N, D))
+            EMISSION_PROBS = np.ones((D, N))
             for d_val in range(0,  min(D, t)):
                 segment_indices = np.array(self.obs_seq[t - d_val : t+1], dtype=int)
                 relevant_probs = self.emission_probs[segment_indices, :]   # DxN
-                EMISSION_PROBS[:, d_val] = np.prod(relevant_probs, axis=0)
+                EMISSION_PROBS[d_val, :] = np.prod(relevant_probs, axis=0)
+            end_time = time.time()
+            execution_time_tens += end_time - start_time
+            #! ----- TOO SLOW -----
 
             window = delta[max(0, t-D) : t, :]
-            PAST_DELTA[:, :window.shape[0]] = window[::-1].T 
+            PAST_DELTA[:window.shape[0], :] = window[::-1]
 
             #* Method A
             # DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] * EMISSION_PROBS[np.newaxis, :, :]  # NxNxD
             # RESULT_A = AP #* DELTA_EMISSION  # NxNxD element-wise
 
             #* Method B
-            DELTA_EMISSION = PAST_DELTA.T[:, np.newaxis, :] * AP  # (N,D) * (D,N,N) -> DxNxN
-            RESULT_B = EMISSION_PROBS.T[ :, :, np.newaxis] * DELTA_EMISSION  # (N,D) * (D,N,N) -> DxNxN
+            DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] * AP  # (D,N) * (D,N,N) -> DxNxN
+            RESULT_B = EMISSION_PROBS[ :, :, np.newaxis] * DELTA_EMISSION  # (N,D) * (D,N,N) -> DxNxN
         
-            #! FIND MAX FOR EACH J-PLANE
-            max_vals   = np.zeros(N)
-            max_states = np.zeros(N, dtype=int)
-            max_durs   = np.zeros(N, dtype=int)
-
+            #! ----- TOO SLOW -----
+            start_time = time.time()
             for j in range(N):
                 plane = RESULT_B[:, j, :]          # shape (N, D) — the j-th plane
                 
@@ -231,6 +247,13 @@ class HSMM:
             delta[t, :] = max_vals 
             delta_state[t, :] = max_states
             delta_dur[t, :] = max_durs+1
+            #! ----- TOO SLOW -----
+
+            end_time = time.time()
+            execution_time_max += end_time - start_time
+
+        print(f"MAX Section of Tensor Viterbi: {execution_time_max:.4f} seconds")
+        print(f"EMISSION Section of Tensor Viterbi: {execution_time_tens:.4f} seconds")
 
         path = self.backtracking_termination(delta, delta_state, delta_dur, T)
         
