@@ -6,7 +6,7 @@ import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 import time
 import json
-import sys
+from numba import njit
 
 
 from validation.hsmmlearn_viterbi import validate
@@ -234,36 +234,58 @@ class HSMM:
             RESULT_B = EMISSION_PROBS[ :, :, np.newaxis] * DELTA_EMISSION  # (N,D) * (D,N,N) -> DxNxN
         
             #! ----- TOO SLOW -----
+  
             start_time = time.time()
-            for j in range(N):
-                plane = RESULT_B[:, j, :]          # shape (N, D) — the j-th plane
+            # for j in range(N):
+            #     plane = RESULT_B[:, j, :]          # shape (N, D) — the j-th plane
                 
-                flat_idx = np.argmax(plane[0:min(t,D)])      # argmax over flattened (N*D)
-                d, i = np.unravel_index(flat_idx, plane.shape)  # recover (d, i) coords
+            #     flat_idx = np.argmax(plane[0:min(t,D),:])      # argmax over flattened (N*D)
+            #     d, i = np.unravel_index(flat_idx, plane.shape)  # recover (d, i) coords
 
-                if t < D and plane[d, i] < delta[t, j]:
-                    max_vals[j] = delta[t, j]
-                    max_states[j] = delta_state[t, j]
-                    max_durs[j] = delta_dur[t, j]
-                else:
-                    max_vals[j] = plane[d, i]
-                    max_states[j] = i               
-                    max_durs[j]   = d      
+            #     if t < D and plane[d, i] < delta[t, j]:
+            #         max_vals[j] = delta[t, j]
+            #         max_states[j] = delta_state[t, j]
+            #         max_durs[j] = delta_dur[t, j]
+            #     else:
+            #         max_vals[j] = plane[d, i]
+            #         max_states[j] = i               
+            #         max_durs[j]   = d        
 
-                    N, _, D = Sjid.shape
+            # delta[t, :] = max_vals 
+            # delta_state[t, :] = max_states
+            # delta_dur[t, :] = max_durs+1
 
-            # (N, N, D) → per ogni j, flatten il piano (i, d) → (N, N*D)
-            # flat = Sjid.transpose(1, 0, 2).reshape(N, -1)  # (j, i*D)
 
-            # flat_idx   = cp.argmax(flat, axis=1)            # (N,) — argmax per ogni j
+            planes = RESULT_B.transpose(1, 0, 2)          # (N, N, D): planes[j] = RESULT_B[:, j, :]
 
-            # max_vals   = flat[cp.arange(N), flat_idx]       # (N,)
-            # max_states = flat_idx // D                       # i coordinate
-            # max_durs   = flat_idx  % D                       # d coordinate        
+            # Slice rows up to min(t, D) for all j simultaneously
+            sliced = planes[:, :min(t, D), :]             # (N, min(t,D), D)
 
-            delta[t, :] = max_vals 
+            # Argmax over the flattened (min(t,D), D) sub-matrix for each j
+            flat_idx = np.argmax(sliced.reshape(N, -1), axis=1)   # (N,)
+
+            # Unravel flat indices into (d, i) — relative to sliced shape, NOT plane.shape
+            slice_shape = sliced.shape[1:]                         # (min(t,D), D)
+            d_arr, i_arr = np.unravel_index(flat_idx, slice_shape) # each (N,)
+
+            # Gather the actual max values from the FULL plane (as original code does)
+            best_vals = planes[np.arange(N), d_arr, i_arr]        # (N,)
+
+            # Condition: t < D AND best value < delta[t, j]
+            if t < D:
+                cond = best_vals < delta[t, :]                     # (N,) boolean mask
+            else:
+                cond = np.zeros(N, dtype=bool)                     # all False → always use else
+
+            # Build outputs with np.where
+            max_vals   = np.where(cond, delta[t, :],       best_vals)
+            max_states = np.where(cond, delta_state[t, :], i_arr)
+            max_durs   = np.where(cond, delta_dur[t, :],   d_arr)
+
+            # Write back (unchanged)
+            delta[t, :]       = max_vals
             delta_state[t, :] = max_states
-            delta_dur[t, :] = max_durs+1
+            delta_dur[t, :]   = max_durs + 1
             #! ----- TOO SLOW -----
 
             end_time = time.time()
@@ -398,7 +420,7 @@ def load_sleep_model(json_path: str = "hsmm_config.json") -> HSMM:
 
 if __name__ == "__main__":
 
-    hsmm_sleep = load_sleep_model("sleep_data.json")
+    hsmm_sleep = load_sleep_model("sleep_data_10states.json")
 
     start_time = time.time()
     v_predicted_states, delta_v = hsmm_sleep.run_viterbi()
