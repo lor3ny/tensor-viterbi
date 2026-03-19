@@ -362,7 +362,6 @@ class HSMM:
                 relevant_probs = self.emission_probs[segment_indices, :]           # shape: (D,N)
                 cum_emission = np.cumsum(np.flip(relevant_probs, axis=0), axis=0)  # shape: (D,N)
 
-                #EMISSION_PROBS = np.zeros((D,N), dtype=float)
                 EMISSION_PROBS[:cum_emission.shape[0],:] = cum_emission            # shape: (D,N)
 
                 if t==D:
@@ -370,6 +369,7 @@ class HSMM:
 
             
             #* Past Delta Tensor
+            #! Evitare la copia
             window = delta[max(0, t-D) : t, :]
             PAST_DELTA[:window.shape[0], :] = window[::-1]
 
@@ -638,7 +638,7 @@ def load_sleep_model(json_path: str = "hsmm_config.json") -> HSMM:
 
 if __name__ == "__main__":
 
-    data_path = "data/sleep_data_10states_20_5.json"
+    data_path = "data/sleep_data_10states_100_10.json"
 
     hsmm_sleep = load_sleep_model(data_path)
     # hsmm_sleep.print_model()
