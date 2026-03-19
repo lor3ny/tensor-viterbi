@@ -319,7 +319,7 @@ class HSMM:
     #? axis 0 → depth (z) — the first index, selects a 2D "slice"
     #? axis 1 → rows — the second index, selects a row within a slice
     #? axis 2 → columns — the third index, selects a column within a row
-    def run_log_tensor_viterbi_idea(self):
+    def run_log_tensor_viterbi_cached(self):
 
         T = len(self.obs_seq)
         N = len(self.states) 
@@ -348,21 +348,30 @@ class HSMM:
 
         #! PHASE 2 - INDUCTION  t>0   
         AP = self.trans_mat[np.newaxis, :, :] + self.duration_probs[ :, :, np.newaxis]  # (N,N,1) + (N,1,D) = NxNxD  
+        EMISSION_CACHE = np.zeros((D,N), dtype=float)
         for t in range(1, T):
 
-            #! ----- TOO SLOW -----
-            # EMISSION_PROBS = np.ones((D, N))
-            # for d_val in range(0,  min(D, t)):
-            #     segment_indices = np.array(self.obs_seq[t - d_val : t+1], dtype=int)
-            #     relevant_probs = self.emission_probs[segment_indices, :]   
-            #     EMISSION_PROBS[d_val, :] = np.prod(relevant_probs, axis=0)
-            #! ----- TOO SLOW -----
 
-            #* Emission Tensor
-            segment_indices = self.obs_seq[max(0, t - D+1):t+1].astype(int)  # shape: (D,)
-            relevant_probs = self.emission_probs[segment_indices, :]
-            cum_emission = np.cumsum(np.flip(relevant_probs, axis=0), axis=0)  # shape: (D, num_states)
-            EMISSION_PROBS[:cum_emission.shape[0],:] = cum_emission            # shape: (num_states, D)
+            if t>D: 
+                _index_t = self.obs_seq[t].astype(int)
+                _probs_t = self.emission_probs[_index_t, :] 
+                EMISSION_CACHE += _probs_t
+
+                EMISSION_PROBS[:D,:] = EMISSION_CACHE            # shape: (D,N)
+
+                EMISSION_CACHE = np.zeros((D,N), dtype=float)
+                EMISSION_CACHE[1:,:] = EMISSION_PROBS[:D-1,:]
+            else:
+                #* Emission Tensor
+                segment_indices = self.obs_seq[max(0, t - D+1):t+1].astype(int)    # shape: (D,)
+                relevant_probs = self.emission_probs[segment_indices, :]           # shape: (D,N)
+                cum_emission = np.cumsum(np.flip(relevant_probs, axis=0), axis=0)  # shape: (D,N)
+
+                EMISSION_PROBS[:cum_emission.shape[0],:] = cum_emission            # shape: (D,N)
+
+                if t==D:
+                    EMISSION_CACHE[1:,:] = cum_emission[:D-1,:]
+
             
             #* Past Delta Tensor
             window = delta[max(0, t-D) : t, :]
@@ -377,28 +386,6 @@ class HSMM:
             DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] + AP              # (D,N) + (D,N,N) = DxNxN
             RESULT_B = EMISSION_PROBS[ :, :, np.newaxis] + DELTA_EMISSION   # (N,D) + (D,N,N) = DxNxN
         
-            #! ----- TOO SLOW -----
-            # for j in range(N):
-            #     plane = RESULT_B[:, j, :]          # shape (N, D) — the j-th plane
-                
-            #     flat_idx = np.argmax(plane[0:min(t,D),:])      # argmax over flattened (N*D)
-            #     d, i = np.unravel_index(flat_idx, plane.shape)  # recover (d, i) coords
-
-            #     if t < D and plane[d, i] < delta[t, j]:
-            #         max_vals[j] = delta[t, j]
-            #         max_states[j] = delta_state[t, j]
-            #         max_durs[j] = delta_dur[t, j]
-            #     else:
-            #         max_vals[j] = plane[d, i]
-            #         max_states[j] = i               
-            #         max_durs[j]   = d        
-
-            # delta[t, :] = max_vals 
-            # delta_state[t, :] = max_states
-            # delta_dur[t, :] = max_durs+1
-            #! ----- TOO SLOW -----
-
-
             planes = RESULT_B.transpose(1, 0, 2)          # (N, N, D): planes[j] = RESULT_B[:, j, :]
             sliced = planes[:, :min(t, D), :]           
             flat_idx = np.argmax(sliced.reshape(N, -1), axis=1)   # (N,)
@@ -458,6 +445,9 @@ class HSMM:
         #! PHASE 2 - INDUCTION  t>0   
         AP = self.trans_mat[np.newaxis, :, :] + self.duration_probs[ :, :, np.newaxis]  # (N,N,1) + (N,1,D) = NxNxD  
         for t in range(1, T):
+
+            if(t % 100000 == 0):
+                print(t)
 
             #! ----- TOO SLOW -----
             # EMISSION_PROBS = np.ones((D, N))
@@ -655,7 +645,7 @@ def load_sleep_model(json_path: str = "hsmm_config.json") -> HSMM:
 
 if __name__ == "__main__":
 
-    data_path = "data/sleep_data_10states_1000_20.json"
+    data_path = "data/sleep_data_10states_1000000_1000.json"
 
     hsmm_sleep = load_sleep_model(data_path)
     # hsmm_sleep.print_model()
@@ -678,6 +668,14 @@ if __name__ == "__main__":
 
     start_time = time.time()
     t_predicted_states = hsmm_sleep.run_log_tensor_viterbi()
+    end_time = time.time()
+    execution_time = end_time - start_time
+    print(f"Execution time of Log Tensor Viterbi (NO CACHE): {execution_time:.4f} seconds")
+
+    hsmm_sleep = load_sleep_model(data_path)
+
+    start_time = time.time()
+    t_predicted_states = hsmm_sleep.run_log_tensor_viterbi_cached()
     end_time = time.time()
     execution_time = end_time - start_time
     print(f"Execution time of Log Tensor Viterbi: {execution_time:.4f} seconds")
