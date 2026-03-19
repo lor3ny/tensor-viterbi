@@ -69,6 +69,55 @@ class HSMM:
     def set_obs_sequence(self, obs_seq):
         self.obs_seq = obs_seq
 
+    def print_model(self):
+        N = len(self.states)
+        O = len(self.emissions)
+        D = self.duration_probs.shape[0]
+        T = len(self.obs_seq)
+
+        print("===== HSMM MODEL =====")
+
+        # Dimensioni
+        print("\nDimensions:")
+        print(f"  N (states)    = {N}")
+        print(f"  O (emissions) = {O}")
+        print(f"  D (max dur)   = {D}")
+        print(f"  T (obs len)   = {T}")
+
+        # Stati
+        print(f"\nStates ({N}):")
+        for i, s in enumerate(self.states):
+            print(f"  [{i}] {s}")
+
+        # Emissioni
+        print(f"\nEmissions ({O}):")
+        for o, e in enumerate(self.emissions):
+            print(f"  [{o}] {e}")
+
+        # Start probabilities
+        print("\nStart probabilities (pi):")
+        for i, s in enumerate(self.states):
+            print(f"  {s}: {self.start_probs[i]:.6f}")
+
+        # Transition matrix
+        print("\nTransition matrix (N x N):")
+        for i in range(N):
+            row = "  ".join(f"{self.trans_mat[i, j]:8.6f}" for j in range(N))
+            print(f"  {row}")
+
+        # Emission probabilities
+        print("\nEmission probabilities (O x N):")
+        for o in range(O):
+            row = "  ".join(f"{self.emission_probs[o, s]:8.6f}" for s in range(N))
+            print(f"  Obs {o}: {row}")
+
+        # Duration probabilities
+        print("\nDuration probabilities:")
+        for s in range(N):
+            row = "  ".join(f"{self.duration_probs[d, s]:.6f}" for d in range(D))
+            print(f"  State {self.states[s]}: [ {row} ]")
+
+        print("\n======================")
 
     # This function is helpful if you don't have the emission probs, but you have only a mean ad std value.
     def gen_log_emission_probs(self, means, stds):
@@ -499,7 +548,8 @@ if __name__ == "__main__":
     data_path = "data/sleep_data_10states_10000_100.json"
 
     hsmm_sleep = load_sleep_model(data_path)
-
+    hsmm_sleep.print_model()
+    
     start_time = time.time()
     v_predicted_states = hsmm_sleep.run_vanilla_viterbi()
     end_time = time.time()
