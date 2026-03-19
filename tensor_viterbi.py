@@ -332,17 +332,15 @@ class HSMM:
         #! PHASE 1 - INITIALIZATION 0<=t<D
         PAST_DELTA = self.duration_probs + self.start_probs[np.newaxis,:]
   
-        #* Method A
-        # for d in range(0,D):
-        #     obs = int(self.obs_seq[d])
-        #     self.emission_probs[obs, :]
-        #     EMISSION_PROBS[d:,:] *= self.emission_probs[obs, :][:,np.newaxis].T
 
         #* Method B
         obs_indices = self.obs_seq[:D].astype(int)  # shape: (D,)
         emission_rows = self.emission_probs[obs_indices, :]
         cum_emission = np.cumsum(emission_rows, axis=0)  # shape: (D, num_states)
         EMISSION_PROBS = cum_emission  # shape: (num_states, D)
+
+        # EMISSION_PROBS = np.roll(cum_emission, 1, axis=0)
+        # EMISSION_PROBS[0] = emission_rows[0]     
 
         delta[0:D] = (PAST_DELTA + EMISSION_PROBS)
 
@@ -351,15 +349,12 @@ class HSMM:
         EMISSION_CACHE = np.zeros((D,N), dtype=float)
         for t in range(1, T):
 
-
             if t>D: 
                 _index_t = self.obs_seq[t].astype(int)
                 _probs_t = self.emission_probs[_index_t, :] 
-                EMISSION_CACHE += _probs_t
 
-                EMISSION_PROBS[:D,:] = EMISSION_CACHE            # shape: (D,N)
+                EMISSION_PROBS = EMISSION_CACHE +_probs_t            # shape: (D,N)
 
-                EMISSION_CACHE = np.zeros((D,N), dtype=float)
                 EMISSION_CACHE[1:,:] = EMISSION_PROBS[:D-1,:]
             else:
                 #* Emission Tensor
@@ -367,6 +362,7 @@ class HSMM:
                 relevant_probs = self.emission_probs[segment_indices, :]           # shape: (D,N)
                 cum_emission = np.cumsum(np.flip(relevant_probs, axis=0), axis=0)  # shape: (D,N)
 
+                #EMISSION_PROBS = np.zeros((D,N), dtype=float)
                 EMISSION_PROBS[:cum_emission.shape[0],:] = cum_emission            # shape: (D,N)
 
                 if t==D:
@@ -426,13 +422,9 @@ class HSMM:
         delta_dur = np.zeros((T, N), dtype=int)
 
         #! PHASE 1 - INITIALIZATION 0<=t<D
+        print(self.duration_probs.shape)
+        print(self.start_probs.shape)
         PAST_DELTA = self.duration_probs + self.start_probs[np.newaxis,:]
-  
-        #* Method A
-        # for d in range(0,D):
-        #     obs = int(self.obs_seq[d])
-        #     self.emission_probs[obs, :]
-        #     EMISSION_PROBS[d:,:] *= self.emission_probs[obs, :][:,np.newaxis].T
 
         #* Method B
         obs_indices = self.obs_seq[:D].astype(int)  # shape: (D,)
@@ -440,14 +432,15 @@ class HSMM:
         cum_emission = np.cumsum(emission_rows, axis=0)  # shape: (D, num_states)
         EMISSION_PROBS = cum_emission  # shape: (num_states, D)
 
-        delta[0:D] = (PAST_DELTA + EMISSION_PROBS)
+        # EMISSION_PROBS = np.roll(cum_emission, 1, axis=0)
+        # EMISSION_PROBS[0] = emission_rows[0]      
+
+        delta[0:D,:] = (PAST_DELTA + EMISSION_PROBS)
 
         #! PHASE 2 - INDUCTION  t>0   
         AP = self.trans_mat[np.newaxis, :, :] + self.duration_probs[ :, :, np.newaxis]  # (N,N,1) + (N,1,D) = NxNxD  
         for t in range(1, T):
 
-            if(t % 100000 == 0):
-                print(t)
 
             #! ----- TOO SLOW -----
             # EMISSION_PROBS = np.ones((D, N))
@@ -645,7 +638,7 @@ def load_sleep_model(json_path: str = "hsmm_config.json") -> HSMM:
 
 if __name__ == "__main__":
 
-    data_path = "data/sleep_data_10states_1000000_1000.json"
+    data_path = "data/sleep_data_10states_20_5.json"
 
     hsmm_sleep = load_sleep_model(data_path)
     # hsmm_sleep.print_model()
@@ -675,8 +668,12 @@ if __name__ == "__main__":
     hsmm_sleep = load_sleep_model(data_path)
 
     start_time = time.time()
-    t_predicted_states = hsmm_sleep.run_log_tensor_viterbi_cached()
+    tc_predicted_states = hsmm_sleep.run_log_tensor_viterbi_cached()
     end_time = time.time()
     execution_time = end_time - start_time
     print(f"Execution time of Log Tensor Viterbi: {execution_time:.4f} seconds")
+
+    print(t_predicted_states)
+    print(tc_predicted_states)
+
     validate("Tensor vs Baseline", t_predicted_states, data_path)

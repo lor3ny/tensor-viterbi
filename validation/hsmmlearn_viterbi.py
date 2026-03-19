@@ -76,5 +76,7 @@ def validate(title_str: str, computed_states: np.ndarray, json_file: str):
 
     print(f"Baseline HSMMLearn Viterbi: {execution_time:.4f} seconds")
 
+    print(decoded_states)
+
     acc = compute_accuracy(decoded_states, computed_states)
     print(f"{title_str} Accuracy - {acc:.2%}") 
