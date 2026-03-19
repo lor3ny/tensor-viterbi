@@ -655,7 +655,7 @@ def load_sleep_model(json_path: str = "hsmm_config.json") -> HSMM:
 
 if __name__ == "__main__":
 
-    data_path = "data/sleep_data_10states_100_10.json"
+    data_path = "data/sleep_data_10states_1000_20.json"
 
     hsmm_sleep = load_sleep_model(data_path)
     # hsmm_sleep.print_model()
