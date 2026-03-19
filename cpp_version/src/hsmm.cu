@@ -1,4 +1,5 @@
 #include "hsmm.hpp"
+#include "kernels.cuh"
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -266,9 +267,9 @@ std::vector<int> HSMM::decoding_tensor_viterbi()
 {
     // TODO: implement tensor Viterbi
     // CPU-side data structures
-    std::vector<double> delta(T * N, SMOOTHNESS);       // delta[t*N + n]
-    std::vector<int>    delta_state(T * N, 0);
-    std::vector<int>    delta_dur  (T * N, 0);
+    std::vector<double> delta(T_ * N_, SMOOTHNESS);       // delta[t*N + n]
+    std::vector<int>    delta_state(T_ * N_, 0);
+    std::vector<int>    delta_dur  (T_ * N_, 0);
 
     // GPU memory allocation
     double* d_trans_mat      = nullptr;
@@ -278,13 +279,11 @@ std::vector<int> HSMM::decoding_tensor_viterbi()
     int*    d_obs_seq        = nullptr;
     double* d_delta = nullptr;
     
-    #ifdef GPU_DETECTED
-        hsmm_to_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
+    hsmm_to_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
 
-        CUDA_CHECK(cudaMalloc(&d_delta, N_ * T_ * sizeof(double)));
-        CUDA_CHECK(cudaMemcpy(d_delta, h_delta.data(), N_ * T_ * sizeof(double), cudaMemcpyHostToDevice));
-    #endif
-
+    CUDA_CHECK(cudaMalloc(&d_delta, N_ * T_ * sizeof(double)));
+    CUDA_CHECK(cudaMemcpy(d_delta, delta.data(), N_ * T_ * sizeof(double), cudaMemcpyHostToDevice));
+    
     // Load data to GPU
 
     const int T = static_cast<int>(obs_seq_.size());
@@ -318,31 +317,45 @@ std::vector<int> HSMM::decoding_tensor_viterbi()
 
     // ── AP: (D x N x N) ──────────────────────────────────────────────────── //
     // Python: AP[d, i, j] = trans_mat[i, j] + duration_probs[d, i]
-    // C++:    AP[d*N*N + i*N + j]
-    std::vector<double> AP(D * N * N);
-    for (int d = 0; d < D; ++d)
-        for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j)
-                AP[d*N*N + i*N + j] = trans_mat_[i*N + j] + duration_probs_[i*D + d];
 
-    // ── Verifica AP completo ──────────────────────────────────────────────────── //
-    std::cout << std::fixed << std::setprecision(6);
-    for (int d = 0; d < D; ++d) {
-        std::cout << "AP[" << d << ", :, :]:\n";
-        for (int i = 0; i < N; ++i) {
-            for (int j = 0; j < N; ++j)
-                std::cout << std::setw(12) << AP[d*N*N + i*N + j] << " ";
-            std::cout << "\n";
-        }
-        std::cout << "\n";
-    }
+    double* d_AP = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_AP, D_ * N_ * N_ * sizeof(double)));
 
+    dim3 block(16, 16, 1);
+    dim3 grid(
+        (N_ + block.x - 1) / block.x,
+        (N_ + block.y - 1) / block.y,
+        D_
+    );
+    
+    // ── Timer AP ─────────────────────────────────────────────────────────────── //
+    cudaEvent_t ap_start, ap_stop;
+    CUDA_CHECK(cudaEventCreate(&ap_start));
+    CUDA_CHECK(cudaEventCreate(&ap_stop));
 
+    CUDA_CHECK(cudaEventRecord(ap_start));
 
-    // Initialization
+    kernel_compute_AP<<<grid, block>>>(d_trans_mat, d_duration_probs, d_AP, N_, D_);
+    CUDA_CHECK(cudaGetLastError());
 
+    CUDA_CHECK(cudaEventRecord(ap_stop));
+    CUDA_CHECK(cudaEventSynchronize(ap_stop));
 
-    // * Compute AP
+    float ap_ms = 0.0f;
+    CUDA_CHECK(cudaEventElapsedTime(&ap_ms, ap_start, ap_stop));
+    std::cout << "AP kernel time: " << std::fixed << std::setprecision(6) << ap_ms / 1000.0f << " seconds\n";
+    std::cout.flush();
+
+    std::vector<double> AP(D_ * N_ * N_);
+    CUDA_CHECK(cudaMemcpy(AP.data(), d_AP, D_ * N_ * N_ * sizeof(double), cudaMemcpyDeviceToHost));
+
+    // ── Salva AP su file ─────────────────────────────────────────────────────── //
+    std::ofstream ap_file("../data/ap_cuda.bin", std::ios::binary);
+    ap_file.write(reinterpret_cast<const char*>(AP.data()), D_ * N_ * N_ * sizeof(double));
+    ap_file.close();
+    std::cout << "[DEBUG] AP salvato in ap_cuda.bin\n";
+    std::cout.flush();
+
 
     // Induction
 
@@ -353,9 +366,7 @@ std::vector<int> HSMM::decoding_tensor_viterbi()
     // Backtracking
 
     // Free GPU Memory
-    #ifdef GPU_DETECTED
-        hsmm_free_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
-    #endif
+    hsmm_free_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
 
     return {};
 }
