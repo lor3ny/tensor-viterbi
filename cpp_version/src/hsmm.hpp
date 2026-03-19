@@ -24,9 +24,17 @@ private:
     int N_; // number of states
     int O_; // number of distinct emissions
     int D_; // maximum duration
+    int T_; // length of observation sequence
 
     std::vector<int> obs_seq_;  // integer-coded observation sequence (T)
 
+    void hsmm_to_gpu(double*& d_trans_mat, double*& d_emission_probs,
+                    double*& d_start_probs, double*& d_duration_probs,
+                    int*& d_obs_seq);
+
+    void hsmm_free_gpu(double*& d_trans_mat, double*& d_emission_probs,
+                       double*& d_start_probs, double*& d_duration_probs,
+                       int*& d_obs_seq);
 
 public:
 
@@ -53,6 +61,8 @@ public:
     int obs_length()    const { return static_cast<int>(obs_seq_.size()); }
     void set_obs_seq(const std::vector<int>& obs_seq){ this->obs_seq_ = obs_seq; }
     
+    void to_log_space();
+
     void print() const;
 
     // ------------------------------------------------------------------ //

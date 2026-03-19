@@ -1,5 +1,23 @@
 #include "hsmm.hpp"
 
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <iostream>
+#include <iomanip>
+
+#define SMOOTHNESS 1e-30
+
+#define CUDA_CHECK(call)                                                        \
+    do {                                                                        \
+        cudaError_t err = (call);                                               \
+        if (err != cudaSuccess) {                                               \
+            fprintf(stderr, "[CUDA ERROR] %s:%d — %s: %s\n",                    \
+                    __FILE__, __LINE__, #call, cudaGetErrorString(err));        \
+            exit(EXIT_FAILURE);                                                 \
+        }                                                                       \
+    } while (0)
+
+
 HSMM::HSMM(const std::vector<std::string>&  states,
            const std::vector<std::string>&  emissions,
            const std::vector<double>&       trans_mat,
@@ -16,6 +34,7 @@ HSMM::HSMM(const std::vector<std::string>&  states,
 
     N_ = static_cast<int>(states_.size());
     O_ = static_cast<int>(emissions_.size());
+    D_ = static_cast<int>(duration_probs.size() / N_);
 }
 
 HSMM::HSMM(const std::string& json_data_path)
@@ -42,17 +61,18 @@ HSMM::HSMM(const std::string& json_data_path)
         emissions[o] = std::to_string(o);
 
     // -------- OBS SEQ --------
+    const int T = cfg["obs_seq"].size();
+
     const auto& raw_obs = cfg["obs_seq"];
     std::vector<int> obs_seq(raw_obs.size());
     for (std::size_t t = 0; t < raw_obs.size(); ++t)
         obs_seq[t] = raw_obs[t].get<int>() - 1;
 
     // -------- TRANS --------
-    std::vector<double> trans_mat;
-    trans_mat.reserve(N * N);
-    for (const auto& row : cfg["trans_mat"])
-        for (const auto& val : row)
-            trans_mat.push_back(val.get<double>());
+    std::vector<double> trans_mat(N * N);
+    for (int i = 0; i < N; ++i)
+        for (int j = 0; j < N; ++j)
+            trans_mat[j*N + i] = cfg["trans_mat"][i][j].get<double>();
 
     // -------- EMISSION PROBS --------
     std::vector<double> emission_probs(O * N, 0.0);
@@ -87,19 +107,25 @@ HSMM::HSMM(const std::string& json_data_path)
     N_ = N;
     O_ = O;
     D_ = D;
+    T_ = T;
 
     obs_seq_ = obs_seq;
 }
 
-#include <iostream>
-#include <iomanip>
-
 void HSMM::print() const {
     const int N = num_states();
     const int O = num_emissions();
-    const int D = 4;
+    const int D = max_duration();
+    const int T = obs_length();
 
     std::cout << "===== HSMM MODEL =====\n";
+
+    // Dimensioni
+    std::cout << "\nDimensions:\n";
+    std::cout << "  N (states)    = " << N << "\n";
+    std::cout << "  O (emissions) = " << O << "\n";
+    std::cout << "  D (max dur)   = " << D << "\n";
+    std::cout << "  T (obs len)   = " << T << "\n";
 
     // Stati
     std::cout << "\nStates (" << N << "):\n";
@@ -152,6 +178,20 @@ void HSMM::print() const {
     std::cout << "\n======================\n";
 }
 
+void HSMM::to_log_space()
+{
+    for (double& v : trans_mat_)
+        v = std::log(v + SMOOTHNESS);
+
+    for (double& v : emission_probs_)
+        v = std::log(v + SMOOTHNESS);
+
+    for (double& v : start_probs_)
+        v = std::log(v + SMOOTHNESS);
+
+    for (double& v : duration_probs_)
+        v = std::log(v + SMOOTHNESS);
+}
 
 //! ---------------------------------------------------------------------- 
 //! Viterbi Algorithm
@@ -180,41 +220,142 @@ std::vector<int> HSMM::decoding_vanilla_viterbi()
     return {};
 }
 
+void HSMM::hsmm_to_gpu(
+    double*& d_trans_mat,
+    double*& d_emission_probs,
+    double*& d_start_probs,
+    double*& d_duration_probs,
+    int*&    d_obs_seq)
+{
+    int T = static_cast<int>(obs_seq_.size());
+
+    CUDA_CHECK(cudaMalloc(&d_trans_mat,      N_ * N_ * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_emission_probs, O_ * N_ * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_start_probs,    N_      * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_duration_probs, N_ * D_ * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_obs_seq,        T_      * sizeof(int)));
+
+    CUDA_CHECK(cudaMemcpy(d_trans_mat,      trans_mat_.data(),      N_ * N_ * sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_emission_probs, emission_probs_.data(), O_ * N_ * sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_start_probs,    start_probs_.data(),    N_      * sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_duration_probs, duration_probs_.data(), N_ * D_ * sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_obs_seq,        obs_seq_.data(),        T_      * sizeof(int),    cudaMemcpyHostToDevice));
+}
+
+void HSMM::hsmm_free_gpu(
+    double*& d_trans_mat,
+    double*& d_emission_probs,
+    double*& d_start_probs,
+    double*& d_duration_probs,
+    int*&    d_obs_seq)
+{
+    CUDA_CHECK(cudaFree(d_trans_mat));
+    CUDA_CHECK(cudaFree(d_emission_probs));
+    CUDA_CHECK(cudaFree(d_start_probs));
+    CUDA_CHECK(cudaFree(d_duration_probs));
+    CUDA_CHECK(cudaFree(d_obs_seq));
+
+    d_trans_mat      = nullptr;
+    d_emission_probs = nullptr;
+    d_start_probs    = nullptr;
+    d_duration_probs = nullptr;
+    d_obs_seq        = nullptr;
+}
+
 std::vector<int> HSMM::decoding_tensor_viterbi()
 {
     // TODO: implement tensor Viterbi
-    //
-    // Suggested local variables (mirrors Python implementation):
-    //   int T = obs_length();
-    //   std::vector<double> delta      (T * N_, 0.0);
-    //   std::vector<int>    delta_state(T * N_, 0);
-    //   std::vector<int>    delta_dur  (T * N_, 0);
-    //
-    //   std::vector<double> PAST_DELTA     (N_ * D_, 0.0);
-    //   std::vector<double> EMISSION_PROBS (N_ * D_, 0.0);
-    //   std::vector<double> DELTA_EMISSION (N_ * N_ * D_, 0.0);
-    //   std::vector<double> AP             (N_ * N_ * D_, 0.0);
-    //   std::vector<double> RESULT_B       (N_ * N_ * D_, 0.0);
-    //
-    // --- INITIALIZATION ---
-    //   Build AP[:, :, :] = start_probs[j] * emission_probs[obs[0], j]
-    //   Call find_t_maxs(AP, p_maxs, s_maxs, d_maxs)
-    //   delta[0, :] = p_maxs
-    //   delta_state[0, :] = -1   (no predecessor)
-    //   delta_dur  [0, :] = 1
-    //
-    // --- INDUCTION (t = 1 .. T-1) ---
-    //   Rebuild AP = trans_mat[i,j] * duration_probs[j,d]  (N×N×D)
-    //   For each t:
-    //     1. Fill EMISSION_PROBS[j, d] = prod of emission_probs[obs[t-d'..t-1], j]
-    //        for d_val in 1..min(D_, t+1)
-    //     2. Fill PAST_DELTA[:, :window] from delta[max(0,t-D_)..t-1, :] reversed
-    //     3. DELTA_EMISSION[i,j,d] = PAST_DELTA[i,d] * AP[i,j,d]
-    //     4. RESULT_B[i,j,d]       = EMISSION_PROBS[j,d] * DELTA_EMISSION[i,j,d]
-    //     5. find_t_maxs(RESULT_B, p_maxs, s_maxs, d_maxs)
-    //     6. delta[t,:] = p_maxs;  delta_state[t,:] = s_maxs;  delta_dur[t,:] = d_maxs+1
-    //
-    // --- TERMINATION ---
-    //   return backtracking_termination(delta, delta_state, delta_dur, T)
+    // CPU-side data structures
+    std::vector<double> delta(T * N, SMOOTHNESS);       // delta[t*N + n]
+    std::vector<int>    delta_state(T * N, 0);
+    std::vector<int>    delta_dur  (T * N, 0);
+
+    // GPU memory allocation
+    double* d_trans_mat      = nullptr;
+    double* d_emission_probs = nullptr;
+    double* d_start_probs    = nullptr;
+    double* d_duration_probs = nullptr;
+    int*    d_obs_seq        = nullptr;
+    double* d_delta = nullptr;
+    
+    #ifdef GPU_DETECTED
+        hsmm_to_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
+
+        CUDA_CHECK(cudaMalloc(&d_delta, N_ * T_ * sizeof(double)));
+        CUDA_CHECK(cudaMemcpy(d_delta, h_delta.data(), N_ * T_ * sizeof(double), cudaMemcpyHostToDevice));
+    #endif
+
+    // Load data to GPU
+
+    const int T = static_cast<int>(obs_seq_.size());
+    const int N = N_;
+    const int O = O_;
+    const int D = D_;
+
+    // ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── //
+    // Python: PAST_DELTA[d, n] = duration_probs[d, n] + start_probs[n]
+    // C++:    duration_probs_[n*D + d]
+    std::vector<double> PAST_DELTA(D * N);
+    for (int d = 0; d < D; ++d)
+        for (int n = 0; n < N; ++n)
+            PAST_DELTA[d*N + n] = duration_probs_[n*D + d] + start_probs_[n];
+
+    // Python: cum_emission[t, n] = cumsum(emission_probs[obs_seq[:D], :], axis=0)
+    // C++:    emission_probs_[o*N + n]
+    std::vector<double> CUM_EMISSION(D * N, 0.0);
+    for (int t = 0; t < D; ++t) {
+        int obs = obs_seq_[t];
+        for (int n = 0; n < N; ++n) {
+            double prev = (t > 0) ? CUM_EMISSION[(t-1)*N + n] : 0.0;
+            CUM_EMISSION[t*N + n] = prev + emission_probs_[obs*N + n];
+        }
+    }
+
+    // Python: delta[0:D] = PAST_DELTA + EMISSION_PROBS
+    for (int t = 0; t < D; ++t)
+        for (int n = 0; n < N; ++n)
+            delta[t*N + n] = PAST_DELTA[t*N + n] + CUM_EMISSION[t*N + n];
+
+    // ── AP: (D x N x N) ──────────────────────────────────────────────────── //
+    // Python: AP[d, i, j] = trans_mat[i, j] + duration_probs[d, i]
+    // C++:    AP[d*N*N + i*N + j]
+    std::vector<double> AP(D * N * N);
+    for (int d = 0; d < D; ++d)
+        for (int i = 0; i < N; ++i)
+            for (int j = 0; j < N; ++j)
+                AP[d*N*N + i*N + j] = trans_mat_[i*N + j] + duration_probs_[i*D + d];
+
+    // ── Verifica AP completo ──────────────────────────────────────────────────── //
+    std::cout << std::fixed << std::setprecision(6);
+    for (int d = 0; d < D; ++d) {
+        std::cout << "AP[" << d << ", :, :]:\n";
+        for (int i = 0; i < N; ++i) {
+            for (int j = 0; j < N; ++j)
+                std::cout << std::setw(12) << AP[d*N*N + i*N + j] << " ";
+            std::cout << "\n";
+        }
+        std::cout << "\n";
+    }
+
+
+
+    // Initialization
+
+
+    // * Compute AP
+
+    // Induction
+
+    
+    // Retrieve data from GPU
+
+
+    // Backtracking
+
+    // Free GPU Memory
+    #ifdef GPU_DETECTED
+        hsmm_free_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
+    #endif
+
     return {};
 }
