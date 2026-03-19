@@ -313,6 +313,113 @@ class HSMM:
         path = self.backtracking_termination(delta, delta_state, delta_dur, T)
         
         return path
+    
+
+    #? We use the official signature of Numpy for 3D tensors (d,y,x)
+    #? axis 0 → depth (z) — the first index, selects a 2D "slice"
+    #? axis 1 → rows — the second index, selects a row within a slice
+    #? axis 2 → columns — the third index, selects a column within a row
+    def run_log_tensor_viterbi_idea(self):
+
+        T = len(self.obs_seq)
+        N = len(self.states) 
+        D = self.duration_probs.shape[0]
+        
+        delta = np.full((T, N), -np.inf)        
+        delta_state = np.zeros((T, N), dtype=int)
+        delta_dur = np.zeros((T, N), dtype=int)
+
+        #! PHASE 1 - INITIALIZATION 0<=t<D
+        PAST_DELTA = self.duration_probs + self.start_probs[np.newaxis,:]
+  
+        #* Method A
+        # for d in range(0,D):
+        #     obs = int(self.obs_seq[d])
+        #     self.emission_probs[obs, :]
+        #     EMISSION_PROBS[d:,:] *= self.emission_probs[obs, :][:,np.newaxis].T
+
+        #* Method B
+        obs_indices = self.obs_seq[:D].astype(int)  # shape: (D,)
+        emission_rows = self.emission_probs[obs_indices, :]
+        cum_emission = np.cumsum(emission_rows, axis=0)  # shape: (D, num_states)
+        EMISSION_PROBS = cum_emission  # shape: (num_states, D)
+
+        delta[0:D] = (PAST_DELTA + EMISSION_PROBS)
+
+        #! PHASE 2 - INDUCTION  t>0   
+        AP = self.trans_mat[np.newaxis, :, :] + self.duration_probs[ :, :, np.newaxis]  # (N,N,1) + (N,1,D) = NxNxD  
+        for t in range(1, T):
+
+            #! ----- TOO SLOW -----
+            # EMISSION_PROBS = np.ones((D, N))
+            # for d_val in range(0,  min(D, t)):
+            #     segment_indices = np.array(self.obs_seq[t - d_val : t+1], dtype=int)
+            #     relevant_probs = self.emission_probs[segment_indices, :]   
+            #     EMISSION_PROBS[d_val, :] = np.prod(relevant_probs, axis=0)
+            #! ----- TOO SLOW -----
+
+            #* Emission Tensor
+            segment_indices = self.obs_seq[max(0, t - D+1):t+1].astype(int)  # shape: (D,)
+            relevant_probs = self.emission_probs[segment_indices, :]
+            cum_emission = np.cumsum(np.flip(relevant_probs, axis=0), axis=0)  # shape: (D, num_states)
+            EMISSION_PROBS[:cum_emission.shape[0],:] = cum_emission            # shape: (num_states, D)
+            
+            #* Past Delta Tensor
+            window = delta[max(0, t-D) : t, :]
+            PAST_DELTA[:window.shape[0], :] = window[::-1]
+
+            #* New Delta(t)
+            #* - Method A
+            # DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] * EMISSION_PROBS[np.newaxis, :, :] 
+            # RESULT_A = AP #* DELTA_EMISSION  # NxNxD element-wise
+
+            #* - Method B
+            DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] + AP              # (D,N) + (D,N,N) = DxNxN
+            RESULT_B = EMISSION_PROBS[ :, :, np.newaxis] + DELTA_EMISSION   # (N,D) + (D,N,N) = DxNxN
+        
+            #! ----- TOO SLOW -----
+            # for j in range(N):
+            #     plane = RESULT_B[:, j, :]          # shape (N, D) — the j-th plane
+                
+            #     flat_idx = np.argmax(plane[0:min(t,D),:])      # argmax over flattened (N*D)
+            #     d, i = np.unravel_index(flat_idx, plane.shape)  # recover (d, i) coords
+
+            #     if t < D and plane[d, i] < delta[t, j]:
+            #         max_vals[j] = delta[t, j]
+            #         max_states[j] = delta_state[t, j]
+            #         max_durs[j] = delta_dur[t, j]
+            #     else:
+            #         max_vals[j] = plane[d, i]
+            #         max_states[j] = i               
+            #         max_durs[j]   = d        
+
+            # delta[t, :] = max_vals 
+            # delta_state[t, :] = max_states
+            # delta_dur[t, :] = max_durs+1
+            #! ----- TOO SLOW -----
+
+
+            planes = RESULT_B.transpose(1, 0, 2)          # (N, N, D): planes[j] = RESULT_B[:, j, :]
+            sliced = planes[:, :min(t, D), :]           
+            flat_idx = np.argmax(sliced.reshape(N, -1), axis=1)   # (N,)
+
+            slice_shape = sliced.shape[1:]                         # (min(t,D), D)
+            d_arr, i_arr = np.unravel_index(flat_idx, slice_shape) # each (N,)
+
+            best_vals = planes[np.arange(N), d_arr, i_arr]        # (N,)
+
+            if t < D:
+                cond = best_vals < delta[t, :]                     # (N,) boolean mask
+            else:
+                cond = np.zeros(N, dtype=bool)                     # all False → always use else
+
+            delta[t, :]       = np.where(cond, delta[t, :],       best_vals)
+            delta_state[t, :] = np.where(cond, delta_state[t, :], i_arr)
+            delta_dur[t, :]   = np.where(cond, delta_dur[t, :],   d_arr) + 1
+
+        path = self.backtracking_termination(delta, delta_state, delta_dur, T)
+        
+        return path
 
 
 
@@ -361,7 +468,7 @@ class HSMM:
             #! ----- TOO SLOW -----
 
             #* Emission Tensor
-            segment_indices = self.obs_seq[max(0, t - D + 1):t+1].astype(int)  # shape: (D,)
+            segment_indices = self.obs_seq[max(0, t - D+1):t+1].astype(int)  # shape: (D,)
             relevant_probs = self.emission_probs[segment_indices, :]
             cum_emission = np.cumsum(np.flip(relevant_probs, axis=0), axis=0)  # shape: (D, num_states)
             EMISSION_PROBS[:cum_emission.shape[0],:] = cum_emission            # shape: (num_states, D)
@@ -402,7 +509,7 @@ class HSMM:
 
 
             planes = RESULT_B.transpose(1, 0, 2)          # (N, N, D): planes[j] = RESULT_B[:, j, :]
-            sliced = planes[:, :min(t, D), :]            
+            sliced = planes[:, :min(t, D), :]           
             flat_idx = np.argmax(sliced.reshape(N, -1), axis=1)   # (N,)
 
             slice_shape = sliced.shape[1:]                         # (min(t,D), D)
@@ -429,7 +536,7 @@ class HSMM:
 
         T = len(self.obs_seq)  
         N = len(self.states) 
-        D = self.duration_probs.shape[1]  
+        D = self.duration_probs.shape[0]  
         
         delta = np.full((T, N), -np.inf)
         psi_state = np.zeros((T, N), dtype=int)
@@ -438,32 +545,33 @@ class HSMM:
         #! PHASE 1 - INITIALIZATION 0<=t<D
         #* delta(0,sj) = pi(sj) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k))
         for state in range(N):
-            for d in range(0, D):
-                obs_score = 1.0    
-                for tau in range(0,d+1):
+            for d in range(1, D+1):
+                obs_score = 0.0
+                for tau in range(0,d):
                     obs_index = int(self.obs_seq[tau])
                     obs_score += self.emission_probs[obs_index, state]
 
-                dur_score = self.duration_probs[d, state]
+                dur_score = self.duration_probs[d-1, state]
                 start_prob = self.start_probs[state]
                 score = start_prob + dur_score + obs_score
-                if score > delta[d, state]:
-                    delta[d, state] = score
-                    psi_dur[d, state] = d+1
-                    psi_state[d, state] = state
+                if score > delta[d-1, state]:
+                    delta[d-1, state] = score
+                    psi_dur[d-1, state] = d
+                    psi_state[d-1, state] = state
 
         #! PHASE 2 - INDUCTION  t>0
         #* delta(t, sj) = max{d} ( max{si} ( delta(t-d,si) * a(si,sj) ) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k)))  
         for t in range(1, T):
+            #print(t)
             for sj in range(N):
                 for d in range(1, D+1):
                     if t - d < 0: 
                         continue # Cannot look back past 0 here
                     
                     # |-|{k = t-d}(b(sj, seq_obs(k)
-                    obs_score = 1.0
-                    for tau in range(0,d):
-                        obs_index = int(self.obs_seq[t-tau])
+                    obs_score = 0.0
+                    for tau in range(t - d, t+1):
+                        obs_index = int(self.obs_seq[tau])
                         obs_score += self.emission_probs[obs_index, sj]
                     
                     # P(d|Sj)
@@ -474,7 +582,7 @@ class HSMM:
                     for si in range(N):
                         # HSMMs handle self-loops via duration, Skip impossibile transitions. 
                         #! But with product is necessary, maybe can be inserted but doesn't change much in terms of performance
-                        # if si == sj or self.trans_mat[si, sj] == 0: 
+                        # if si == sj: 
                         #     continue
 
                         total_score = self.trans_mat[si, sj] + dur_score + delta[t - d, si] + obs_score
@@ -490,6 +598,8 @@ class HSMM:
 
         path = self.backtracking_termination(delta, psi_state, psi_dur, T)
             
+        print(delta)
+
         return path
     
 
@@ -545,24 +655,24 @@ def load_sleep_model(json_path: str = "hsmm_config.json") -> HSMM:
 
 if __name__ == "__main__":
 
-    data_path = "data/sleep_data_10states_10000_100.json"
+    data_path = "data/sleep_data_10states_100_10.json"
 
     hsmm_sleep = load_sleep_model(data_path)
-    hsmm_sleep.print_model()
-    
-    start_time = time.time()
-    v_predicted_states = hsmm_sleep.run_vanilla_viterbi()
-    end_time = time.time()
-    execution_time = end_time - start_time
-    print(f"Execution time of Vanilla Viterbi: {execution_time:.4f} seconds")
-
-    validate("Vanilla vs Baseline", v_predicted_states, data_path)
+    # hsmm_sleep.print_model()
 
     # start_time = time.time()
-    # t_predicted_states, delta_t = hsmm_sleep.run_tensor_viterbi()
+    # v_predicted_states = hsmm_sleep.run_vanilla_viterbi()
     # end_time = time.time()
     # execution_time = end_time - start_time
-    # print(f"Execution time of Tensor Viterbi: {execution_time:.4f} seconds")
+    # print(f"Execution time of Vanilla Viterbi: {execution_time:.4f} seconds")
+
+    # validate("Vanilla vs Baseline", v_predicted_states, data_path)
+
+    # np.testing.assert_array_equal(
+    #     t_predicted_states,
+    #     v_predicted_states,
+    #     err_msg="Vanilla is different from Tensor based."
+    # )
 
     hsmm_sleep = load_sleep_model(data_path)
 
@@ -571,11 +681,4 @@ if __name__ == "__main__":
     end_time = time.time()
     execution_time = end_time - start_time
     print(f"Execution time of Log Tensor Viterbi: {execution_time:.4f} seconds")
-
-    # np.testing.assert_array_equal(
-    #     t_predicted_states,
-    #     v_predicted_states,
-    #     err_msg="Vanilla is different from Tensor based."
-    # )
-
     validate("Tensor vs Baseline", t_predicted_states, data_path)

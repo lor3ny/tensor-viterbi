@@ -25,8 +25,8 @@ sleep_states = [
 J = len(sleep_states)          # 10
 
 sleep_emissions = np.arange(13)   # 13 HR bins (unchanged)
-time_steps      = 10000
-max_duration    = 100
+time_steps      = 20
+max_duration    = 5
 
 # --- Observation sequence (unchanged logic) ----------------------------------
 sleep_obs_seq = np.zeros(time_steps)
@@ -66,7 +66,7 @@ sleep_trans_mat = np.array([
   [0.00, 0.00, 0.05, 0.10, 0.00, 0.00, 0.00, 0.80, 0.00, 0.05],  # REM Early
   [0.00, 0.00, 0.00, 0.05, 0.00, 0.00, 0.15, 0.00, 0.75, 0.05],  # REM Mid
   [0.05, 0.00, 0.10, 0.65, 0.00, 0.00, 0.10, 0.05, 0.00, 0.05],  # REM Late
-  [0.40, 0.10, 0.40, 0.05, 0.00, 0.00, 0.00, 0.00, 0.00, 0.05],  # Micro-Arousal
+  [0.40, 0.10, 0.40, 0.05, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00],  # Micro-Arousal
 ], dtype=float)
 
 # Safety: re-normalise rows to absorb any rounding
