@@ -640,7 +640,7 @@ def load_log_data(json_path: str = "hsmm_config.json") -> HSMM:
 
 if __name__ == "__main__":
 
-    data_path = "data/sleep_data_10states_10000_100.json"
+    data_path = "data/20states_10000steps_100dur.json"
 
     # hsmm_sleep = load_log_data(data_path)
     # hsmm_sleep.print_model()
