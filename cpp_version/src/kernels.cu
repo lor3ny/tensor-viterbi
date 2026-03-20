@@ -6,12 +6,21 @@ __global__ void kernel_compute_AP(
     double*                    AP,
     int N, int D)
 {
-    // un thread per elemento AP[d, i, j]
-    int j = threadIdx.x + blockIdx.x * blockDim.x;  // colonna (stato dest)
-    int i = threadIdx.y + blockIdx.y * blockDim.y;  // riga    (stato src)
-    int d = blockIdx.z;                              // durata
+    int j = threadIdx.x;   // stato destinazione
+    int i = threadIdx.y;   // stato sorgente
+    int d = blockIdx.x;    // durata
 
     if (i >= N || j >= N || d >= D) return;
 
     AP[d*N*N + i*N + j] = trans_mat[i*N + j] + duration_probs[i*D + d];
+}
+
+__global__ void kernel_induction(
+    const double* __restrict__ d_past_delta,
+    const double* __restrict__ d_AP,
+    const double* __restrict__ d_emissions,
+    double*                    d_result,
+    int t, int N, int D)
+{
+
 }

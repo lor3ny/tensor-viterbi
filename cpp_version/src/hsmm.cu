@@ -19,6 +19,40 @@
     } while (0)
 
 
+
+// ── cuda_launch_timed ─────────────────────────────────────────────────────── //
+// Wrapper che lancia un kernel e restituisce il tempo di esecuzione in secondi.
+// Uso:
+//   float ms = cuda_launch_timed("nome", [&](){
+//       my_kernel<<<grid, block>>>(args...);
+//   });
+template <typename KernelFunc>
+float cuda_launch_timed(const std::string& label, KernelFunc&& launch)
+{
+    cudaEvent_t start, stop;
+    CUDA_CHECK(cudaEventCreate(&start));
+    CUDA_CHECK(cudaEventCreate(&stop));
+
+    CUDA_CHECK(cudaEventRecord(start));
+    std::forward<KernelFunc>(launch)();
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaEventRecord(stop));
+    CUDA_CHECK(cudaEventSynchronize(stop));
+
+    float ms = 0.0f;
+    CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
+
+    CUDA_CHECK(cudaEventDestroy(start));
+    CUDA_CHECK(cudaEventDestroy(stop));
+
+    std::cout << "[CUDA] " << label << ": "
+              << std::fixed << std::setprecision(6)
+              << ms / 1000.0f << " s\n";
+    std::cout.flush();
+
+    return ms;
+}
+
 HSMM::HSMM(const std::vector<std::string>&  states,
            const std::vector<std::string>&  emissions,
            const std::vector<double>&       trans_mat,
@@ -211,8 +245,35 @@ std::vector<int> HSMM::backtracking_termination(const std::vector<double>& delta
                                                  const std::vector<int>&    psi_dur,
                                                  int                        T) const
 {
-    // TODO: return T-element state path
-    return {};
+    std::vector<int> path(T, 0);
+
+    // ── Termination — trova il miglior stato finale ───────────────────────── //
+    int t = T - 1;
+    int curr_state = 0;
+    double best_val = delta[t * N_ + 0];
+    for (int n = 1; n < N_; ++n) {
+        if (delta[t * N_ + n] > best_val) {
+            best_val   = delta[t * N_ + n];
+            curr_state = n;
+        }
+    }
+
+    // ── Backtracking ──────────────────────────────────────────────────────── //
+    while (t > 0) {
+        int d      = psi_dur  [t * N_ + curr_state];
+        int prev_s = psi_state[t * N_ + curr_state];
+
+        // Riempi il segmento [start_t, t]
+        int start_t = t - d + 1;
+        for (int k = start_t; k <= t; ++k)
+            path[k] = curr_state;
+
+        // Vai indietro
+        t          = t - d;
+        curr_state = prev_s;
+    }
+
+    return path;
 }
  
 std::vector<int> HSMM::decoding_vanilla_viterbi()
@@ -265,11 +326,14 @@ void HSMM::hsmm_free_gpu(
 
 std::vector<int> HSMM::decoding_tensor_viterbi()
 {
-    // TODO: implement tensor Viterbi
     // CPU-side data structures
-    std::vector<double> delta(T_ * N_, SMOOTHNESS);       // delta[t*N + n]
-    std::vector<int>    delta_state(T_ * N_, 0);
-    std::vector<int>    delta_dur  (T_ * N_, 0);
+    const int T = T_;
+    const int N = N_;
+    const int D = D_;
+
+    std::vector<double> delta(T * N, SMOOTHNESS);       // delta[t*N + n]
+    std::vector<int>    delta_state(T * N, 0);
+    std::vector<int>    delta_dur  (T * N, 0);
 
     // GPU memory allocation
     double* d_trans_mat      = nullptr;
@@ -277,19 +341,13 @@ std::vector<int> HSMM::decoding_tensor_viterbi()
     double* d_start_probs    = nullptr;
     double* d_duration_probs = nullptr;
     int*    d_obs_seq        = nullptr;
-    double* d_delta = nullptr;
     
-    hsmm_to_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
-
-    CUDA_CHECK(cudaMalloc(&d_delta, N_ * T_ * sizeof(double)));
-    CUDA_CHECK(cudaMemcpy(d_delta, delta.data(), N_ * T_ * sizeof(double), cudaMemcpyHostToDevice));
+    double* d_delta = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_delta, N * T * sizeof(double)));
     
     // Load data to GPU
+    hsmm_to_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
 
-    const int T = static_cast<int>(obs_seq_.size());
-    const int N = N_;
-    const int O = O_;
-    const int D = D_;
 
     // ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── //
     // Python: PAST_DELTA[d, n] = duration_probs[d, n] + start_probs[n]
@@ -319,54 +377,114 @@ std::vector<int> HSMM::decoding_tensor_viterbi()
     // Python: AP[d, i, j] = trans_mat[i, j] + duration_probs[d, i]
 
     double* d_AP = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_AP, D_ * N_ * N_ * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_AP, D * N * N * sizeof(double)));
 
-    dim3 block(16, 16, 1);
-    dim3 grid(
-        (N_ + block.x - 1) / block.x,
-        (N_ + block.y - 1) / block.y,
-        D_
-    );
+    // ── AP ───────────────────────────────────────────────────────────────────── //
+    // limit: N*N <= 1024 (max threads per block) -> N <= 32
+    dim3 block(N, N, 1);   // N×N thread per blocco
+    dim3 grid(D, 1, 1);     // D blocchi
     
-    // ── Timer AP ─────────────────────────────────────────────────────────────── //
-    cudaEvent_t ap_start, ap_stop;
-    CUDA_CHECK(cudaEventCreate(&ap_start));
-    CUDA_CHECK(cudaEventCreate(&ap_stop));
+    cuda_launch_timed("kernel_compute_AP", [&](){
+        kernel_compute_AP<<<grid, block>>>(d_trans_mat, d_duration_probs, d_AP, N, D);
+    });
 
-    CUDA_CHECK(cudaEventRecord(ap_start));
-
-    kernel_compute_AP<<<grid, block>>>(d_trans_mat, d_duration_probs, d_AP, N_, D_);
-    CUDA_CHECK(cudaGetLastError());
-
-    CUDA_CHECK(cudaEventRecord(ap_stop));
-    CUDA_CHECK(cudaEventSynchronize(ap_stop));
-
-    float ap_ms = 0.0f;
-    CUDA_CHECK(cudaEventElapsedTime(&ap_ms, ap_start, ap_stop));
-    std::cout << "AP kernel time: " << std::fixed << std::setprecision(6) << ap_ms / 1000.0f << " seconds\n";
-    std::cout.flush();
-
-    std::vector<double> AP(D_ * N_ * N_);
-    CUDA_CHECK(cudaMemcpy(AP.data(), d_AP, D_ * N_ * N_ * sizeof(double), cudaMemcpyDeviceToHost));
+    std::vector<double> AP(D * N * N);
+    CUDA_CHECK(cudaMemcpy(AP.data(), d_AP, D * N * N * sizeof(double), cudaMemcpyDeviceToHost));
 
     // ── Salva AP su file ─────────────────────────────────────────────────────── //
     std::ofstream ap_file("../data/ap_cuda.bin", std::ios::binary);
-    ap_file.write(reinterpret_cast<const char*>(AP.data()), D_ * N_ * N_ * sizeof(double));
+    ap_file.write(reinterpret_cast<const char*>(AP.data()), D * N * N * sizeof(double));
     ap_file.close();
     std::cout << "[DEBUG] AP salvato in ap_cuda.bin\n";
-    std::cout.flush();
+
+    // ! temporaneo: copia delta su GPU (per ora delta è solo CPU, ma in futuro sarà direttamente in global)
+    CUDA_CHECK(cudaMemcpy(d_delta, delta.data(), N * T * sizeof(double), cudaMemcpyHostToDevice));
+
+    // ── PHASE 2 — Induction (t >= 1) ─────────────────────────────────────────── //
+    // AP[d*N*N + j*N + i] = trans_mat[j,i] + duration_probs[d,j]   (già calcolato)
+    //
+    // Per ogni stato corrente j, troviamo il miglior (d, i_prev) tale che:
+    //   score(j, d, i) = EMISSION_PROBS[d,j] + PAST_DELTA[d,i] + AP[d,j,i]
+    //                  = emis_cum(j, d+1 passi fino a t)
+    //                  + delta[t-1-d, i]
+    //                  + trans_mat[j,i] + dur_prob[d,j]
+
+    std::vector<double> EMISSION_PROBS(D * N, 0.0);
+
+    for (int t = 1; t < T; ++t) {
+
+        const int past_len = std::min(t, D);   // d valido: 0 .. past_len-1
+
+        // TODO: Calcolare Emission su GPU
+        // ── 1. Emission Tensor  ("Produttoria") ─────────────────────────────── //
+        // EMISSION_PROBS[d*N + n] = Σ_{k=0}^{d} emission_probs[obs_seq[t-k], n]
+        // (cumsum sul segmento rovesciato che termina in t)
+        for (int n = 0; n < N; ++n) {
+            double cum = 0.0;
+            for (int d = 0; d < past_len; ++d) {
+                int obs = static_cast<int>(obs_seq_[t - d]);
+                cum += emission_probs_[obs * N + n];
+                EMISSION_PROBS[d * N + n] = cum;
+            }
+        }
+
+        /* //TODO: PAST_DELTA * AP * EMISSIONS su GPU
+         * 1. PAST_DELTA: //! delta direttamente in global, nessuna copia
+         * 2. AP: //! in constant memory
+         * 3. EMISSION_PROBS: //? per ora cpu
+        */ 
+
+        // ── 2. Past Delta Tensor ────────────────────────────────────────────── //
+        // PAST_DELTA[d*N + n] = delta[(t-1-d)*N + n]   (finestra rovesciata)
+        for (int d = 0; d < past_len; ++d)
+            for (int n = 0; n < N; ++n)
+                PAST_DELTA[d * N + n] = delta[(t - 1 - d) * N + n];
 
 
-    // Induction
 
+        // TODO: fuse argmax with induction kernel
+        // ── 3. Argmax su (d, i_prev) per ogni stato corrente j ─────────────── //
+        for (int j = 0; j < N; ++j) {
+            double best_val = -std::numeric_limits<double>::infinity();
+            int    best_d   = 0;
+            int    best_i   = 0;
+
+            for (int d = 0; d < past_len; ++d) {
+                const double ep = EMISSION_PROBS[d * N + j];
+                for (int i = 0; i < N; ++i) {
+                    const double val = ep
+                                    + PAST_DELTA[d * N + i]
+                                    + AP[d * N * N + j * N + i];
+                    if (val > best_val) {
+                        best_val = val;
+                        best_d   = d;
+                        best_i   = i;
+                    }
+                }
+            }
+
+            // Se t < D, la PHASE 1 ha già scritto delta[t,j]:
+            // sovrascriviamo solo se il valore induttivo è almeno altrettanto buono.
+            // (Python: cond = best_vals < delta[t,:] → non aggiornare se cond è True)
+            const bool update = (t >= D) || (best_val >= delta[t * N + j]);
+            if (update) {
+                delta      [t * N + j] = best_val;
+                delta_state[t * N + j] = best_i;
+                delta_dur  [t * N + j] = best_d + 1;
+            }
+        }
+    }
     
     // Retrieve data from GPU
 
 
     // Backtracking
-
+    std::vector<int> path = backtracking_termination(delta, delta_state, delta_dur, T);
+    
     // Free GPU Memory
     hsmm_free_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
+    CUDA_CHECK(cudaFree(d_AP));
 
-    return {};
+    return path;
 }
+
