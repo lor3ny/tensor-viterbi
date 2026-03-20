@@ -79,7 +79,7 @@ public:
                                               const std::vector<int>&    psi_dur,
                                               int                        T) const;
 
-    std::vector<int> decoding_tensor_viterbi();
+    std::vector<int> decoding_tensor_viterbi(double* kernel_ms);
 
     std::vector<int> decoding_vanilla_viterbi();
 

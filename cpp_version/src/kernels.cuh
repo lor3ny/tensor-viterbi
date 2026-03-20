@@ -10,9 +10,11 @@ __global__ void kernel_compute_AP(
     double*                    AP,
     int N, int D);
 
+    
+// ── Induction kernel ─────────────────────────────────────────────────────── //
 __global__ void kernel_induction(
-    const double* __restrict__ d_past_delta,
-    const double* __restrict__ d_AP,
-    const double* __restrict__ d_emissions,
-    double*                    d_result,
-    int t, int N, int D);
+    const double* __restrict__ delta,
+    const double* __restrict__ AP,
+    const double* __restrict__ emissions,
+    double*                    score,
+    int N, int D, int tau, int t);
