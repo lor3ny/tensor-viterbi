@@ -6,6 +6,7 @@ from hsmmlearn.emissions import AbstractEmissions
 from hsmmlearn.hsmm import HSMMModel
 
 
+
 class MultinomialEmissions(AbstractEmissions):
     """
     Discrete (categorical) emissions.
@@ -20,6 +21,14 @@ class MultinomialEmissions(AbstractEmissions):
 
     def copy(self):
         return MultinomialEmissions(self._emission_matrix.copy())
+
+
+
+def compute_accuracy(true_states, predicted_states):
+    true_states = np.array(true_states)
+    predicted_states = np.array(predicted_states)
+    return np.sum(true_states == predicted_states) / len(true_states)
+
 
 
 def load_sleep_model_hsmmlearn(json_path: str = "hsmm_config.json"):
@@ -60,12 +69,10 @@ def load_sleep_model_hsmmlearn(json_path: str = "hsmm_config.json"):
 
     return model, obs_seq
 
-def compute_accuracy(true_states, predicted_states):
-    true_states = np.array(true_states)
-    predicted_states = np.array(predicted_states)
-    return np.sum(true_states == predicted_states) / len(true_states)
 
 
+#! HOOK
+#! ---------------------
 def validate(title_str: str, computed_states: np.ndarray, json_file: str):
     model, obs_seq = load_sleep_model_hsmmlearn(json_file)
 
@@ -74,9 +81,7 @@ def validate(title_str: str, computed_states: np.ndarray, json_file: str):
     end_time = time.time()
     execution_time = end_time - start_time
 
-    print(f"Baseline HSMMLearn Viterbi: {execution_time:.4f} seconds")
-
-    print(decoded_states)
+    print(f"Execution time of Baseline C++ HSMMLearn Viterbi: {execution_time:.4f} seconds")
 
     acc = compute_accuracy(decoded_states, computed_states)
     print(f"{title_str} Accuracy - {acc:.2%}") 
