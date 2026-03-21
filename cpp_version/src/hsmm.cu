@@ -19,40 +19,6 @@
     } while (0)
 
 
-
-// ── cuda_launch_timed ─────────────────────────────────────────────────────── //
-// Wrapper che lancia un kernel e restituisce il tempo di esecuzione in secondi.
-// Uso:
-//   float ms = cuda_launch_timed("nome", [&](){
-//       my_kernel<<<grid, block>>>(args...);
-//   });
-template <typename KernelFunc>
-float cuda_launch_timed(const std::string& label, KernelFunc&& launch)
-{
-    cudaEvent_t start, stop;
-    CUDA_CHECK(cudaEventCreate(&start));
-    CUDA_CHECK(cudaEventCreate(&stop));
-
-    CUDA_CHECK(cudaEventRecord(start));
-    std::forward<KernelFunc>(launch)();
-    CUDA_CHECK(cudaGetLastError());
-    CUDA_CHECK(cudaEventRecord(stop));
-    CUDA_CHECK(cudaEventSynchronize(stop));
-
-    float ms = 0.0f;
-    CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
-
-    CUDA_CHECK(cudaEventDestroy(start));
-    CUDA_CHECK(cudaEventDestroy(stop));
-    
-    // std::cout << "[CUDA] " << label << ": "
-    //           << std::fixed << std::setprecision(6)
-    //           << ms / 1000.0f << " s\n";
-    // std::cout.flush();
-
-    return ms;
-}
-
 HSMM::HSMM(const std::vector<std::string>&  states,
            const std::vector<std::string>&  emissions,
            const std::vector<double>&       trans_mat,
@@ -350,18 +316,24 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     double* d_delta = nullptr;
     double* d_AP = nullptr;
     double* d_emissions = nullptr;
-    double* d_score = nullptr;
+    double* d_best_state_ji = nullptr;
+    int*    d_best_d_ji = nullptr;
+    int*    d_delta_state = nullptr;
+    int*    d_delta_dur = nullptr;
     CUDA_CHECK(cudaMalloc(&d_delta, N * T * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_best_state_ji, N * N * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_best_d_ji, N * N * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_delta_state, N * T * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_delta_dur, N * T * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_AP, D * N * N * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_emissions, D * N * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_score, D * N * N * sizeof(double)));
 
     // Load data to GPU
     hsmm_to_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    // ? ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── //
+    // * ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── //
     // Python: PAST_DELTA[d, n] = duration_probs[d, n] + start_probs[n]
     // C++:    duration_probs_[n*D + d]
     std::vector<double> PAST_DELTA(D * N);
@@ -388,19 +360,15 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     // ! temporaneo: copia DELTA su GPU (per ora delta è solo CPU, ma in futuro sarà direttamente in global)
     CUDA_CHECK(cudaMemcpy(d_delta, delta.data(), N * T * sizeof(double), cudaMemcpyHostToDevice));
 
-
     // ── AP: (D x N x N) ──────────────────────────────────────────────────── //
     // Python: AP[d, i, j] = trans_mat[i, j] + duration_probs[d, i]
 
-    // limit: N*N <= 1024 (max threads per block) -> N <= 32
-    dim3 block(N, N, 1);   // N×N thread per blocco
-    dim3 grid(D, 1, 1);     // D blocchi
+    dim3 block(N, N, 1);   // limit: N*N <= 1024 (max threads per block) -> N <= 32
+    dim3 grid(D, 1, 1);
     
-    cuda_launch_timed("kernel_compute_AP", [&](){
-        kernel_compute_AP<<<grid, block>>>(d_trans_mat, d_duration_probs, d_AP, N, D);
-    });
-
-    // ? ── PHASE 2 — Induction (t >= 1) ─────────────────────────────────────────── //
+    kernel_compute_AP<<<grid, block>>>(d_trans_mat, d_duration_probs, d_AP, N, D);
+    
+    // * ── PHASE 2 — Induction (t >= 1) ─────────────────────────────────────────── //
     // Per ogni stato corrente j, troviamo il miglior (d, i_prev) tale che:
     //   score(j, d, i) = EMISSION_PROBS[d,j] + PAST_DELTA[d,i] + AP[d,j,i]
 
@@ -408,56 +376,31 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
 
         const int tau = std::min(t, D);   // d valido: 0 .. tau-1
         
-        dim3 block_score(N, N);
-        dim3 grid_score(tau);
-        size_t shmem = N * sizeof(double);
+        dim3 block(tau);
+        dim3 grid(N, N);
+        size_t shmem =  tau * (sizeof(double) + sizeof(int));  // sh_val | sh_d
 
-        cuda_launch_timed("kernel_induction", [&](){
-            kernel_induction<<<grid_score, block_score, shmem>>>(
-                d_obs_seq, d_emission_probs, d_delta, d_AP, d_score, N, D, tau, t);
-        });
+        kernel_induction<<<grid, block, shmem>>>(
+            d_obs_seq, d_emission_probs, d_delta, d_AP,
+            d_best_state_ji, d_best_d_ji, 
+            N, tau, t);
 
-        CUDA_CHECK(cudaMemcpy(score.data(), d_score, D * N * N * sizeof(double), cudaMemcpyDeviceToHost));
+        // ── Kernel 2: argmax su i — warp shuffle, invariato ──────────────────── //
+        // grid(N), block(N) — un blocco per j, un thread per i
+        kernel_reduce_i<<<1, N>>>(
+            d_best_state_ji, d_best_d_ji,
+            d_delta, d_delta_state, d_delta_dur,
+            N, D, t);
+        CUDA_CHECK(cudaGetLastError());
 
-        // TODO: fuse argmax with induction kernel
-        // ── 3. Argmax su (d, i_prev) per ogni stato corrente j ─────────────── //
-        for (int j = 0; j < N; ++j) {
-            double best_val = -std::numeric_limits<double>::infinity();
-            int    best_d   = 0;
-            int    best_i   = 0;
-
-            for (int d = 0; d < tau; ++d) {
-                const double ep = emissions[d * N + j];
-                for (int i = 0; i < N; ++i) {
-                    const double val = score[d*N*N + j*N + i];
-
-                    if (val > best_val) {
-                        best_val = val;
-                        best_d   = d;
-                        best_i   = i;
-                    }
-                }
-            }
-
-            // Se t < D, la PHASE 1 ha già scritto delta[t,j]:
-            // sovrascriviamo solo se il valore induttivo è almeno altrettanto buono.
-            // (Python: cond = best_vals < delta[t,:] → non aggiornare se cond è True)
-            const bool update = (t >= D) || (best_val > delta[t * N + j]);
-            if (update) {
-                delta      [t * N + j] = best_val;
-                delta_state[t * N + j] = best_i;
-                delta_dur  [t * N + j] = best_d + 1;
-            }
-        }
-
-        // ! temporaneo: aggiorna delta GPU per t+1 col vettore calcolato in t
-        CUDA_CHECK(cudaMemcpy(d_delta + t * N, delta.data() + t * N, N * sizeof(double), cudaMemcpyHostToDevice));
-
+        CUDA_CHECK(cudaDeviceSynchronize());
     }
     
 
     // Retrieve data from GPU
-
+    CUDA_CHECK(cudaMemcpy(delta.data(), d_delta, N * T * sizeof(double), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(delta_state.data(), d_delta_state, N * T * sizeof(int), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(delta_dur.data(), d_delta_dur, N * T * sizeof(int), cudaMemcpyDeviceToHost));
 
     // Backtracking
     std::vector<int> path = backtracking_termination(delta, delta_state, delta_dur, T);
@@ -471,6 +414,10 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     CUDA_CHECK(cudaFree(d_delta));
     CUDA_CHECK(cudaFree(d_AP));
     CUDA_CHECK(cudaFree(d_emissions));
+    CUDA_CHECK(cudaFree(d_best_state_ji));
+    CUDA_CHECK(cudaFree(d_best_d_ji));
+    CUDA_CHECK(cudaFree(d_delta_state));
+    CUDA_CHECK(cudaFree(d_delta_dur));
 
     return path;
 }

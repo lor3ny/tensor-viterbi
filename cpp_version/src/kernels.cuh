@@ -17,5 +17,16 @@ __global__ void kernel_induction(
     const double* __restrict__ emission_probs,
     const double* __restrict__ delta,
     const double* __restrict__ AP,
-    double*                    score,
-    int N, int D, int tau, int t);
+    double* best_val_ji,   // N×N output
+    int*    best_d_ji,     // N×N output
+    int N, int tau, int t);
+
+
+// ── Reduction kernel su i (argmax) ─────────────────────────────────────── //
+__global__ void kernel_reduce_i(
+    const double* __restrict__ best_val_ji,   // N×N
+    const int*    __restrict__ best_d_ji,     // N×N
+    double*                    d_delta,       // T×N
+    int*                       d_delta_state, // T×N
+    int*                       d_delta_dur,   // T×N
+    int N, int D, int t);
