@@ -22,9 +22,10 @@ void save_path(const int* result, int T, const char* filename) {
 int main() {
   
     // Load model from JSON
-    HSMM model = HSMM("../data/sleep_data_10states_10000_100.json");
+    HSMM model = HSMM("../data/20states_100steps_10dur.json");
     model.to_log_space();
-    //model.print();
+    model.print();
+
 
     double kernel_ms; 
     // Run Tensor Viterbi

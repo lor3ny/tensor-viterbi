@@ -30,6 +30,7 @@ __global__ void kernel_induction(
     const int d = threadIdx.x;   // durata
 
     if (d >= tau || i >= N || j >= N) return;
+    // if (i >= N || j >= N) return;
 
     // ── shared memory: solo riduzione ────────────────────────────────────── //
     // [ sh_val: tau doubles | sh_d: tau ints ]
@@ -48,8 +49,21 @@ __global__ void kernel_induction(
     sh_d[d]   = d;
     __syncthreads();
 
+    // if (d < tau) {
+    //     double cum = 0.0;
+    //     for (int k = 0; k <= d; ++k)
+    //         cum += emission_probs[obs_seq[t - k] * N + j];
+    //     sh_val[d] = cum
+    //               + delta[(t - 1 - d) * N + i]
+    //               + AP[d * N*N + j*N + i];
+    //     sh_d[d]   = d;
+    // } else {
+    //     sh_val[d] = -1e300;   // mai il massimo
+    //     sh_d[d]   = 0;
+    // }
 
-    // kernel_induction — thread 0 fa l'argmax su d
+
+    // [V1] kernel_induction — thread 0 fa l'argmax su d
     if (d == 0) {
         double best = sh_val[0];
         int    bd   = sh_d[0];
@@ -62,6 +76,28 @@ __global__ void kernel_induction(
         best_val_ji[j * N + i] = best;
         best_d_ji  [j * N + i] = bd;
     }
+
+    // [V2] Riduzione parallela su d ──────────────────────────────────────────── //
+    // pad alla prossima potenza di 2 per riduzione corretta
+    // int stride = 1;
+    // while (stride < tau) stride <<= 1;
+    // stride >>= 1;
+
+    // for (; stride > 0; stride >>= 1) {
+    //     if (d < stride) {
+    //         int other = d + stride;
+    //         if (other < tau && sh_val[other] > sh_val[d]) {
+    //             sh_val[d] = sh_val[other];
+    //             sh_d  [d] = sh_d  [other];
+    //         }
+    //     }
+    //     __syncthreads();
+    // }
+
+    // if (d == 0) {
+    //     best_val_ji[j * N + i] = sh_val[0];
+    //     best_d_ji  [j * N + i] = sh_d  [0];
+    // }
 }
 
 

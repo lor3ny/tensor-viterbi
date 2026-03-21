@@ -177,6 +177,7 @@ void HSMM::print() const {
     }
 
     std::cout << "\n======================\n";
+    std::cout.flush();
 }
 
 void HSMM::to_log_space()
@@ -229,12 +230,22 @@ std::vector<int> HSMM::backtracking_termination(const std::vector<double>& delta
         int d      = psi_dur  [t * N_ + curr_state];
         int prev_s = psi_state[t * N_ + curr_state];
 
-        // Riempi il segmento [start_t, t]
+        if (d <= 0) {
+            std::cerr << "[ERROR] backtracking: d=" << d 
+                    << " at t=" << t << " state=" << curr_state << "\n";
+            break;
+        }
+
         int start_t = t - d + 1;
+        if (start_t < 0) {
+            std::cerr << "[ERROR] backtracking: start_t=" << start_t
+                    << " at t=" << t << " d=" << d << "\n";
+            break;
+        }
+
         for (int k = start_t; k <= t; ++k)
             path[k] = curr_state;
 
-        // Vai indietro
         t          = t - d;
         curr_state = prev_s;
     }
@@ -299,7 +310,7 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
 
     std::vector<double> delta(T * N, -std::numeric_limits<double>::infinity());
     std::vector<int>    delta_state(T * N, 0);
-    std::vector<int>    delta_dur  (T * N, 0);
+    std::vector<int>    delta_dur  (T * N, 1);
 
     std::vector<double> AP(D * N * N);
     std::vector<double> emissions(D * N, 0.0);
@@ -325,6 +336,7 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     CUDA_CHECK(cudaMalloc(&d_best_d_ji, N * N * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_delta_state, N * T * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_delta_dur, N * T * sizeof(int)));
+    CUDA_CHECK(cudaMemcpy(d_delta_dur, delta_dur.data(), N * T * sizeof(int), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMalloc(&d_AP, D * N * N * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_emissions, D * N * sizeof(double)));
 
@@ -357,6 +369,9 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
         for (int n = 0; n < N; ++n)
             delta[t*N + n] = PAST_DELTA[t*N + n] + CUM_EMISSION[t*N + n];
 
+
+    std::cout << "Starting AP Kernel\n";
+
     // ! temporaneo: copia DELTA su GPU (per ora delta è solo CPU, ma in futuro sarà direttamente in global)
     CUDA_CHECK(cudaMemcpy(d_delta, delta.data(), N * T * sizeof(double), cudaMemcpyHostToDevice));
 
@@ -372,18 +387,28 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     // Per ogni stato corrente j, troviamo il miglior (d, i_prev) tale che:
     //   score(j, d, i) = EMISSION_PROBS[d,j] + PAST_DELTA[d,i] + AP[d,j,i]
 
+    std::cout << "Starting Induction\n"; std::cout.flush();
+
     for (int t = 1; t < T; ++t) {
 
         const int tau = std::min(t, D);   // d valido: 0 .. tau-1
-        
-        dim3 block(tau);
-        dim3 grid(N, N);
+  
+        dim3 grid_ind(N, N);
+        dim3 block_ind(tau);
         size_t shmem =  tau * (sizeof(double) + sizeof(int));  // sh_val | sh_d
 
-        kernel_induction<<<grid, block, shmem>>>(
+        // int block_size = 1;
+        // while (block_size < tau) block_size <<= 1;   // prossima potenza di 2
+        // const size_t shmem = block_size * (sizeof(double) + sizeof(int));
+        // dim3 block_ind(block_size);
+        
+        kernel_induction<<<grid_ind, block_ind, shmem>>>(
             d_obs_seq, d_emission_probs, d_delta, d_AP,
             d_best_state_ji, d_best_d_ji, 
             N, tau, t);
+        CUDA_CHECK(cudaGetLastError());
+
+        //std::cout << "t=" << t << "[DONE] Kernel 1" << "\n"; std::cout.flush();
 
         // ── Kernel 2: argmax su i — warp shuffle, invariato ──────────────────── //
         // grid(N), block(N) — un blocco per j, un thread per i
@@ -393,19 +418,25 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
             N, D, t);
         CUDA_CHECK(cudaGetLastError());
 
-        CUDA_CHECK(cudaDeviceSynchronize());
+        //std::cout << "t=" << t << "[DONE] Kernel 2" << "\n"; std::cout.flush();
     }
     
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     // Retrieve data from GPU
     CUDA_CHECK(cudaMemcpy(delta.data(), d_delta, N * T * sizeof(double), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(delta_state.data(), d_delta_state, N * T * sizeof(int), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(delta_dur.data(), d_delta_dur, N * T * sizeof(int), cudaMemcpyDeviceToHost));
 
+
+    std::cout << "Result copied to host" << "\n"; std::cout.flush();
+
     // Backtracking
     std::vector<int> path = backtracking_termination(delta, delta_state, delta_dur, T);
     
-    cudaDeviceSynchronize();
+
+    std::cout << "Backtracking done" << "\n"; std::cout.flush();
+
     auto end = std::chrono::high_resolution_clock::now();
     *kernel_ms = std::chrono::duration<double>(end - start).count();
     
