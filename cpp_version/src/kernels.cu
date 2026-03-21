@@ -16,9 +16,10 @@ __global__ void kernel_compute_AP(
 }
 
 __global__ void kernel_induction(
+    const int*    __restrict__ obs_seq,
+    const double* __restrict__ emission_probs,
     const double* __restrict__ delta,
     const double* __restrict__ AP,
-    const double* __restrict__ emissions,
     double*                    score,
     int N, int D, int tau, int t)
 {
@@ -28,9 +29,22 @@ __global__ void kernel_induction(
 
     if (d >= tau || i >= N || j >= N) return;
 
-//    int idx = (start + (window_size - 1 - i)) * n_features + j;
+    // ── Emission: solo thread i=0 calcola, poi condivide su i ── //
+    // sh_em[j] = Σ_{k=0}^{d} emission_probs[obs[t-k], j]
+    extern __shared__ double sh_em[];   // shape: N  (un valore per j)
+
+    if (i == 0) {
+        double em = 0.0;
+        for (int k = 0; k <= d; ++k)
+            em += emission_probs[obs_seq[t - k] * N + j];
+        sh_em[j] = em;
+    }
+    __syncthreads();
+
+
+    // ── Induction: ogni thread (i,j) calcola un contributo per score[d,i,j] ── //
     score[d * N*N + j * N + i] =
-        emissions [d * N   + j         ] +
+        sh_em     [j] + //emissions [d * N   + j         ] +
         delta     [(t - 1 - d) * N + i ] +
         AP        [d * N*N + j*N + i   ];
 }

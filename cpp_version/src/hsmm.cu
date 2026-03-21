@@ -407,34 +407,14 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     for (int t = 1; t < T; ++t) {
 
         const int tau = std::min(t, D);   // d valido: 0 .. tau-1
-
-        // TODO: Calcolare Emission su GPU
-        // ── 1. Emission Tensor  ("Produttoria") ─────────────────────────────── //
-        // EMISSION_PROBS[d*N + n] = Σ_{k=0}^{d} emission_probs[obs_seq[t-k], n]
-        // (cumsum sul segmento rovesciato che termina in t)
-        for (int n = 0; n < N; ++n) {
-            double cum = 0.0;
-            for (int d = 0; d < tau; ++d) {
-                int obs = static_cast<int>(obs_seq_[t - d]);
-                cum += emission_probs_[obs * N + n];
-                emissions[d * N + n] = cum;
-            }
-        }
-
-        /* //TODO: PAST_DELTA * AP * EMISSIONS su GPU
-         * 1. PAST_DELTA: //! delta direttamente in global, nessuna copia
-         * 2. AP: //! in global memory
-         * 3. EMISSION_PROBS: //? per ora cpu
-        */ 
         
-        // ! temporaneo: copia emissions su GPU
-        CUDA_CHECK(cudaMemcpy(d_emissions, emissions.data(), D * N * sizeof(double), cudaMemcpyHostToDevice));
-
         dim3 block_score(N, N);
         dim3 grid_score(tau);
+        size_t shmem = N * sizeof(double);
 
         cuda_launch_timed("kernel_induction", [&](){
-            kernel_induction<<<grid_score, block_score>>>(d_delta, d_AP, d_emissions, d_score, N, D, tau, t);
+            kernel_induction<<<grid_score, block_score, shmem>>>(
+                d_obs_seq, d_emission_probs, d_delta, d_AP, d_score, N, D, tau, t);
         });
 
         CUDA_CHECK(cudaMemcpy(score.data(), d_score, D * N * N * sizeof(double), cudaMemcpyDeviceToHost));

@@ -13,8 +13,9 @@ __global__ void kernel_compute_AP(
     
 // ── Induction kernel ─────────────────────────────────────────────────────── //
 __global__ void kernel_induction(
+    const int*    __restrict__ obs_seq,
+    const double* __restrict__ emission_probs,
     const double* __restrict__ delta,
     const double* __restrict__ AP,
-    const double* __restrict__ emissions,
     double*                    score,
     int N, int D, int tau, int t);
