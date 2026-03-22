@@ -49,12 +49,7 @@ int main() {
     std::cout << "Execution time w/o malloc/memcpy: " << std::fixed << std::setprecision(4) << kernel_ms << " seconds\n";
 
 
-    // ── Print result ──────────────────────────────────────────────────────────── //
-    // std::cout << "[";
-    // for (int t = 0; t < static_cast<int>(result.size()); ++t)
-    //     std::cout << result[t] << " ";
-    // std::cout << "]";
-
+    // Save results to files
     save_path(result_gpu.data(), result_gpu.size(), "../data/cuda_result.txt");
     save_path(result_cpp.data(), result_cpp.size(), "../data/cpp_result.txt");
 

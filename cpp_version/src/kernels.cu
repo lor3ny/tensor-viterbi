@@ -105,7 +105,7 @@ __global__ void kernel_induction(
     // }
 
     // [V3] Same as V2, but with intra-warp optimization (no __syncthreads() when stride<32) //
-    // ── cross-warp: serve __syncthreads()  //
+    // ── cross-warp: serve __syncthreads() ───────────────────── //
     for (int stride = blockDim.x >> 1; stride >= 32; stride >>= 1) {
         if (d < stride) {
             double other_val = sh_val[d + stride];
@@ -118,8 +118,7 @@ __global__ void kernel_induction(
         __syncthreads();
     }
 
-    // ── intra-warp: no __syncthreads() ───────────────────────────────────────── //
-    // ── intra-warp: __syncwarp() invece di volatile ───────────────────────────── //
+    // ── intra-warp: __syncwarp() ───────────────────────────── //
     if (d < 32) {
     for (int stride = min(16, (int)(blockDim.x >> 1)); stride > 0; stride >>= 1) {
             if (d < stride) {
@@ -133,7 +132,6 @@ __global__ void kernel_induction(
             __syncwarp();
         }
     }
-
 
 
     if (d == 0) {
