@@ -517,13 +517,13 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
         const int tau = std::min(t, D);   // d valido: 0 .. tau-1
   
         dim3 grid_ind(N, N);
-        dim3 block_ind(tau);
-        size_t shmem =  tau * (sizeof(double) + sizeof(int));  // sh_val | sh_d
+        // dim3 block_ind(tau);
+        // size_t shmem =  tau * (sizeof(double) + sizeof(int));  // sh_val | sh_d
 
-        // int block_size = 1;
-        // while (block_size < tau) block_size <<= 1;   // prossima potenza di 2
-        // const size_t shmem = block_size * (sizeof(double) + sizeof(int));
-        // dim3 block_ind(block_size);
+        int block_size = 1;
+        while (block_size < tau) block_size <<= 1;   // prossima potenza di 2
+        const size_t shmem = block_size * (sizeof(double) + sizeof(int));
+        dim3 block_ind(block_size);
 
         nvtx_push("kernel_induction", NVTX_ORANGE);
         kernel_induction<<<grid_ind, block_ind, shmem>>>(

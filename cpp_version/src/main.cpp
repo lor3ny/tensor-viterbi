@@ -22,7 +22,7 @@ void save_path(const int* result, int T, const char* filename) {
 int main() {
   
     // Load model from JSON
-    HSMM model = HSMM("../data/20states_100steps_10dur.json");
+    HSMM model = HSMM("../data/20states_100000steps_200dur.json");
     model.to_log_space();
     //model.print();
 
