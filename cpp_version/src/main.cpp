@@ -20,9 +20,10 @@ void save_path(const int* result, int T, const char* filename) {
 
 
 int main() {
-  
+    
     // Load model from JSON
     HSMM model = HSMM("../data/20states_100000steps_200dur.json");
+    //HSMM model = HSMM("../data/sleep_data_10states_100000_200.json");
     model.to_log_space();
     //model.print();
 

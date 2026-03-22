@@ -480,6 +480,10 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     CUDA_CHECK(cudaMalloc(&d_AP, D * N * N * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_emissions, D * N * sizeof(double)));
 
+    double* d_em[2] = {nullptr, nullptr};
+    CUDA_CHECK(cudaMalloc(&d_em[0], D * N * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_em[1], D * N * sizeof(double)));
+
     // Load data to GPU
     hsmm_to_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
     CUDA_CHECK(cudaMemcpy(d_delta_dur, delta_dur.data(), N * T * sizeof(int), cudaMemcpyHostToDevice)); // initialize to 1
@@ -526,6 +530,7 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     run_induction(
         d_delta, d_AP,
         d_emission_probs, d_obs_seq,
+        d_em,
         d_best_state_ji, d_best_d_ji,
         d_delta_state, d_delta_dur,
         T, N, D);
@@ -558,6 +563,8 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     CUDA_CHECK(cudaFree(d_best_d_ji));
     CUDA_CHECK(cudaFree(d_delta_state));
     CUDA_CHECK(cudaFree(d_delta_dur));
+    CUDA_CHECK(cudaFree(d_em[0]));
+    CUDA_CHECK(cudaFree(d_em[1]));
 
     return path;
 }
@@ -565,6 +572,7 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
 void HSMM::run_induction(
     double* d_delta, const double* d_AP,
     const double* d_emission_probs, const int* d_obs_seq,
+    double** d_em,
     double* d_best_state_ji, int* d_best_d_ji,
     int* d_delta_state, int* d_delta_dur,
     int T, int N, int D)
@@ -578,13 +586,16 @@ void HSMM::run_induction(
     bool use_persistent = check_cooperative_launch(
         (void*)kernel_persistent, block_size, shmem, N * N);
 
-    // use_persistent = false;  // forzatamente disabilitato
+    //use_persistent = false;  // forzatamente disabilitato
+    
+    int cur = 0;
 
     if (use_persistent) {
         std::cout << "[Induction] persistent kernel\n";
 
         void* args[] = {
             &d_obs_seq, &d_emission_probs, &d_delta, &d_AP,
+            &d_em[0], &d_em[1],
             &d_best_state_ji, &d_best_d_ji,
             &d_delta_state, &d_delta_dur,
             &N, &D, &T
@@ -604,6 +615,8 @@ void HSMM::run_induction(
         for (int t = 1; t < T; ++t) {
             const int tau = std::min(t, D);
 
+            const int nxt = 1 - cur;
+
             // [V1] - Sequential Reduction
             // int bs = tau;
             // size_t shmem =  tau * (sizeof(double) + sizeof(int));  // sh_val | sh_d
@@ -616,7 +629,8 @@ void HSMM::run_induction(
             nvtx_push("kernel_induction", NVTX_ORANGE);
             kernel_induction<<<dim3(N, N), dim3(bs), sm>>>(
                 d_obs_seq, d_emission_probs, d_delta, d_AP,
-                d_best_state_ji, d_best_d_ji, N, tau, t);
+                d_em[cur], d_em[nxt],
+                d_best_state_ji, d_best_d_ji, N, D, tau, t);
             CUDA_CHECK(cudaGetLastError());
             nvtxRangePop();
 
@@ -627,6 +641,8 @@ void HSMM::run_induction(
                 N, D, t);
             CUDA_CHECK(cudaGetLastError());
             nvtxRangePop();
+
+            cur = nxt;
         }
     }
 

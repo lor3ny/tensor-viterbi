@@ -17,9 +17,11 @@ __global__ void kernel_induction(
     const double* __restrict__ emission_probs,
     const double* __restrict__ delta,
     const double* __restrict__ AP,
+    const double* __restrict__ d_em_cur,   // D×N — emissions iterazione precedente
+    double*                    d_em_nxt,   // D×N — emissions iterazione corrente
     double* best_val_ji,   // N×N output
     int*    best_d_ji,     // N×N output
-    int N, int tau, int t);
+    int N, int D, int tau, int t);
 
 
 // ── Reduction kernel su i (argmax) ─────────────────────────────────────── //
@@ -38,6 +40,8 @@ __global__ void kernel_persistent(
     const double* __restrict__ emission_probs,
     double*                    delta,        // T×N — lettura e scrittura
     const double* __restrict__ AP,
+    double*                    d_em0,        // doppio buffer emissions
+    double*                    d_em1,
     double*                    best_state_ji,  // N×N — buffer intermedio
     int*                       best_d_ji,    // N×N — buffer intermedio
     int*                       delta_state,  // T×N

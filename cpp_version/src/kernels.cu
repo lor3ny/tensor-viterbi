@@ -25,9 +25,11 @@ __global__ void kernel_induction(
     const double* __restrict__ emission_probs,
     const double* __restrict__ delta,
     const double* __restrict__ AP,
+    const double* __restrict__ d_em_cur,   // D×N — emissions iterazione precedente
+    double*                    d_em_nxt,   // D×N — emissions iterazione corrente
     double* best_state_ji,   // N×N output
     int*    best_d_ji,     // N×N output
-    int N, int tau, int t)
+    int N, int D, int tau, int t)
 {
     const int j = blockIdx.x;    // stato corrente
     const int i = blockIdx.y;    // stato precedente
@@ -61,22 +63,50 @@ __global__ void kernel_induction(
     // sh_d[d]   = d;
     // __syncthreads();
 
-    // [V2] Same as V1, but extra threads initialize shared ────────────────── //
+    // [V2.1] Same as V1, but extra threads initialize shared ────────────────── //
+    // if (d < tau) {
+    //     double cum = 0.0;
+    //     for (int k = 0; k <= d; ++k)
+    //         cum += emission_probs[obs_seq[t - k] * N + j];
+    //     sh_val[d] = cum
+    //               + delta[(t - 1 - d) * N + i]
+    //               + AP[d * N*N + j*N + i];
+    //     sh_d[d]   = d;
+    // } else {
+    //     sh_val[d] = -1e300;
+    //     sh_d[d]   = 0;
+    // }
+    // __syncthreads();
+
+    // [V2.2] Emission: shift O(1) ───────────────────────────────────────────── //
+    // solo i blocchi i=0 calcolano e scrivono — ridondante su i altrimenti
+    double em_val = -1e300;
     if (d < tau) {
-        double cum = 0.0;
-        for (int k = 0; k <= d; ++k)
-            cum += emission_probs[obs_seq[t - k] * N + j];
-        sh_val[d] = cum
+        const double new_em = emission_probs[obs_seq[t] * N + j];
+        if (d == 0) {
+            em_val = new_em;
+        } else {
+            em_val = new_em + d_em_cur[j * D + d - 1];
+        }
+        // scrive per t+1 — solo un blocco per j (i=0 è arbitrario, tutti scrivono lo stesso)
+        if (i == 0)
+            d_em_nxt[j * D + d] = em_val;
+    }
+
+    long long t1 = clock64();
+
+        if (d < tau) {
+        sh_val[d] = em_val
                   + delta[(t - 1 - d) * N + i]
                   + AP[d * N*N + j*N + i];
-        sh_d[d]   = d;
+        sh_d[d] = d;
     } else {
         sh_val[d] = -1e300;
         sh_d[d]   = 0;
     }
     __syncthreads();
 
-    long long t1 = clock64();
+    long long t2 = clock64();
 
     // [V1] Reduction — thread 0 fa l'argmax su d
     // if (d == 0) {
@@ -144,11 +174,11 @@ __global__ void kernel_induction(
     }
 
 
-    long long t2 = clock64();
+    long long t3 = clock64();
 
     // [DEBUG]
     if (d == 0 && j == 0 && i == 0 && (t >= 200 && t < 205)) {
-        printf("emission + score cycles: %lld, reduction cycles: %lld\n", t1-t0, t2-t1);
+        printf("emission: %lld, score: %lld, reduction: %lld (cycles)\n", t1-t0, t2-t1, t3-t2);
     }
 }
 
@@ -201,6 +231,8 @@ __global__ void kernel_persistent(
     const double* __restrict__ emission_probs,
     double*                    delta,        // T×N — lettura e scrittura
     const double* __restrict__ AP,
+    double*                    d_em0,        // doppio buffer emissions
+    double*                    d_em1,
     double*                    best_state_ji,  // N×N — buffer intermedio
     int*                       best_d_ji,    // N×N — buffer intermedio
     int*                       delta_state,  // T×N
@@ -217,15 +249,27 @@ __global__ void kernel_persistent(
     double* sh_val = reinterpret_cast<double*>(shmem);
     int*    sh_d   = reinterpret_cast<int*>(sh_val + blockDim.x);
 
+    int cur = 0;
+
     for (int t = 1; t < T; ++t) {
         const int tau = min(t, D);
 
-        // ── 1. Score + riduzione su d ─────────────────────────────────────── //
+        const int nxt = 1 - cur;
+        double* d_em_cur = (cur == 0) ? d_em0 : d_em1;
+        double* d_em_nxt = (cur == 0) ? d_em1 : d_em0;
+
+        // ── 1. Emission shift O(1) ────────────────────────────────────────── //
+        double em_val = -1e300;
         if (d < tau) {
-            double cum = 0.0;
-            for (int k = 0; k <= d; ++k)
-                cum += emission_probs[obs_seq[t - k] * N + j];
-            sh_val[d] = cum
+            const double new_em = emission_probs[obs_seq[t] * N + j];
+            em_val = (d == 0) ? new_em : new_em + d_em_cur[j * D + d - 1];
+            if (i == 0)
+                d_em_nxt[j * D + d] = em_val;
+        }
+
+        // ── 2. Score in shared memory ─────────────────────────────────────── //
+        if (d < tau) {
+            sh_val[d] = em_val
                       + delta[(t - 1 - d) * N + i]
                       + AP[d * N*N + j*N + i];
             sh_d[d] = d;
@@ -235,6 +279,8 @@ __global__ void kernel_persistent(
         }
         __syncthreads();
 
+        // ── 3. Reduction ─────────────────────────────────────── //
+ 
         // ── cross-warp reduction ──────────────────────────────────────────── //
         for (int stride = blockDim.x >> 1; stride >= 32; stride >>= 1) {
             if (d < stride) {
@@ -298,6 +344,9 @@ __global__ void kernel_persistent(
 
         // ── delta[t] scritto — tutti possono procedere a t+1 ─────────────── //
         grid.sync();
+
+        cur = nxt;
+
         long long s2 = clock64();
 
         // [DEBUG]
