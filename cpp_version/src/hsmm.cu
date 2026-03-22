@@ -255,8 +255,107 @@ std::vector<int> HSMM::backtracking_termination(const std::vector<double>& delta
  
 std::vector<int> HSMM::decoding_vanilla_viterbi()
 {
-    // TODO: implement tensor Viterbi
-    return {};
+    // CPU-side data structures
+    const int T = T_;
+    const int N = N_;
+    const int D = D_;
+
+    std::vector<double> delta(T * N, SMOOTHNESS);       // delta[t*N + n]
+    std::vector<int>    delta_state(T * N, 0);
+    std::vector<int>    delta_dur  (T * N, 1);
+    std::vector<double> score(D * N * N, 0.0);        // score[d*N*N + j*N + i]
+
+    // ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── //
+    // Python: PAST_DELTA[d, n] = duration_probs[d, n] + start_probs[n]
+    std::vector<double> PAST_DELTA(D * N);
+    for (int d = 0; d < D; ++d)
+        for (int n = 0; n < N; ++n)
+            PAST_DELTA[d*N + n] = duration_probs_[n*D + d] + start_probs_[n];
+
+    // Python: cum_emission[t, n] = cumsum(emission_probs[obs_seq[:D], :], axis=0)
+    std::vector<double> CUM_EMISSION(D * N, 0.0);
+    for (int t = 0; t < D; ++t) {
+        int obs = obs_seq_[t];
+        for (int n = 0; n < N; ++n) {
+            double prev = (t > 0) ? CUM_EMISSION[(t-1)*N + n] : 0.0;
+            CUM_EMISSION[t*N + n] = prev + emission_probs_[obs*N + n];
+        }
+    }
+
+    // Python: delta[0:D] = PAST_DELTA + EMISSION_PROBS
+    for (int t = 0; t < D; ++t)
+        for (int n = 0; n < N; ++n)
+            delta[t*N + n] = PAST_DELTA[t*N + n] + CUM_EMISSION[t*N + n];
+
+    // ── AP: (D x N x N) ──────────────────────────────────────────────────── //
+    // Python: AP[d, i, j] = trans_mat[i, j] + duration_probs[d, i]
+    std::vector<double> AP(D * N * N);
+    for (int d = 0; d < D; ++d)
+        for (int j = 0; j < N; ++j)
+            for (int i = 0; i < N; ++i)
+                AP[d * N*N + j*N + i] = trans_mat_[j*N + i] + duration_probs_[j*D + d];
+
+    // ── PHASE 2 — Induction (t >= 1) ─────────────────────────────────────────── //
+    // Per ogni stato corrente j, troviamo il miglior (d, i_prev) tale che:
+    //   score(j, d, i) = EMISSION_PROBS[d,j] + PAST_DELTA[d,i] + AP[d,j,i]
+
+    std::vector<double> EMISSION_PROBS(D * N, 0.0);
+
+    for (int t = 1; t < T; ++t) {
+
+        const int tau = std::min(t, D);   // d valido: 0 .. tau-1
+
+        // ── 1. Emission Tensor  ("Produttoria") ─────────────────────────────── //
+        // EMISSION_PROBS[d*N + n] = Σ_{k=0}^{d} emission_probs[obs_seq[t-k], n]
+        for (int n = 0; n < N; ++n) {
+            double cum = 0.0;
+            for (int d = 0; d < tau; ++d) {
+                int obs = static_cast<int>(obs_seq_[t - d]);
+                cum += emission_probs_[obs * N + n];
+                EMISSION_PROBS[d * N + n] = cum;
+            }
+        }
+
+        // ── 2. Past Delta Tensor ────────────────────────────────────────────── //
+        // PAST_DELTA[d*N + n] = delta[(t-1-d)*N + n]   (finestra rovesciata)
+        for (int d = 0; d < tau; ++d)
+            for (int n = 0; n < N; ++n)
+                PAST_DELTA[d * N + n] = delta[(t - 1 - d) * N + n];
+
+
+        // ── 3. Argmax su (d, i_prev) per ogni stato corrente j ─────────────── //
+        for (int j = 0; j < N; ++j) {
+            double best_val = -std::numeric_limits<double>::infinity();
+            int    best_d   = 0;
+            int    best_i   = 0;
+
+            for (int d = 0; d < tau; ++d) {
+                const double ep = EMISSION_PROBS[d * N + j];
+                for (int i = 0; i < N; ++i) {
+                    const double val = ep
+                                    + PAST_DELTA[d * N + i]
+                                    + AP[d * N * N + j * N + i];
+                    if (val > best_val) {
+                        best_val = val;
+                        best_d   = d;
+                        best_i   = i;
+                    }
+                }
+            }
+
+            const bool update = (t >= D) || (best_val > delta[t * N + j]);
+            if (update) {
+                delta      [t * N + j] = best_val;
+                delta_state[t * N + j] = best_i;
+                delta_dur  [t * N + j] = best_d + 1;
+            }
+        }
+    }
+
+    // Backtracking
+    std::vector<int> path = backtracking_termination(delta, delta_state, delta_dur, T);
+
+    return path;
 }
 
 void HSMM::hsmm_to_gpu(
@@ -370,7 +469,7 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
             delta[t*N + n] = PAST_DELTA[t*N + n] + CUM_EMISSION[t*N + n];
 
 
-    std::cout << "Starting AP Kernel\n";
+    //std::cout << "Starting AP Kernel\n";
 
     // ! temporaneo: copia DELTA su GPU (per ora delta è solo CPU, ma in futuro sarà direttamente in global)
     CUDA_CHECK(cudaMemcpy(d_delta, delta.data(), N * T * sizeof(double), cudaMemcpyHostToDevice));
@@ -387,7 +486,7 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     // Per ogni stato corrente j, troviamo il miglior (d, i_prev) tale che:
     //   score(j, d, i) = EMISSION_PROBS[d,j] + PAST_DELTA[d,i] + AP[d,j,i]
 
-    std::cout << "Starting Induction\n"; std::cout.flush();
+    //std::cout << "Starting Induction\n"; std::cout.flush();
 
     for (int t = 1; t < T; ++t) {
 
@@ -429,13 +528,13 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     CUDA_CHECK(cudaMemcpy(delta_dur.data(), d_delta_dur, N * T * sizeof(int), cudaMemcpyDeviceToHost));
 
 
-    std::cout << "Result copied to host" << "\n"; std::cout.flush();
+    //std::cout << "Result copied to host" << "\n"; std::cout.flush();
 
     // Backtracking
     std::vector<int> path = backtracking_termination(delta, delta_state, delta_dur, T);
     
 
-    std::cout << "Backtracking done" << "\n"; std::cout.flush();
+    //std::cout << "Backtracking done" << "\n"; std::cout.flush();
 
     auto end = std::chrono::high_resolution_clock::now();
     *kernel_ms = std::chrono::duration<double>(end - start).count();

@@ -5,7 +5,7 @@
 # ── Toolchain ────────────────────────────────────────────────────────────── #
 CUDA_HOME ?= /leonardo/prod/opt/compilers/cuda/12.6/none/bin/nvcc
 CXX      := $(CUDA_HOME)/bin/nvcc
-CXXFLAGS := -std=c++17 -O2 -Xcompiler "-Wall -Wextra -Wno-unused-parameter -Wno-unused-variable"
+CXXFLAGS := -std=c++17 -O3 -Xcompiler "-Wall -Wextra -Wno-unused-parameter -Wno-unused-variable"
 LDFLAGS  := -L$(CUDA_HOME)/lib64
 ARCH 	 := -arch=sm_80 # Leonardo CINECA — NVIDIA A100
 
