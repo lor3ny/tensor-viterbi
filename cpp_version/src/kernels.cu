@@ -133,7 +133,7 @@ __global__ void kernel_induction(
         }
     }
 
-
+    // [V2] [V3] Write result
     if (d == 0) {
         best_val_ji[j * N + i] = sh_val[0];
         best_d_ji  [j * N + i] = sh_d[0];

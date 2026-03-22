@@ -487,7 +487,7 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     auto start = std::chrono::high_resolution_clock::now();
 
     // * ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── //
-    nvtx_push("phase1_init",        NVTX_GREEN);    
+    nvtx_push("phase1_init", NVTX_GREEN);    
 
     std::vector<double> PAST_DELTA(D * N);
     for (int d = 0; d < D; ++d)
@@ -506,9 +506,6 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     for (int t = 0; t < D; ++t)
         for (int n = 0; n < N; ++n)
             delta[t*N + n] = PAST_DELTA[t*N + n] + CUM_EMISSION[t*N + n];
-
-
-    //std::cout << "Starting AP Kernel\n";
 
     // ! temporaneo: copia DELTA su GPU (per ora delta è solo CPU, ma in futuro sarà direttamente in global)
     CUDA_CHECK(cudaMemcpy(d_delta, delta.data(), N * T * sizeof(double), cudaMemcpyHostToDevice));
@@ -532,7 +529,7 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
         const int tau = std::min(t, D);   // d valido: 0 .. tau-1
   
         dim3 grid_ind(N, N);
-        // [V1]
+        // [V1] - Sequential Reduction
         // dim3 block_ind(tau);
         // size_t shmem =  tau * (sizeof(double) + sizeof(int));  // sh_val | sh_d
 
