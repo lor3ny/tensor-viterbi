@@ -1,11 +1,13 @@
 #include "hsmm.hpp"
 #include "kernels.cuh"
 
+#include <iostream>
+#include <iomanip>
+
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <nvtx3/nvToolsExt.h>
-#include <iostream>
-#include <iomanip>
+#include <cooperative_groups.h>
 
 #define SMOOTHNESS 1e-30
 
@@ -35,6 +37,35 @@ inline void nvtx_push(const char* label, uint32_t color) {
     attr.messageType   = NVTX_MESSAGE_TYPE_ASCII;
     attr.message.ascii = label;
     nvtxRangePushEx(&attr);
+}
+
+bool check_cooperative_launch(const void* kernel, int block_size, size_t shmem, int required_blocks)
+{
+    int supports_coop;
+    cudaDeviceGetAttribute(&supports_coop, cudaDevAttrCooperativeLaunch, 0);
+    std::cout << "Cooperative launch supported: " << supports_coop << "\n";
+
+    int num_sm;
+    cudaDeviceGetAttribute(&num_sm, cudaDevAttrMultiProcessorCount, 0);
+    std::cout << "SM count: " << num_sm << "\n";
+
+    int max_blocks_per_sm;
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &max_blocks_per_sm, kernel, block_size, shmem);
+    std::cout << "Max blocks per SM: "    << max_blocks_per_sm << "\n";
+    std::cout << "Blocchi richiesti:  "   << required_blocks   << "\n";
+    std::cout << "Max blocchi totali: "   << max_blocks_per_sm * num_sm << "\n";
+
+    if (!supports_coop) {
+        std::cerr << "[FAIL] GPU non supporta cooperative launch\n";
+        return false;
+    }
+    if (required_blocks > max_blocks_per_sm * num_sm) {
+        std::cerr << "[FAIL] Troppi blocchi per cooperative launch\n";
+        return false;
+    }
+    std::cout << "[OK] Cooperative launch fattibile\n";
+    return true;
 }
 
 HSMM::HSMM(const std::vector<std::string>&  states,
@@ -510,16 +541,23 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     // Per ogni stato corrente j, troviamo il miglior (d, i_prev) tale che:
     //   score(j, d, i) = EMISSION_PROBS[d,j] + PAST_DELTA[d,i] + AP[d,j,i]
 
-    //std::cout << "Starting Induction\n"; std::cout.flush();
+    int block_size = 1;
+    while (block_size < D) block_size <<= 1;
+    size_t shmem = block_size * (sizeof(double) + sizeof(int));
+    check_cooperative_launch((void*)kernel_induction, block_size, shmem, N * N);
+    
+        //std::cout << "Starting Induction\n"; std::cout.flush();
     nvtx_push("phase2_induction",   NVTX_BLUE);
     for (int t = 1; t < T; ++t) {
 
         const int tau = std::min(t, D);   // d valido: 0 .. tau-1
   
         dim3 grid_ind(N, N);
+        // [V1]
         // dim3 block_ind(tau);
         // size_t shmem =  tau * (sizeof(double) + sizeof(int));  // sh_val | sh_d
 
+        // [V2] - Parallel Reduction
         int block_size = 1;
         while (block_size < tau) block_size <<= 1;   // prossima potenza di 2
         const size_t shmem = block_size * (sizeof(double) + sizeof(int));

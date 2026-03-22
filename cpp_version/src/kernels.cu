@@ -47,19 +47,17 @@ __global__ void kernel_induction(
     long long t0 = clock64();
 
     // [V1] Emission in registro + score diretto in shared ────────────────── //
-
     // double cum = 0.0;
     // for (int k = 0; k <= d; ++k)
     //     cum += emission_probs[obs_seq[t - k] * N + j];
-
-    long long t1 = clock64();
-
+    
     // sh_val[d] = cum
     //           + delta[(t - 1 - d) * N + i]
     //           + AP[d * N*N + j*N + i];
     // sh_d[d]   = d;
     // __syncthreads();
 
+    // [V2] Same as V1, but extra threads initialize shared ────────────────── //
     if (d < tau) {
         double cum = 0.0;
         for (int k = 0; k <= d; ++k)
@@ -69,12 +67,12 @@ __global__ void kernel_induction(
                   + AP[d * N*N + j*N + i];
         sh_d[d]   = d;
     } else {
-        sh_val[d] = -1e300;   // mai il massimo
+        sh_val[d] = -1e300;
         sh_d[d]   = 0;
     }
     __syncthreads();
 
-    long long t2 = clock64();
+    long long t1 = clock64();
 
     // [V1] Reduction — thread 0 fa l'argmax su d
     // if (d == 0) {
@@ -93,20 +91,26 @@ __global__ void kernel_induction(
 
     // [V2] Riduzione parallela su d ──────────────────────────────────────────── //
     // for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
-    //     if (d < stride && sh_val[d + stride] > sh_val[d]) {
-    //         sh_val[d] = sh_val[d + stride];
-    //         sh_d[d]   = sh_d[d + stride];
+    //     if (d < stride) {
+    //         double other_val = sh_val[d + stride];
+    //         double curr_val  = sh_val[d];
+    //         // aggiorna se strettamente maggiore, oppure uguale ma indice minore
+    //         if (other_val > curr_val ||
+    //         (other_val == curr_val && sh_d[d + stride] < sh_d[d])) {
+    //             sh_val[d] = other_val;
+    //             sh_d[d]   = sh_d[d + stride];
+    //         }
     //     }
     //     __syncthreads();
     // }
 
-    for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
+    // [V3] Same as V2, but with intra-warp optimization (no __syncthreads() when stride<32) //
+    // ── cross-warp: serve __syncthreads()  //
+    for (int stride = blockDim.x >> 1; stride >= 32; stride >>= 1) {
         if (d < stride) {
             double other_val = sh_val[d + stride];
-            double curr_val  = sh_val[d];
-            // aggiorna se strettamente maggiore, oppure uguale ma indice minore
-            if (other_val > curr_val ||
-            (other_val == curr_val && sh_d[d + stride] < sh_d[d])) {
+            if (other_val > sh_val[d] ||
+            (other_val == sh_val[d] && sh_d[d + stride] < sh_d[d])) {
                 sh_val[d] = other_val;
                 sh_d[d]   = sh_d[d + stride];
             }
@@ -114,16 +118,34 @@ __global__ void kernel_induction(
         __syncthreads();
     }
 
+    // ── intra-warp: no __syncthreads() ───────────────────────────────────────── //
+    // ── intra-warp: __syncwarp() invece di volatile ───────────────────────────── //
+    if (d < 32) {
+    for (int stride = min(16, (int)(blockDim.x >> 1)); stride > 0; stride >>= 1) {
+            if (d < stride) {
+                double other_val = sh_val[d + stride];
+                if (other_val > sh_val[d] ||
+                (other_val == sh_val[d] && sh_d[d + stride] < sh_d[d])) {
+                    sh_val[d] = other_val;
+                    sh_d[d]   = sh_d[d + stride];
+                }
+            }
+            __syncwarp();
+        }
+    }
+
+
+
     if (d == 0) {
         best_val_ji[j * N + i] = sh_val[0];
         best_d_ji  [j * N + i] = sh_d[0];
     }
 
 
-    long long t3 = clock64();
+    long long t2 = clock64();
 
     if (d == 0 && j == 0 && i == 0 && (t >= 200 && t < 205)) {
-        printf("emission cycles: %lld, score cycles: %lld,  reduction cycles: %lld\n", t1-t0, t2-t1, t3-t2);
+        printf("emission + score cycles: %lld, reduction cycles: %lld\n", t1-t0, t2-t1);
     }
 }
 
