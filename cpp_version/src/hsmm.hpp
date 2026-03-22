@@ -79,8 +79,16 @@ public:
                                               const std::vector<int>&    psi_dur,
                                               int                        T) const;
 
+    std::vector<int> decoding_vanilla_viterbi();
+
+
     std::vector<int> decoding_tensor_viterbi(double* kernel_ms);
 
-    std::vector<int> decoding_vanilla_viterbi();
+    void run_induction(
+        double* d_delta, const double* d_AP,
+        const double* d_emission_probs, const int* d_obs_seq,
+        double* d_best_val_ji, int* d_best_d_ji,
+        int* d_delta_state, int* d_delta_dur,
+        int T, int N, int D);
 
 };

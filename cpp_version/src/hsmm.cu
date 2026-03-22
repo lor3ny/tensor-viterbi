@@ -522,52 +522,27 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     nvtxRangePop();
 
     // * ── PHASE 2 — Induction (t >= 1) ─────────────────────────────────────────── //
-    nvtx_push("phase2_induction",   NVTX_BLUE);
-
-    for (int t = 1; t < T; ++t) {
-
-        const int tau = std::min(t, D);   // d valido: 0 .. tau-1
-  
-        dim3 grid_ind(N, N);
-        // [V1] - Sequential Reduction
-        // dim3 block_ind(tau);
-        // size_t shmem =  tau * (sizeof(double) + sizeof(int));  // sh_val | sh_d
-
-        // [V2] - Parallel Reduction
-        int block_size = 1;
-        while (block_size < tau) block_size <<= 1;   // prossima potenza di 2
-        const size_t shmem = block_size * (sizeof(double) + sizeof(int));
-        dim3 block_ind(block_size);
-
-        nvtx_push("kernel_induction", NVTX_ORANGE);
-        kernel_induction<<<grid_ind, block_ind, shmem>>>(
-            d_obs_seq, d_emission_probs, d_delta, d_AP,
-            d_best_state_ji, d_best_d_ji, 
-            N, tau, t);
-        CUDA_CHECK(cudaGetLastError());
-        nvtxRangePop();
-
-        nvtx_push("kernel_reduce_i",  NVTX_PURPLE);
-        kernel_reduce_i<<<1, N>>>(
-            d_best_state_ji, d_best_d_ji,
-            d_delta, d_delta_state, d_delta_dur,
-            N, D, t);
-        CUDA_CHECK(cudaGetLastError());
-        nvtxRangePop();
-    }
+    nvtx_push("phase2_induction", NVTX_BLUE);
+    run_induction(
+        d_delta, d_AP,
+        d_emission_probs, d_obs_seq,
+        d_best_state_ji, d_best_d_ji,
+        d_delta_state, d_delta_dur,
+        T, N, D);
+    nvtxRangePop();
     
     CUDA_CHECK(cudaDeviceSynchronize());
     nvtxRangePop();
 
     // Retrieve data from GPU
-    nvtx_push("memcpy_to_host",     NVTX_RED);
+    nvtx_push("memcpy_to_host", NVTX_RED);
     CUDA_CHECK(cudaMemcpy(delta.data(), d_delta, N * T * sizeof(double), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(delta_state.data(), d_delta_state, N * T * sizeof(int), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(delta_dur.data(), d_delta_dur, N * T * sizeof(int), cudaMemcpyDeviceToHost));
     nvtxRangePop();
 
-    // Backtracking
-    nvtx_push("backtracking",       NVTX_GREEN);
+    // * ── Backtracking ─────────────────────────────────────────── //
+    nvtx_push("backtracking", NVTX_GREEN);
     std::vector<int> path = backtracking_termination(delta, delta_state, delta_dur, T);
     nvtxRangePop();
 
@@ -587,3 +562,73 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     return path;
 }
 
+void HSMM::run_induction(
+    double* d_delta, const double* d_AP,
+    const double* d_emission_probs, const int* d_obs_seq,
+    double* d_best_state_ji, int* d_best_d_ji,
+    int* d_delta_state, int* d_delta_dur,
+    int T, int N, int D)
+{
+    // ── calcola block_size per il caso stazionario (tau = D) ─────────────── //
+    int block_size = 1;
+    while (block_size < D) block_size <<= 1;
+    const size_t shmem = block_size * (sizeof(double) + sizeof(int));
+
+    // ── euristica: usa persistent kernel se fattibile ─────────────────────── //
+    bool use_persistent = check_cooperative_launch(
+        (void*)kernel_persistent, block_size, shmem, N * N);
+
+    // use_persistent = false;  // forzatamente disabilitato
+
+    if (use_persistent) {
+        std::cout << "[Induction] persistent kernel\n";
+
+        void* args[] = {
+            &d_obs_seq, &d_emission_probs, &d_delta, &d_AP,
+            &d_best_state_ji, &d_best_d_ji,
+            &d_delta_state, &d_delta_dur,
+            &N, &D, &T
+        };
+
+        nvtx_push("kernel_persistent", NVTX_ORANGE);
+        cudaLaunchCooperativeKernel(
+            (void*)kernel_persistent,
+            dim3(N, N), dim3(block_size),
+            args, shmem);
+        CUDA_CHECK(cudaGetLastError());
+        nvtxRangePop();
+
+    } else {
+        std::cout << "[Induction] fallback: kernel separati\n";
+
+        for (int t = 1; t < T; ++t) {
+            const int tau = std::min(t, D);
+
+            // [V1] - Sequential Reduction
+            // int bs = tau;
+            // size_t shmem =  tau * (sizeof(double) + sizeof(int));  // sh_val | sh_d
+
+            // [V2] - Parallel Reduction
+            int bs = 1;
+            while (bs < tau) bs <<= 1;
+            const size_t sm = bs * (sizeof(double) + sizeof(int));
+
+            nvtx_push("kernel_induction", NVTX_ORANGE);
+            kernel_induction<<<dim3(N, N), dim3(bs), sm>>>(
+                d_obs_seq, d_emission_probs, d_delta, d_AP,
+                d_best_state_ji, d_best_d_ji, N, tau, t);
+            CUDA_CHECK(cudaGetLastError());
+            nvtxRangePop();
+
+            nvtx_push("kernel_reduce_i", NVTX_PURPLE);
+            kernel_reduce_i<<<1, N>>>(
+                d_best_state_ji, d_best_d_ji,
+                d_delta, d_delta_state, d_delta_dur,
+                N, D, t);
+            CUDA_CHECK(cudaGetLastError());
+            nvtxRangePop();
+        }
+    }
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+}

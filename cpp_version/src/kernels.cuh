@@ -30,3 +30,16 @@ __global__ void kernel_reduce_i(
     int*                       d_delta_state, // T×N
     int*                       d_delta_dur,   // T×N
     int N, int D, int t);
+
+
+// ── Persistent kernel (induction + reduction) ───────────────────────────── //
+__global__ void kernel_persistent(
+    const int*    __restrict__ obs_seq,
+    const double* __restrict__ emission_probs,
+    double*                    delta,        // T×N — lettura e scrittura
+    const double* __restrict__ AP,
+    double*                    best_state_ji,  // N×N — buffer intermedio
+    int*                       best_d_ji,    // N×N — buffer intermedio
+    int*                       delta_state,  // T×N
+    int*                       delta_dur,    // T×N
+    int N, int D, int T);

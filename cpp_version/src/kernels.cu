@@ -1,5 +1,9 @@
 #include "kernels.cuh"
+
 #include <cstdio>
+#include <cooperative_groups.h>
+
+namespace cg = cooperative_groups;
 
 __global__ void kernel_compute_AP(
     const double* __restrict__ trans_mat,
@@ -21,7 +25,7 @@ __global__ void kernel_induction(
     const double* __restrict__ emission_probs,
     const double* __restrict__ delta,
     const double* __restrict__ AP,
-    double* best_val_ji,   // N×N output
+    double* best_state_ji,   // N×N output
     int*    best_d_ji,     // N×N output
     int N, int tau, int t)
 {
@@ -84,7 +88,7 @@ __global__ void kernel_induction(
     //             bd   = k;
     //         }
     //     }
-    //     best_val_ji[j * N + i] = best;
+    //     best_state_ji[j * N + i] = best;
     //     best_d_ji  [j * N + i] = bd;
     // }
 
@@ -135,13 +139,14 @@ __global__ void kernel_induction(
 
     // [V2] [V3] Write result
     if (d == 0) {
-        best_val_ji[j * N + i] = sh_val[0];
+        best_state_ji[j * N + i] = sh_val[0];
         best_d_ji  [j * N + i] = sh_d[0];
     }
 
 
     long long t2 = clock64();
 
+    // [DEBUG]
     if (d == 0 && j == 0 && i == 0 && (t >= 200 && t < 205)) {
         printf("emission + score cycles: %lld, reduction cycles: %lld\n", t1-t0, t2-t1);
     }
@@ -149,11 +154,11 @@ __global__ void kernel_induction(
 
 
 __global__ void kernel_reduce_i(
-    const double* __restrict__ best_val_ji,   // N×N
+    const double* __restrict__ best_state_ji,   // N×N
     const int*    __restrict__ best_d_ji,     // N×N
-    double*                    d_delta,       // T×N
-    int*                       d_delta_state, // T×N
-    int*                       d_delta_dur,   // T×N
+    double*                    delta,       // T×N
+    int*                       delta_state, // T×N
+    int*                       delta_dur,   // T×N
     int N, int D, int t)
 {
     const int j = threadIdx.x;   // un thread per j
@@ -161,12 +166,12 @@ __global__ void kernel_reduce_i(
     if (j >= N) return;
 
     // ── argmax su i — loop sequenziale (N<=20, trascurabile) ─────────────── //
-    double best_val = best_val_ji[j * N + 0];
+    double best_val = best_state_ji[j * N + 0];
     int    best_d   = best_d_ji  [j * N + 0];
     int    best_i   = 0;
 
     for (int i = 1; i < N; ++i) {
-        double v = best_val_ji[j * N + i];
+        double v = best_state_ji[j * N + i];
         if (v > best_val) {
             best_val = v;
             best_d   = best_d_ji[j * N + i];
@@ -175,10 +180,133 @@ __global__ void kernel_reduce_i(
     }
 
     // ── aggiornamento condizionale su delta ───────────────────────────────── //
-    const bool update = (t >= D) || (best_val > d_delta[t * N + j]);
+    const bool update = (t >= D) || (best_val > delta[t * N + j]);
     if (update) {
-        d_delta      [t * N + j] = best_val;
-        d_delta_state[t * N + j] = best_i;
-        d_delta_dur  [t * N + j] = best_d + 1;
+        delta      [t * N + j] = best_val;
+        delta_state[t * N + j] = best_i;
+        delta_dur  [t * N + j] = best_d + 1;
+    }
+
+    // [DEBUG]
+    // if (t == 50) {
+    // printf("F t=50 j=%d delta=%.6f state=%d dur=%d\n",
+    //        j, delta[50*N+j], delta_state[50*N+j], delta_dur[50*N+j]);
+    // }
+}
+
+
+
+__global__ void kernel_persistent(
+    const int*    __restrict__ obs_seq,
+    const double* __restrict__ emission_probs,
+    double*                    delta,        // T×N — lettura e scrittura
+    const double* __restrict__ AP,
+    double*                    best_state_ji,  // N×N — buffer intermedio
+    int*                       best_d_ji,    // N×N — buffer intermedio
+    int*                       delta_state,  // T×N
+    int*                       delta_dur,    // T×N
+    int N, int D, int T)
+{
+    cg::grid_group grid = cg::this_grid();
+
+    const int j = blockIdx.x;
+    const int i = blockIdx.y;
+    const int d = threadIdx.x;
+
+    extern __shared__ char shmem[];
+    double* sh_val = reinterpret_cast<double*>(shmem);
+    int*    sh_d   = reinterpret_cast<int*>(sh_val + blockDim.x);
+
+    for (int t = 1; t < T; ++t) {
+        const int tau = min(t, D);
+
+        // ── 1. Score + riduzione su d ─────────────────────────────────────── //
+        if (d < tau) {
+            double cum = 0.0;
+            for (int k = 0; k <= d; ++k)
+                cum += emission_probs[obs_seq[t - k] * N + j];
+            sh_val[d] = cum
+                      + delta[(t - 1 - d) * N + i]
+                      + AP[d * N*N + j*N + i];
+            sh_d[d] = d;
+        } else {
+            sh_val[d] = -1e300;
+            sh_d[d]   = 0;
+        }
+        __syncthreads();
+
+        // ── cross-warp reduction ──────────────────────────────────────────── //
+        for (int stride = blockDim.x >> 1; stride >= 32; stride >>= 1) {
+            if (d < stride) {
+                double other_val = sh_val[d + stride];
+                if (other_val > sh_val[d] ||
+                   (other_val == sh_val[d] && sh_d[d + stride] < sh_d[d])) {
+                    sh_val[d] = other_val;
+                    sh_d[d]   = sh_d[d + stride];
+                }
+            }
+            __syncthreads();
+        }
+
+        // ── intra-warp reduction ──────────────────────────────────────────── //
+        if (d < 32) {
+            for (int stride = min(16, (int)(blockDim.x >> 1)); stride > 0; stride >>= 1) {
+                if (d < stride) {
+                    double other_val = sh_val[d + stride];
+                    if (other_val > sh_val[d] ||
+                       (other_val == sh_val[d] && sh_d[d + stride] < sh_d[d])) {
+                        sh_val[d] = other_val;
+                        sh_d[d]   = sh_d[d + stride];
+                    }
+                }
+                __syncwarp();
+            }
+        }
+
+        if (d == 0) {
+            best_state_ji[j * N + i] = sh_val[0];
+            best_d_ji  [j * N + i] = sh_d[0];
+        }
+
+        // ── tutti i blocchi hanno scritto best_state_ji ─────────────────────── //
+        long long s0 = clock64();
+        grid.sync();
+        long long s1 = clock64();
+
+        // ── 2. Reduce su i — solo blocchi con i=0 ────────────────────────── //
+        if (i == 0 && d == 0) {
+            double best_val = best_state_ji[j * N + 0];
+            int    best_d   = best_d_ji  [j * N + 0];
+            int    best_i   = 0;
+
+            for (int k = 1; k < N; ++k) {
+                double v = best_state_ji[j * N + k];
+                if (v > best_val) {
+                    best_val = v;
+                    best_d   = best_d_ji[j * N + k];
+                    best_i   = k;
+                }
+            }
+
+            const bool update = (t >= D) || (best_val >= delta[t * N + j]);
+            if (update) {
+                delta      [t * N + j] = best_val;
+                delta_state[t * N + j] = best_i;
+                delta_dur  [t * N + j] = best_d + 1;
+            }
+        }
+
+        // ── delta[t] scritto — tutti possono procedere a t+1 ─────────────── //
+        grid.sync();
+        long long s2 = clock64();
+
+        // [DEBUG]
+        // if (t == 50 && i == 0 && d == 0 && j < 3) {
+        //     printf("persistent t=50 j=%d delta=%.6f state=%d dur=%d\n",
+        //         j, delta[50*N+j], delta_state[50*N+j], delta_dur[50*N+j]);
+        // }
+
+        if ((t >= 200 && t < 205) && j == 0 && i == 0 && d == 0)
+            printf("grid.sync 1: %lld  grid.sync 2: %lld\n", s1-s0, s2-s1);
     }
 }
