@@ -3,10 +3,17 @@
 
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <nvtx3/nvToolsExt.h>
 #include <iostream>
 #include <iomanip>
 
 #define SMOOTHNESS 1e-30
+
+#define NVTX_BLUE    0xFF2196F3
+#define NVTX_GREEN   0xFF4CAF50
+#define NVTX_ORANGE  0xFFFF9800
+#define NVTX_RED     0xFFF44336
+#define NVTX_PURPLE  0xFF9C27B0
 
 #define CUDA_CHECK(call)                                                        \
     do {                                                                        \
@@ -18,6 +25,17 @@
         }                                                                       \
     } while (0)
 
+inline void nvtx_push(const char* label, uint32_t color) {
+    nvtxEventAttributes_t attr;
+    memset(&attr, 0, sizeof(nvtxEventAttributes_t));  // ← zero esplicito
+    attr.version       = NVTX_VERSION;
+    attr.size          = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
+    attr.colorType     = NVTX_COLOR_ARGB;
+    attr.color         = color;
+    attr.messageType   = NVTX_MESSAGE_TYPE_ASCII;
+    attr.message.ascii = label;
+    nvtxRangePushEx(&attr);
+}
 
 HSMM::HSMM(const std::vector<std::string>&  states,
            const std::vector<std::string>&  emissions,
@@ -445,6 +463,7 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
     auto start = std::chrono::high_resolution_clock::now();
 
     // * ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── //
+    nvtx_push("phase1_init",        NVTX_GREEN);    
     // Python: PAST_DELTA[d, n] = duration_probs[d, n] + start_probs[n]
     // C++:    duration_probs_[n*D + d]
     std::vector<double> PAST_DELTA(D * N);
@@ -473,21 +492,26 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
 
     // ! temporaneo: copia DELTA su GPU (per ora delta è solo CPU, ma in futuro sarà direttamente in global)
     CUDA_CHECK(cudaMemcpy(d_delta, delta.data(), N * T * sizeof(double), cudaMemcpyHostToDevice));
+    
+    nvtxRangePop();  // phase1_init
 
     // ── AP: (D x N x N) ──────────────────────────────────────────────────── //
+    nvtxRangePushA("kernel_AP");
     // Python: AP[d, i, j] = trans_mat[i, j] + duration_probs[d, i]
 
     dim3 block(N, N, 1);   // limit: N*N <= 1024 (max threads per block) -> N <= 32
     dim3 grid(D, 1, 1);
     
     kernel_compute_AP<<<grid, block>>>(d_trans_mat, d_duration_probs, d_AP, N, D);
-    
+    CUDA_CHECK(cudaGetLastError());
+    nvtxRangePop();
+
     // * ── PHASE 2 — Induction (t >= 1) ─────────────────────────────────────────── //
     // Per ogni stato corrente j, troviamo il miglior (d, i_prev) tale che:
     //   score(j, d, i) = EMISSION_PROBS[d,j] + PAST_DELTA[d,i] + AP[d,j,i]
 
     //std::cout << "Starting Induction\n"; std::cout.flush();
-
+    nvtx_push("phase2_induction",   NVTX_BLUE);
     for (int t = 1; t < T; ++t) {
 
         const int tau = std::min(t, D);   // d valido: 0 .. tau-1
@@ -500,39 +524,46 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
         // while (block_size < tau) block_size <<= 1;   // prossima potenza di 2
         // const size_t shmem = block_size * (sizeof(double) + sizeof(int));
         // dim3 block_ind(block_size);
-        
+
+        nvtx_push("kernel_induction", NVTX_ORANGE);
         kernel_induction<<<grid_ind, block_ind, shmem>>>(
             d_obs_seq, d_emission_probs, d_delta, d_AP,
             d_best_state_ji, d_best_d_ji, 
             N, tau, t);
         CUDA_CHECK(cudaGetLastError());
+        nvtxRangePop();
 
         //std::cout << "t=" << t << "[DONE] Kernel 1" << "\n"; std::cout.flush();
 
         // ── Kernel 2: argmax su i — warp shuffle, invariato ──────────────────── //
         // grid(N), block(N) — un blocco per j, un thread per i
+        nvtx_push("kernel_reduce_i",  NVTX_PURPLE);
         kernel_reduce_i<<<1, N>>>(
             d_best_state_ji, d_best_d_ji,
             d_delta, d_delta_state, d_delta_dur,
             N, D, t);
         CUDA_CHECK(cudaGetLastError());
+        nvtxRangePop();
 
         //std::cout << "t=" << t << "[DONE] Kernel 2" << "\n"; std::cout.flush();
     }
     
     CUDA_CHECK(cudaDeviceSynchronize());
+    nvtxRangePop();
 
     // Retrieve data from GPU
+    nvtx_push("memcpy_to_host",     NVTX_RED);
     CUDA_CHECK(cudaMemcpy(delta.data(), d_delta, N * T * sizeof(double), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(delta_state.data(), d_delta_state, N * T * sizeof(int), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(delta_dur.data(), d_delta_dur, N * T * sizeof(int), cudaMemcpyDeviceToHost));
-
+    nvtxRangePop();
 
     //std::cout << "Result copied to host" << "\n"; std::cout.flush();
 
     // Backtracking
+    nvtx_push("backtracking",       NVTX_GREEN);
     std::vector<int> path = backtracking_termination(delta, delta_state, delta_dur, T);
-    
+    nvtxRangePop();
 
     //std::cout << "Backtracking done" << "\n"; std::cout.flush();
 
