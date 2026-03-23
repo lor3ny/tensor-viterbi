@@ -275,20 +275,15 @@ std::vector<int> HSMM::backtracking_termination(const std::vector<double>& delta
     }
 
     // ── Backtracking ──────────────────────────────────────────────────────── //
-    while (t > 0) {
+    while (t >= 0) {
         int d      = psi_dur  [t * N_ + curr_state];
         int prev_s = psi_state[t * N_ + curr_state];
-
-        if (d <= 0) {
-            std::cerr << "[ERROR] backtracking: d=" << d 
-                    << " at t=" << t << " state=" << curr_state << "\n";
-            break;
-        }
-
         int start_t = t - d + 1;
-        if (start_t < 0) {
-            std::cerr << "[ERROR] backtracking: start_t=" << start_t
-                    << " at t=" << t << " d=" << d << "\n";
+
+        // [DEBUG] Controlli di validità
+        if (d <= 0 || start_t < 0) {
+            std::cerr << "[ERROR] backtracking: d=" << d << " at t=" << t << " state=" << curr_state << "\n";
+            std::cerr << "[ERROR] backtracking: start_t=" << start_t << " at t=" << t << " d=" << d << "\n";
             break;
         }
 
@@ -331,9 +326,12 @@ std::vector<int> HSMM::decoding_vanilla_viterbi()
         }
     }
 
-    for (int t = 0; t < D; ++t)
-        for (int n = 0; n < N; ++n)
-            delta[t*N + n] = PAST_DELTA[t*N + n] + CUM_EMISSION[t*N + n];
+    for (int t = 0; t < D; ++t){
+        for (int n = 0; n < N; ++n) {
+            delta      [t*N + n] = PAST_DELTA[t*N + n] + CUM_EMISSION[t*N + n];
+            delta_dur  [t*N + n] = t + 1;
+        }
+    }
 
     // ── AP: (D x N x N) ──────────────────────────────────────────────────── //
     std::vector<double> AP(D * N * N);
@@ -486,7 +484,6 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
 
     // Load data to GPU
     hsmm_to_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
-    CUDA_CHECK(cudaMemcpy(d_delta_dur, delta_dur.data(), N * T * sizeof(int), cudaMemcpyHostToDevice)); // initialize to 1
 
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -507,13 +504,17 @@ std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
         }
     }
 
-    for (int t = 0; t < D; ++t)
-        for (int n = 0; n < N; ++n)
+    for (int t = 0; t < D; ++t){
+        for (int n = 0; n < N; ++n){
             delta[t*N + n] = PAST_DELTA[t*N + n] + CUM_EMISSION[t*N + n];
+            delta_dur  [t*N + n] = t + 1;
+        }
+    }
 
     // ! temporaneo: copia DELTA su GPU (per ora delta è solo CPU, ma in futuro sarà direttamente in global)
     CUDA_CHECK(cudaMemcpy(d_delta, delta.data(), N * T * sizeof(double), cudaMemcpyHostToDevice));
-    
+    CUDA_CHECK(cudaMemcpy(d_delta_dur, delta_dur.data(), N * T * sizeof(int), cudaMemcpyHostToDevice)); // initialize to 1
+
     nvtxRangePop();  // phase1_init
 
     // * ── AP: (D x N x N) ──────────────────────────────────────────────────── //

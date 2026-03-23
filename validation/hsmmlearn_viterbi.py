@@ -73,7 +73,7 @@ def load_sleep_model_hsmmlearn(json_path: str = "hsmm_config.json"):
 
 #! HOOK
 #! ---------------------
-def validate(title_str: str, computed_states: np.ndarray, json_file: str):
+def validate(title_str: str, computed_states: np.ndarray, json_file: str, print_states: bool = False):
     model, obs_seq = load_sleep_model_hsmmlearn(json_file)
 
     start_time = time.time()
@@ -82,6 +82,9 @@ def validate(title_str: str, computed_states: np.ndarray, json_file: str):
     execution_time = end_time - start_time
 
     print(f"Execution time of Baseline C++ HSMMLearn Viterbi: {execution_time:.4f} seconds")
-
+    
+    if(print_states):
+        print(f'HSMMLearn Decoded States: {decoded_states}')
+        
     acc = compute_accuracy(decoded_states, computed_states)
     print(f"{title_str} Accuracy - {acc:.2%}") 

@@ -6,12 +6,11 @@ import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 import time
 import json
-from typing import List
 from deprecated import deprecated
 
 
 from validation.hsmmlearn_viterbi import validate
-from validation.hsmmlearn_py_viterbi import validate_py
+
 
 # ----- DEBUG VOXEL
 
@@ -69,12 +68,6 @@ class HSMM:
 
     def set_obs_sequence(self, obs_seq):
         self.obs_seq = obs_seq
-
-    
-    @staticmethod
-    def _log(tensor: np.ndarray) -> np.ndarray:
-        return np.where(tensor > 0, np.log(np.maximum(tensor, 1e-300)), -np.inf)
-
 
     def print_model(self):
         N = len(self.states)
@@ -185,7 +178,7 @@ class HSMM:
         best_last_state = np.argmax(delta[t])
         curr_state = best_last_state
         
-        while t > 0:
+        while t >= 0:
 
             d = psi_dur[t, curr_state]
             prev_s = psi_state[t, curr_state]
@@ -237,7 +230,7 @@ class HSMM:
         EMISSION_PROBS = cum_emission  # shape: (num_states, D)
 
         delta[0:D] = (PAST_DELTA * EMISSION_PROBS)
-
+        delta_dur[0:D]   = np.arange(1, D+1)[:, np.newaxis] * np.ones((1, N), dtype=int)
 
         #! PHASE 2 - INDUCTION  t>0   
         AP = self.trans_mat[np.newaxis, :, :] * self.duration_probs[ :, :, np.newaxis]  # (N,N,1) * (N,1,D) -> NxNxD  
@@ -315,7 +308,7 @@ class HSMM:
             # Build outputs with np.where, write back
             delta[t, :]       = np.where(cond, delta[t, :],       best_vals)
             delta_state[t, :] = np.where(cond, delta_state[t, :], i_arr)
-            delta_dur[t, :]   = np.where(cond, delta_dur[t, :],   d_arr) + 1
+            delta_dur[t, :]   = np.where(cond, delta_dur[t, :],   d_arr + 1)
 
         path = self.backtracking_termination(delta, delta_state, delta_dur, T)
         
@@ -350,6 +343,7 @@ class HSMM:
         # EMISSION_PROBS[0] = emission_rows[0]     
 
         delta[0:D] = (PAST_DELTA + EMISSION_PROBS)
+        delta_dur[0:D]   = np.arange(1, D+1)[:, np.newaxis] * np.ones((1, N), dtype=int)
 
         #! PHASE 2 - INDUCTION  t>0   
         AP = self.trans_mat[np.newaxis, :, :] + self.duration_probs[ :, :, np.newaxis]  # (N,N,1) + (N,1,D) = NxNxD  
@@ -405,7 +399,7 @@ class HSMM:
 
             delta[t, :]       = np.where(cond, delta[t, :],       best_vals)
             delta_state[t, :] = np.where(cond, delta_state[t, :], i_arr)
-            delta_dur[t, :]   = np.where(cond, delta_dur[t, :],   d_arr) + 1
+            delta_dur[t, :]   = np.where(cond, delta_dur[t, :],   d_arr + 1)
 
         path = self.backtracking_termination(delta, delta_state, delta_dur, T)
         
@@ -429,6 +423,8 @@ class HSMM:
         delta_dur = np.zeros((T, N), dtype=int)
 
         #! PHASE 1 - INITIALIZATION 0<=t<D
+        # print(self.duration_probs.shape)
+        # print(self.start_probs.shape)
         PAST_DELTA = self.duration_probs + self.start_probs[np.newaxis,:]
 
         #* Method B
@@ -441,6 +437,7 @@ class HSMM:
         # EMISSION_PROBS[0] = emission_rows[0]      
 
         delta[0:D,:] = (PAST_DELTA + EMISSION_PROBS)
+        delta_dur[0:D]   = np.arange(1, D+1)[:, np.newaxis] * np.ones((1, N), dtype=int)
 
         #! PHASE 2 - INDUCTION  t>0   
         AP = self.trans_mat[np.newaxis, :, :] + self.duration_probs[ :, :, np.newaxis]  # (N,N,1) + (N,1,D) = NxNxD  
@@ -512,7 +509,7 @@ class HSMM:
 
             delta[t, :]       = np.where(cond, delta[t, :],       best_vals)
             delta_state[t, :] = np.where(cond, delta_state[t, :], i_arr)
-            delta_dur[t, :]   = np.where(cond, delta_dur[t, :],   d_arr) + 1
+            delta_dur[t, :]   = np.where(cond, delta_dur[t, :],   d_arr + 1)
 
         path = self.backtracking_termination(delta, delta_state, delta_dur, T)
         
@@ -550,6 +547,7 @@ class HSMM:
         #! PHASE 2 - INDUCTION  t>0
         #* delta(t, sj) = max{d} ( max{si} ( delta(t-d,si) * a(si,sj) ) * P(d|sj) * |-|{k = t-d}(b(sj, seq_obs(k)))  
         for t in range(1, T):
+            #print(t)
             for sj in range(N):
                 for d in range(1, D+1):
                     if t - d < 0: 
@@ -585,13 +583,13 @@ class HSMM:
 
         path = self.backtracking_termination(delta, psi_state, psi_dur, T)
             
+        #print(delta)
+
         return path
+    
 
 
-
-
-
-def load_log_data(json_path: str = "hsmm_config.json") -> HSMM:
+def load_sleep_model(json_path: str = "hsmm_config.json") -> HSMM:
 
     with open(json_path, "r") as f:
         cfg = json.load(f)
@@ -624,14 +622,16 @@ def load_log_data(json_path: str = "hsmm_config.json") -> HSMM:
     sleep_duration_probs = np.array(
         [s["duration_probs"] for s in cfg["states"]], dtype=float
     )      
+    
 
+    smoothness = 1e-30
     hsmm_sleep = HSMM(
         sleep_states, 
         sleep_emissions, 
-        HSMM._log(sleep_trans_mat.T), 
-        HSMM._log(sleep_emission_probs), 
-        HSMM._log(sleep_start_probs), 
-        HSMM._log(sleep_duration_probs.T)
+        np.log(sleep_trans_mat.T + smoothness), 
+        np.log(sleep_emission_probs + smoothness), 
+        np.log(sleep_start_probs + smoothness), 
+        np.log(sleep_duration_probs.T + smoothness)
     )
     hsmm_sleep.set_obs_sequence(sleep_obs_seq)
 
@@ -640,41 +640,41 @@ def load_log_data(json_path: str = "hsmm_config.json") -> HSMM:
 
 if __name__ == "__main__":
 
-    data_path = "data/20states_10000steps_100dur.json"
 
-    # hsmm_sleep = load_log_data(data_path)
+    data_path = "data/20states_1000steps_20dur.json"
+    #data_path = "data/sleep_data_10states_100_10.json"
     # hsmm_sleep.print_model()
 
+    # [Vanilla Viterbi]
+    # hsmm_sleep = load_sleep_model(data_path)
     # start_time = time.time()
     # v_predicted_states = hsmm_sleep.run_vanilla_viterbi()
     # end_time = time.time()
     # execution_time = end_time - start_time
     # print(f"Execution time of Vanilla Viterbi: {execution_time:.4f} seconds")
 
-    # validate("Vanilla vs Baseline", v_predicted_states, data_path)
+    # # [Tensor Viterbi]
+    # hsmm_sleep = load_sleep_model(data_path)
+    # start_time = time.time()
+    # t_predicted_states = hsmm_sleep.run_log_tensor_viterbi()
+    # end_time = time.time()
+    # execution_time = end_time - start_time
+    # print(f"Execution time of Log Tensor Viterbi (NO CACHE): {execution_time:.4f} seconds")
 
-    # np.testing.assert_array_equal(
-    #     t_predicted_states,
-    #     v_predicted_states,
-    #     err_msg="Vanilla is different from Tensor based."
-    # )
-
-    hsmm_sleep = load_log_data(data_path)
-
-    start_time = time.time()
-    t_predicted_states = hsmm_sleep.run_log_tensor_viterbi()
-    end_time = time.time()
-    execution_time = end_time - start_time
-    print(f"Execution time of Log Tensor Viterbi (NO CACHE): {execution_time:.4f} seconds")
-
-    hsmm_sleep = load_log_data(data_path)
-
+    # [Tensor Viterbi Cached]
+    hsmm_sleep = load_sleep_model(data_path)
     start_time = time.time()
     tc_predicted_states = hsmm_sleep.run_log_tensor_viterbi_cached()
     end_time = time.time()
     execution_time = end_time - start_time
     print(f"Execution time of Log Tensor Viterbi: {execution_time:.4f} seconds")
 
+    # Validation
+    # validate("Vanilla vs Baseline", v_predicted_states, data_path)
+    # print(v_predicted_states)
+    # validate("Tensor vs Baseline", t_predicted_states, data_path)
+    # print(t_predicted_states)
+    validate("Tensor (Cached) vs Baseline", tc_predicted_states, data_path, True)
+    print(tc_predicted_states)
 
-    validate("Tensor vs C++ Baseline", t_predicted_states, data_path)
-    validate_py("Tensor vs Python Baseline", t_predicted_states, data_path)
+    np.savetxt("data/python_result.txt", tc_predicted_states.reshape(1, -1), fmt='%d', delimiter=' ') # used for gpu validation
