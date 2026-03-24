@@ -1,3 +1,6 @@
+import argparse
+import csv
+import os
 import time
 import numpy as np
 
@@ -7,6 +10,8 @@ from py_src.tensor_viterbi import decode_tensor_viterbi
 from py_src.tensor_viterbi import decode_vanilla_viterbi
 
 from validation.hsmmlearn_viterbi import validate
+from validation.hsmmlearn_viterbi import measure_baseline
+from validation.hsmmlearn_viterbi import benchmark_baseline
 from py_src.hsmm import HSMM
 
 
@@ -17,25 +22,50 @@ def TIME_MEASURE(func, *args, **kwargs):
     print(f"Execution time of {func.__name__}: {elapsed:.4f} seconds")
     return result
 
+def TIME_BENCHMARK(func, *args, csv_path="benchmark.csv", iterations=100, **kwargs):
+    times = []
+    for _ in range(iterations):
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        times.append(time.perf_counter() - start)
 
+    write_header = not os.path.exists(csv_path)
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(["function", "iteration", "elapsed_s"])
+        for i, t in enumerate(times):
+            writer.writerow([func.__name__, i, f"{t:.6f}"])
+
+    print(f"{func.__name__}: avg={sum(times)/len(times):.4f}s  min={min(times):.4f}s  max={max(times):.4f}s")
+    return
 
 if __name__ == "__main__":
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", "-m", choices=["validate", "measure", "benchmark"])
+    parser.add_argument("--data-path", "-dpath", type=str)
+    args = parser.parse_args()
 
-    data_path = "data/3states_20steps_4dur.json"
+    if not os.path.exists(args.data_path):
+        parser.error(f"data_path '{args.data_path}' does not exist")
+
+    data_path = args.data_path
     hsmm_sleep = HSMM.load_model(data_path)
-    #data_path = "data/sleep_data_10states_100_10.json"
-    # hsmm_sleep.print_model()
 
-    v_predicted_states = TIME_MEASURE(decode_vanilla_viterbi, hsmm_sleep)
+    if args.mode == "validate":
+        v_predicted_states = decode_vanilla_viterbi(hsmm_sleep)
+        tc_predicted_states = decode_log_tensor_viterbi_cached(hsmm_sleep)
+        validate("Vanilla vs Baseline", v_predicted_states, data_path)
+        validate("Tensor (Cached) vs Baseline", tc_predicted_states, data_path)
 
-    tc_predicted_states = TIME_MEASURE(decode_log_tensor_viterbi_cached, hsmm_sleep)
+    elif args.mode == "measure":
+        v_predicted_states = TIME_MEASURE(decode_vanilla_viterbi, hsmm_sleep)
+        tc_predicted_states = TIME_MEASURE(decode_log_tensor_viterbi_cached, hsmm_sleep)
+        measure_baseline(data_path)
+        
 
-    print(v_predicted_states)
-    print(tc_predicted_states)
-
-
-    validate("Vanilla vs Baseline", v_predicted_states, data_path)
-    validate("Tensor (Cached) vs Baseline", tc_predicted_states, data_path)
-
-    #np.savetxt("data/python_result.txt", tc_predicted_states.reshape(1, -1), fmt='%d', delimiter=' ') # used for gpu validation
+    elif args.mode == "benchmark":
+        TIME_BENCHMARK(decode_vanilla_viterbi, hsmm_sleep, csv_path="viterbi_benchmark.csv", iterations=10)
+        TIME_BENCHMARK(decode_log_tensor_viterbi_cached, hsmm_sleep, csv_path="viterbi_benchmark.csv", iterations=10)
+        benchmark_baseline(data_path, csv_path="viterbi_benchmark.csv", iterations=10)

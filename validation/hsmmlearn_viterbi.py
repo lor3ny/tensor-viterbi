@@ -1,4 +1,6 @@
 import json
+import os
+import csv
 import random
 import numpy as np
 import time
@@ -7,7 +9,7 @@ from hsmmlearn.hsmm import HSMMModel
 
 
 
-class MultinomialEmissions(AbstractEmissions):
+class RawEmissions(AbstractEmissions):
     """
     Discrete (categorical) emissions.
     emission_matrix[s, k] = P(obs = k | state = s)  — shape (N, n_bins)
@@ -20,7 +22,7 @@ class MultinomialEmissions(AbstractEmissions):
         return self._emission_matrix[:, obs.astype(int)]
 
     def copy(self):
-        return MultinomialEmissions(self._emission_matrix.copy())
+        return RawEmissions(self._emission_matrix.copy())
 
 
 
@@ -58,7 +60,7 @@ def load_sleep_model_hsmmlearn(json_path: str = "hsmm_config.json"):
     startprob = np.array(cfg["pi"],        dtype=float)  # shape (N,)
 
 
-    emissions = MultinomialEmissions(emission_matrix)
+    emissions = RawEmissions(emission_matrix)
 
     model = HSMMModel(
         emissions,
@@ -70,18 +72,41 @@ def load_sleep_model_hsmmlearn(json_path: str = "hsmm_config.json"):
     return model, obs_seq
 
 
+def benchmark_baseline(json_file: str, csv_path="benchmark.csv", iterations=100,):
+
+    model, obs_seq = load_sleep_model_hsmmlearn(json_file)
+
+    times = []
+    for _ in range(iterations):
+        start = time.perf_counter()
+        decoded_states = model.decode(obs_seq)
+        times.append(time.perf_counter() - start)
+
+    write_header = not os.path.exists(csv_path)
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(["function", "iteration", "elapsed_s"])
+        for i, t in enumerate(times):
+            writer.writerow(["HSMMLearn_CPP", i, f"{t:.6f}"])
+
+    print(f"HSMMLearn C++: avg={sum(times)/len(times):.4f}s  min={min(times):.4f}s  max={max(times):.4f}s")
+    return
+
+def measure_baseline(json_file: str):
+    model, obs_seq = load_sleep_model_hsmmlearn(json_file)
+    start_time = time.perf_counter()
+    decoded_states = model.decode(obs_seq)
+    elapsed = time.perf_counter() - start_time
+    print(f"Execution time of HSMMLearn C++: {elapsed:.4f} seconds")
+    return
 
 #! HOOK
 #! ---------------------
 def validate(title_str: str, computed_states: np.ndarray, json_file: str, print_states: bool = False):
     model, obs_seq = load_sleep_model_hsmmlearn(json_file)
 
-    start_time = time.time()
     decoded_states = model.decode(obs_seq)
-    end_time = time.time()
-    execution_time = end_time - start_time
-
-    print(f"Execution time of Baseline C++ HSMMLearn Viterbi: {execution_time:.4f} seconds")
     
     if(print_states):
         print(f'HSMMLearn Decoded States: {decoded_states}')

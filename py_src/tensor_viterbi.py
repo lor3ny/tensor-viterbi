@@ -253,7 +253,7 @@ def decode_vanilla_viterbi(hsmm: HSMM) -> np.ndarray:
                     continue
 
                 obs_score = 0.0
-                for tau in range(t - d, t + 1):
+                for tau in range(t - d + 1, t + 1):
                     obs_index = int(hsmm.obs_seq[tau])
                     obs_score += hsmm.emission_probs[obs_index, sj]
 
@@ -262,7 +262,7 @@ def decode_vanilla_viterbi(hsmm: HSMM) -> np.ndarray:
                 best_prev_score = -np.inf
                 best_prev_state = -1
                 for si in range(N):
-                    total_score = hsmm.trans_mat[si, sj] + dur_score + delta[t - d, si] + obs_score
+                    total_score = hsmm.trans_mat[sj, si] + dur_score + delta[t - d, si] + obs_score
 
                     if total_score > best_prev_score:
                         best_prev_score = total_score
