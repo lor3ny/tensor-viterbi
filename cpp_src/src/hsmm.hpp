@@ -69,20 +69,15 @@ public:
     // Viterbi Algorithm
     // ------------------------------------------------------------------ //
 
-    void find_t_maxs(const std::vector<double>& Sjid,
-                     std::vector<double>&        max_vals,
-                     std::vector<int>&           max_states,
-                     std::vector<int>&           max_durs) const;
-
     std::vector<int> backtracking_termination(const std::vector<double>& delta,
                                               const std::vector<int>&    psi_state,
                                               const std::vector<int>&    psi_dur,
                                               int                        T) const;
 
-    std::vector<int> decoding_vanilla_viterbi();
+    std::vector<int> decode_tensor_viterbi();
 
 
-    std::vector<int> decoding_tensor_viterbi(double* kernel_ms);
+    std::vector<int> decode_tensor_viterbi_cuda(double* kernel_ms);
 
     void run_induction(
         double* d_delta, const double* d_AP,

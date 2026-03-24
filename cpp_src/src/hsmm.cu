@@ -247,14 +247,6 @@ void HSMM::to_log_space()
 //! ---------------------------------------------------------------------- 
 //! Viterbi Algorithm
 //! ----------------------------------------------------------------------
-
-void HSMM::find_t_maxs(const std::vector<double>& Sjid,
-                        std::vector<double>&        max_vals,
-                        std::vector<int>&           max_states,
-                        std::vector<int>&           max_durs) const
-{
-    // TODO: for each destination state j (0..N_-1):
-}
  
 std::vector<int> HSMM::backtracking_termination(const std::vector<double>& delta,
                                                  const std::vector<int>&    psi_state,
@@ -297,7 +289,7 @@ std::vector<int> HSMM::backtracking_termination(const std::vector<double>& delta
     return path;
 }
  
-std::vector<int> HSMM::decoding_vanilla_viterbi()
+std::vector<int> HSMM::decode_tensor_viterbi()
 {
     // CPU-side data structures
     const int T = T_;
@@ -308,24 +300,26 @@ std::vector<int> HSMM::decoding_vanilla_viterbi()
     std::vector<int>    delta_state(T * N, 0);
     std::vector<int>    delta_dur  (T * N, 1);
     std::vector<double> score(D * N * N, 0.0);        // score[d*N*N + j*N + i]
+    std::vector<double> EMISSION_PROBS(D * N, 0.0);
+
 
     // ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── //
     // Python: PAST_DELTA[d, n] = duration_probs[d, n] + start_probs[n]
     std::vector<double> PAST_DELTA(D * N);
-    for (int d = 0; d < D; ++d)decoding
+    for (int d = 0; d < D; ++d)
         for (int n = 0; n < N; ++n)
             PAST_DELTA[d*N + n] = duration_probs_[n*D + d] + start_probs_[n];
 
     // Python: cum_emission[t, n] = cumsum(emission_probs[obs_seq[:D], :], axis=0)
     std::vector<double> CUM_EMISSION(D * N, 0.0);
-    for (int t = 0; t < D; ++t) {
-        int obs = obs_seq_[t];
+    for (int d = 0; d < D; ++d) {
+        int obs = obs_seq_[d];
         for (int n = 0; n < N; ++n) {
-            double prev = (t > 0) ? CUM_EMISSION[(t-1)*N + n] : 0.0;
-            CUM_EMISSION[t*N + n] = prev + emission_probs_[obs*N + n];
+            double prev = (d > 0) ? CUM_EMISSION[(d-1)*N + n] : 0.0;
+            CUM_EMISSION[d*N + n] = prev + emission_probs_[obs*N + n];
         }
     }
-
+    
     for (int t = 0; t < D; ++t){
         for (int n = 0; n < N; ++n) {
             delta      [t*N + n] = PAST_DELTA[t*N + n] + CUM_EMISSION[t*N + n];
@@ -344,7 +338,6 @@ std::vector<int> HSMM::decoding_vanilla_viterbi()
     // Per ogni stato corrente j, troviamo il miglior (d, i_prev) tale che:
     //   score(j, d, i) = EMISSION_PROBS[d,j] + PAST_DELTA[d,i] + AP[d,j,i]
 
-    std::vector<double> EMISSION_PROBS(D * N, 0.0);
 
     for (int t = 1; t < T; ++t) {
 
@@ -353,12 +346,10 @@ std::vector<int> HSMM::decoding_vanilla_viterbi()
         // ── 1. Emission Tensor  ("Produttoria") ─────────────────────────────── //
         // EMISSION_PROBS[d*N + n] = Σ_{k=0}^{d} emission_probs[obs_seq[t-k], n]
         for (int n = 0; n < N; ++n) {
-            double cum = 0.0;
-            for (int d = 0; d < tau; ++d) {
-                int obs = static_cast<int>(obs_seq_[t - d]);
-                cum += emission_probs_[obs * N + n];
-                EMISSION_PROBS[d * N + n] = cum;
-            }
+            double new_em = emission_probs_[obs_seq_[t] * N + n];
+            for (int d = tau-1; d >= 1; --d)
+                EMISSION_PROBS[d * N + n] = new_em + EMISSION_PROBS[(d-1) * N + n];
+            EMISSION_PROBS[0 * N + n] = new_em;
         }
 
         // ── 2. Past Delta Tensor ────────────────────────────────────────────── //
@@ -445,7 +436,7 @@ void HSMM::hsmm_free_gpu(
     d_obs_seq        = nullptr;
 }
 
-std::vector<int> HSMM::decoding_tensor_viterbi(double* kernel_ms)
+std::vector<int> HSMM::decode_tensor_viterbi_cuda(double* kernel_ms)
 {
     // CPU-side data structures
     const int T = T_;

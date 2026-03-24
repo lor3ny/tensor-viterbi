@@ -18,29 +18,36 @@ void save_path(const int* result, int T, const char* filename) {
     fclose(f);
 }
 
+void print_result(const int* result, int T) {
+
+    for (int t = 0; t < T; t++) {
+        printf("%d ", result[t]);
+    }
+    printf("\n");
+}
 
 int main() {
     
     // Load model from JSON
-    HSMM model = HSMM("../data/20states_1000steps_20dur.json");
-    //HSMM model = HSMM("../data/sleep_data_10states_100_10.json");
+    /HSMM model = HSMM("../data/3states_20steps_4dur.json");
+    //HSMM model = HSMM("../data/20states_100000steps_200dur.json");
+    // HSMM model = HSMM("../data/sleep_data_10states_100000_200.json");
     model.to_log_space();
     //model.print();
 
-    // [VANILLA]
+    // [Tensor C++]
     auto start_v = std::chrono::high_resolution_clock::now();
-    std::vector<int> result_cpp = model.decoding_vanilla_viterbi();
+    std::vector<int> result_cpp = model.decode_tensor_viterbi();
     auto end_v = std::chrono::high_resolution_clock::now();
     
     // ── Print execution time──//
     double elapsed_v = std::chrono::duration<double>(end_v - start_v).count();
-    std::cout << "Execution time C++ Viterbi: " << std::fixed << std::setprecision(4) << elapsed_v << " seconds\n";
+    std::cout << "Execution time C++ Viterbi: " << std::fixed << std::setprecision(6) << elapsed_v << " seconds\n";
 
-
-    // [TENSOR]
+    // [TENSOR CUDA]
     double kernel_ms; 
     auto start_gpu = std::chrono::high_resolution_clock::now();
-    std::vector<int> result_gpu = model.decoding_tensor_viterbi(&kernel_ms);
+    std::vector<int> result_cuda = model.decode_tensor_viterbi_cuda(&kernel_ms);
     auto end_gpu = std::chrono::high_resolution_clock::now();
     
 
@@ -51,8 +58,8 @@ int main() {
 
 
     // Save results to files
-    save_path(result_gpu.data(), result_gpu.size(), "../data/cuda_result.txt");
     save_path(result_cpp.data(), result_cpp.size(), "../data/cpp_result.txt");
+    save_path(result_cuda.data(), result_cuda.size(), "../data/cuda_result.txt");
 
     return 0;
 }
