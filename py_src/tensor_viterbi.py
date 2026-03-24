@@ -30,7 +30,7 @@ def _backtracking(delta: np.ndarray, psi_state: np.ndarray, psi_dur: np.ndarray,
 
 
 @deprecated(reason="It doesn't work after 370 timesteps because it goes on underflow, use the log-space function.")
-def run_tensor_viterbi(hsmm: HSMM) -> np.ndarray:
+def decode_tensor_viterbi(hsmm: HSMM) -> np.ndarray:
     hsmm.duration_probs = hsmm.duration_probs.T
     hsmm.trans_mat = hsmm.trans_mat.T
 
@@ -93,7 +93,7 @@ def run_tensor_viterbi(hsmm: HSMM) -> np.ndarray:
 
 
 @deprecated(reason="It is slower than the cached version.")
-def run_log_tensor_viterbi_no_cache(hsmm: HSMM) -> np.ndarray:
+def decode_log_tensor_viterbi_no_cache(hsmm: HSMM) -> np.ndarray:
     T = len(hsmm.obs_seq)
     N = len(hsmm.states)
     D = hsmm.duration_probs.shape[0]
@@ -152,7 +152,7 @@ def run_log_tensor_viterbi_no_cache(hsmm: HSMM) -> np.ndarray:
 #? axis 0 → depth (z) — the first index, selects a 2D "slice"
 #? axis 1 → rows — the second index, selects a row within a slice
 #? axis 2 → columns — the third index, selects a column within a row
-def run_log_tensor_viterbi_cached(hsmm: HSMM) -> np.ndarray:
+def decode_log_tensor_viterbi_cached(hsmm: HSMM) -> np.ndarray:
     T = len(hsmm.obs_seq)
     N = len(hsmm.states)
     D = hsmm.duration_probs.shape[0]
@@ -220,7 +220,7 @@ def run_log_tensor_viterbi_cached(hsmm: HSMM) -> np.ndarray:
     return _backtracking(delta, delta_state, delta_dur, T)
 
 
-def run_vanilla_viterbi(hsmm: HSMM) -> np.ndarray:
+def decode_vanilla_viterbi(hsmm: HSMM) -> np.ndarray:
     T = len(hsmm.obs_seq)
     N = len(hsmm.states)
     D = hsmm.duration_probs.shape[0]

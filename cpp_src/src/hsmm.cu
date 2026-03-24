@@ -312,7 +312,7 @@ std::vector<int> HSMM::decoding_vanilla_viterbi()
     // ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── //
     // Python: PAST_DELTA[d, n] = duration_probs[d, n] + start_probs[n]
     std::vector<double> PAST_DELTA(D * N);
-    for (int d = 0; d < D; ++d)
+    for (int d = 0; d < D; ++d)decoding
         for (int n = 0; n < N; ++n)
             PAST_DELTA[d*N + n] = duration_probs_[n*D + d] + start_probs_[n];
 
