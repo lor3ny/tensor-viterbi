@@ -2,7 +2,7 @@
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 
-#include "src/hsmm.hpp"
+#include "hsmm.hpp"
 
 namespace py = pybind11;
 

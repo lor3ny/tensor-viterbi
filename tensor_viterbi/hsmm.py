@@ -72,7 +72,7 @@ class HSMM:
         print("\n======================")
 
     @staticmethod
-    def load_model(json_path: str = "hsmm_config.json") -> HSMM:
+    def load_model(json_path: str = "hsmm_config.json") -> "HSMM":
 
         with open(json_path, "r") as f:
             cfg = json.load(f)

@@ -13,8 +13,8 @@ set(CMAKE_CUDA_ARCHITECTURES 80)
 # ── Native extension: _native.so ─────────────────────────────────────────── #
 pybind11_add_module(_native
     src/bindings.cpp
-    src/src/hsmm.cu
-    src/src/kernels.cu
+    src/hsmm.cu
+    src/kernels.cu
 )
 
 target_include_directories(_native PRIVATE src/src)
