@@ -12,7 +12,7 @@ from tensor_viterbi.viterbi import (
 )
 
 from validation.hsmmlearn_viterbi import validate, measure_baseline, benchmark_baseline
-from validation.hsmmlearn_py_viterbi import 
+from validation.hsmmlearn_py_viterbi import validate_py, measure_baseline_py, benchmark_baseline_py
 
 
 def TIME_MEASURE(func, *args, **kwargs):
@@ -70,6 +70,7 @@ if __name__ == "__main__":
         TIME_MEASURE(decode_tensor_viterbi_cpp, data_path)
         #TIME_MEASURE(decode_tensor_viterbi_cuda, data_path)
         measure_baseline(data_path)
+        measure_baseline_py(data_path)
         TIME_MEASURE(decode_vanilla_viterbi, hsmm_sleep)
 
     elif args.mode == "benchmark":
@@ -77,4 +78,5 @@ if __name__ == "__main__":
         TIME_BENCHMARK(decode_tensor_viterbi_cpp, data_path, csv_path="viterbi_benchmark.csv", iterations=10)
         #TIME_BENCHMARK(decode_tensor_viterbi_cuda, data_path, csv_path="viterbi_benchmark.csv", iterations=10)
         benchmark_baseline(data_path, csv_path="viterbi_benchmark.csv", iterations=10)
+        benchmark_baseline_py(data_path, csv_path="viterbi_benchmark.csv", iterations=10)
         TIME_BENCHMARK(decode_vanilla_viterbi, hsmm_sleep, csv_path="viterbi_benchmark.csv", iterations=10)

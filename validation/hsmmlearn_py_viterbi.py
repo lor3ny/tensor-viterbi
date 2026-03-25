@@ -4,6 +4,8 @@ import json
 import random
 import time
 import numpy as np
+import csv
+import os
 
 from validation.hsmmlearn_viterbi import compute_accuracy
 
@@ -229,12 +231,37 @@ def load_data(json_path: str = "hsmm_config.json") -> np.ndarray:
 def validate_py(title_str: str, computed_states: np.ndarray, json_file: str):
 
     tau, J, M, log_d, log_p, log_pi, log_pdf = load_data(json_file)
-    start_time = time.time()
-    decoded_states = ViterbiImpl(tau, J, M, log_d, log_p, log_pi, log_pdf)
-    end_time = time.time()
-    execution_time = end_time - start_time
 
-    print(f"Execution time of Baseline Python HSMMLearn Viterbi: {execution_time:.4f} seconds")
+    decoded_states = ViterbiImpl(tau, J, M, log_d, log_p, log_pi, log_pdf)
 
     acc = compute_accuracy(decoded_states, computed_states)
     print(f"{title_str} Accuracy - {acc:.2%}") 
+
+
+def benchmark_baseline_py(json_file: str, csv_path="benchmark.csv", iterations=100,):
+
+    tau, J, M, log_d, log_p, log_pi, log_pdf = load_data(json_file)
+    times = []
+    for _ in range(iterations):
+        start = time.perf_counter()
+        decoded_states = ViterbiImpl(tau, J, M, log_d, log_p, log_pi, log_pdf)
+        times.append(time.perf_counter() - start)
+
+    write_header = not os.path.exists(csv_path)
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(["function", "iteration", "elapsed_s"])
+        for i, t in enumerate(times):
+            writer.writerow(["HSMMLearn_Python", i, f"{t:.6f}"])
+
+    print(f"HSMMLearn C++: avg={sum(times)/len(times):.4f}s  min={min(times):.4f}s  max={max(times):.4f}s")
+    return
+
+def measure_baseline_py(json_file: str):
+    tau, J, M, log_d, log_p, log_pi, log_pdf = load_data(json_file)
+    start_time = time.time()
+    decoded_states = ViterbiImpl(tau, J, M, log_d, log_p, log_pi, log_pdf)
+    elapsed = time.perf_counter() - start_time
+    print(f"Execution time of HSMMLearn Python: {elapsed:.4f} seconds")
+    return

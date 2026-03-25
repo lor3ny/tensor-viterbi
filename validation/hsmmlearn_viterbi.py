@@ -72,6 +72,8 @@ def load_sleep_model_hsmmlearn(json_path: str = "hsmm_config.json"):
     return model, obs_seq
 
 
+#! HOOK
+#! ---------------------
 def benchmark_baseline(json_file: str, csv_path="benchmark.csv", iterations=100,):
 
     model, obs_seq = load_sleep_model_hsmmlearn(json_file)
@@ -101,8 +103,6 @@ def measure_baseline(json_file: str):
     print(f"Execution time of HSMMLearn C++: {elapsed:.4f} seconds")
     return
 
-#! HOOK
-#! ---------------------
 def validate(title_str: str, computed_states: np.ndarray, json_file: str, print_states: bool = False):
     model, obs_seq = load_sleep_model_hsmmlearn(json_file)
 
