@@ -57,8 +57,8 @@ int main() {
     // std::cout << "Execution time GPU Viterbi: " << std::fixed << std::setprecision(6) << elapsed_gpu << " seconds\n";
 
 
-    // // Save results to files
-    // save_path(result_cpp.data(), result_cpp.size(), "../data/cpp_result.txt");
+    // Save results to files
+    save_path(result_cpp.data(), result_cpp.size(), "../data/cpp_result.txt");
     // save_path(result_cuda.data(), result_cuda.size(), "../data/cuda_result.txt");
 
     return 0;

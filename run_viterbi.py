@@ -59,6 +59,8 @@ if __name__ == "__main__":
         tc_predicted_states = decode_log_tensor_viterbi_cached(hsmm_sleep)
         cpp_predicted_states  = decode_tensor_viterbi_cpp(data_path)
         #cuda_predicted_states = decode_tensor_viterbi_cuda(data_path)
+        print(tc_predicted_states)
+        print(cpp_predicted_states)
         validate("Vanilla vs Baseline", v_predicted_states, data_path)
         validate("Tensor (Cached) vs Baseline", tc_predicted_states, data_path)
         validate("C++ vs Baseline", cpp_predicted_states, data_path)
