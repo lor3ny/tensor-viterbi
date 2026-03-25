@@ -9,6 +9,7 @@ namespace py = pybind11;
 
 static py::array_t<int> _run(const std::string& json_path, bool cuda) {
     HSMM model(json_path);
+    model.to_log_space();
 
     std::vector<int> result = cuda ? model.decode_tensor_viterbi_cuda()
                                    : model.decode_tensor_viterbi();
