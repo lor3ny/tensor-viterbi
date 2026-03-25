@@ -8,7 +8,7 @@ from tensor_viterbi.viterbi import (
     decode_vanilla_viterbi,
     decode_log_tensor_viterbi_cached,
     decode_tensor_viterbi_cpp,
-    decode_tensor_viterbi_cuda,
+    # decode_tensor_viterbi_cuda,  # uncomment when CUDA is available
 )
 
 from validation.hsmmlearn_viterbi import validate, measure_baseline, benchmark_baseline
@@ -55,10 +55,10 @@ if __name__ == "__main__":
     hsmm_sleep = HSMM.load_model(data_path)
 
     if args.mode == "validate":
-        v_predicted_states = decode_vanilla_viterbi(hsmm_sleep)
+        v_predicted_states  = decode_vanilla_viterbi(hsmm_sleep)
         tc_predicted_states = decode_log_tensor_viterbi_cached(hsmm_sleep)
-        cpp_predicted_states = decode_tensor_viterbi_cpp(hsmm_sleep)
-        #cuda_predicted_states = decode_tensor_viterbi_cuda(hsmm_sleep)
+        cpp_predicted_states  = decode_tensor_viterbi_cpp(data_path)
+        #cuda_predicted_states = decode_tensor_viterbi_cuda(data_path)
         validate("Vanilla vs Baseline", v_predicted_states, data_path)
         validate("Tensor (Cached) vs Baseline", tc_predicted_states, data_path)
         validate("C++ vs Baseline", cpp_predicted_states, data_path)
@@ -67,13 +67,13 @@ if __name__ == "__main__":
     elif args.mode == "measure":
         TIME_MEASURE(decode_vanilla_viterbi, hsmm_sleep)
         TIME_MEASURE(decode_log_tensor_viterbi_cached, hsmm_sleep)
-        TIME_MEASURE(decode_tensor_viterbi_cpp, hsmm_sleep)
-        TIME_MEASURE(decode_tensor_viterbi_cuda, hsmm_sleep)
+        TIME_MEASURE(decode_tensor_viterbi_cpp, data_path)
+        #TIME_MEASURE(decode_tensor_viterbi_cuda, data_path)
         measure_baseline(data_path)
 
     elif args.mode == "benchmark":
         TIME_BENCHMARK(decode_vanilla_viterbi, hsmm_sleep, csv_path="viterbi_benchmark.csv", iterations=10)
         TIME_BENCHMARK(decode_log_tensor_viterbi_cached, hsmm_sleep, csv_path="viterbi_benchmark.csv", iterations=10)
-        TIME_BENCHMARK(decode_tensor_viterbi_cpp, hsmm_sleep, csv_path="viterbi_benchmark.csv", iterations=10)
-        TIME_BENCHMARK(decode_tensor_viterbi_cuda, hsmm_sleep, csv_path="viterbi_benchmark.csv", iterations=10)
+        TIME_BENCHMARK(decode_tensor_viterbi_cpp, data_path, csv_path="viterbi_benchmark.csv", iterations=10)
+        #TIME_BENCHMARK(decode_tensor_viterbi_cuda, data_path, csv_path="viterbi_benchmark.csv", iterations=10)
         benchmark_baseline(data_path, csv_path="viterbi_benchmark.csv", iterations=10)
