@@ -21,8 +21,10 @@ target_include_directories(_native PRIVATE src/src)
 
 target_compile_options(_native PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-O3 -Wall -Wextra -Wno-unused-parameter>
-    $<$<COMPILE_LANGUAGE:CUDA>:-O3 -Xcompiler "-Wall -Wextra -Wno-unused-parameter">
+    $<$<COMPILE_LANGUAGE:CUDA>:-O3 -Xcompiler=-Wall,-Wextra,-Wno-unused-parameter>
 )
 
-# Install the extension inside the Python package
-install(TARGETS _native DESTINATION tensor_viterbi/viterbi)
+# Drop the .so directly into the Python package — no install step needed
+set_target_properties(_native PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/tensor_viterbi/viterbi
+)

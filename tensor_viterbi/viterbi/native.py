@@ -8,12 +8,13 @@ if TYPE_CHECKING:
     from tensor_viterbi.hsmm import HSMM
 
 try:
-    from ._native import (
+    from tensor_viterbi._native import (
         decode_tensor_viterbi_cpp as _decode_cpp,
         decode_tensor_viterbi_cuda as _decode_cuda,
     )
     _NATIVE_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    print(f"[native] ImportError: {e}")
     _NATIVE_AVAILABLE = False
 
 
