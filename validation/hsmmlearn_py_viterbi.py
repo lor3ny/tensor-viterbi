@@ -260,7 +260,7 @@ def benchmark_baseline_py(json_file: str, csv_path="benchmark.csv", iterations=1
 
 def measure_baseline_py(json_file: str):
     tau, J, M, log_d, log_p, log_pi, log_pdf = load_data(json_file)
-    start_time = time.time()
+    start_time = time.perf_counter()
     decoded_states = ViterbiImpl(tau, J, M, log_d, log_p, log_pi, log_pdf)
     elapsed = time.perf_counter() - start_time
     print(f"Execution time of HSMMLearn Python: {elapsed:.4f} seconds")

@@ -5,6 +5,23 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
 
 # ── pybind11 ──────────────────────────────────────────────────────────────── #
+# 1. Run the python command to find the pybind11 CMake directory
+execute_process(
+    COMMAND python -c "import pybind11; print(pybind11.get_cmake_dir())"
+    OUTPUT_VARIABLE PYBIND11_CMAKE_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE PYBIND11_FIND_RESULT
+)
+
+# 2. Check if the command succeeded
+if(NOT PYBIND11_FIND_RESULT EQUAL 0)
+    message(FATAL_ERROR "Could not find pybind11 via python. Is it installed?")
+endif()
+
+# 3. Tell CMake to look in that specific directory
+set(pybind11_DIR ${PYBIND11_CMAKE_DIR})
+
+# 4. Now find_package will work!
 find_package(pybind11 CONFIG REQUIRED)
 
 # ── CUDA architecture (A100 @ CINECA Leonardo) ───────────────────────────── #

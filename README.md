@@ -55,6 +55,13 @@ tensor-viterbi/
 
 ### Installation
 
+The library is designed to run on HPC clusters. Since some systems require manual module loading while others require specific path configurations for CUDA and GCC, we recommend a two-step setup: first, load the necessary modules (specifically Python, GCC, and CUDA); then, use a virtual environment to manage your pip packages.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
 #### Python only (no C++/CUDA)
 
 ```bash
@@ -68,6 +75,7 @@ from tensor_viterbi import HSMM, decode_log_tensor_viterbi_cached
 ```
 
 #### With C++/CUDA extension (CMake)
+
 
 **1. Install pybind11**
 
