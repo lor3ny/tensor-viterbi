@@ -291,7 +291,6 @@ std::vector<int> HSMM::backtracking_termination(const std::vector<double>& delta
  
 std::vector<int> HSMM::decode_tensor_viterbi()
 {
-    // CPU-side data structures
     const int T = T_;
     const int N = N_;
     const int D = D_;
@@ -304,13 +303,11 @@ std::vector<int> HSMM::decode_tensor_viterbi()
 
 
     // ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── //
-    // Python: PAST_DELTA[d, n] = duration_probs[d, n] + start_probs[n]
     std::vector<double> PAST_DELTA(D * N);
     for (int d = 0; d < D; ++d)
         for (int n = 0; n < N; ++n)
             PAST_DELTA[d*N + n] = duration_probs_[n*D + d] + start_probs_[n];
 
-    // Python: cum_emission[t, n] = cumsum(emission_probs[obs_seq[:D], :], axis=0)
     std::vector<double> CUM_EMISSION(D * N, 0.0);
     for (int d = 0; d < D; ++d) {
         int obs = obs_seq_[d];
@@ -335,16 +332,11 @@ std::vector<int> HSMM::decode_tensor_viterbi()
                 AP[d * N*N + j*N + i] = trans_mat_[j*N + i] + duration_probs_[j*D + d];
 
     // ── PHASE 2 — Induction (t >= 1) ─────────────────────────────────────────── //
-    // Per ogni stato corrente j, troviamo il miglior (d, i_prev) tale che:
-    //   score(j, d, i) = EMISSION_PROBS[d,j] + PAST_DELTA[d,i] + AP[d,j,i]
-
-
     for (int t = 1; t < T; ++t) {
 
         const int tau = std::min(t, D);   // d valido: 0 .. tau-1
 
         // ── 1. Emission Tensor  ("Produttoria") ─────────────────────────────── //
-        // EMISSION_PROBS[d*N + n] = Σ_{k=0}^{d} emission_probs[obs_seq[t-k], n]
         for (int n = 0; n < N; ++n) {
             double new_em = emission_probs_[obs_seq_[t] * N + n];
             for (int d = tau-1; d >= 1; --d)
@@ -353,7 +345,6 @@ std::vector<int> HSMM::decode_tensor_viterbi()
         }
 
         // ── 2. Past Delta Tensor ────────────────────────────────────────────── //
-        // PAST_DELTA[d*N + n] = delta[(t-1-d)*N + n]   (finestra rovesciata)
         for (int d = 0; d < tau; ++d)
             for (int n = 0; n < N; ++n)
                 PAST_DELTA[d * N + n] = delta[(t - 1 - d) * N + n];
@@ -436,7 +427,7 @@ void HSMM::hsmm_free_gpu(
     d_obs_seq        = nullptr;
 }
 
-std::vector<int> HSMM::decode_tensor_viterbi_cuda(double* kernel_ms)
+std::vector<int> HSMM::decode_tensor_viterbi_cuda()
 {
     // CPU-side data structures
     const int T = T_;
@@ -452,8 +443,9 @@ std::vector<int> HSMM::decode_tensor_viterbi_cuda(double* kernel_ms)
     double* d_emission_probs = nullptr;
     double* d_start_probs    = nullptr;
     double* d_duration_probs = nullptr;
-    int*    d_obs_seq        = nullptr;
-    
+    int*    d_obs_seq        = nullptr;    
+    hsmm_to_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
+
     double* d_delta = nullptr;
     double* d_AP = nullptr;
     double* d_emissions = nullptr;
@@ -474,13 +466,8 @@ std::vector<int> HSMM::decode_tensor_viterbi_cuda(double* kernel_ms)
     CUDA_CHECK(cudaMalloc(&d_em[1], D * N * sizeof(double)));
 
     // Load data to GPU
-    hsmm_to_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
-
-    auto start = std::chrono::high_resolution_clock::now();
 
     // * ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── //
-    nvtx_push("phase1_init", NVTX_GREEN);    
-
     std::vector<double> PAST_DELTA(D * N);
     for (int d = 0; d < D; ++d)
         for (int n = 0; n < N; ++n)
@@ -506,19 +493,12 @@ std::vector<int> HSMM::decode_tensor_viterbi_cuda(double* kernel_ms)
     CUDA_CHECK(cudaMemcpy(d_delta, delta.data(), N * T * sizeof(double), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_delta_dur, delta_dur.data(), N * T * sizeof(int), cudaMemcpyHostToDevice)); // initialize to 1
 
-    nvtxRangePop();  // phase1_init
 
     // * ── AP: (D x N x N) ──────────────────────────────────────────────────── //
-    nvtxRangePushA("kernel_AP");
-
-    // limit: N*N <= 1024 (max threads per block) -> N <= 32
-    kernel_compute_AP<<<dim3(D), dim3(N,N)>>>(d_trans_mat, d_duration_probs, d_AP, N, D); 
+    kernel_compute_AP<<<dim3(N,N), dim3(D)>>>(d_trans_mat, d_duration_probs, d_AP, N, D); 
     CUDA_CHECK(cudaGetLastError());
 
-    nvtxRangePop();
-
     // * ── PHASE 2 — Induction (t >= 1) ─────────────────────────────────────────── //
-    nvtx_push("phase2_induction", NVTX_BLUE);
     run_induction(
         d_delta, d_AP,
         d_emission_probs, d_obs_seq,
@@ -526,26 +506,15 @@ std::vector<int> HSMM::decode_tensor_viterbi_cuda(double* kernel_ms)
         d_best_state_ji, d_best_d_ji,
         d_delta_state, d_delta_dur,
         T, N, D);
-    nvtxRangePop();
     
-    CUDA_CHECK(cudaDeviceSynchronize());
-    nvtxRangePop();
-
     // Retrieve data from GPU
-    nvtx_push("memcpy_to_host", NVTX_RED);
     CUDA_CHECK(cudaMemcpy(delta.data(), d_delta, N * T * sizeof(double), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(delta_state.data(), d_delta_state, N * T * sizeof(int), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(delta_dur.data(), d_delta_dur, N * T * sizeof(int), cudaMemcpyDeviceToHost));
-    nvtxRangePop();
 
     // * ── Backtracking ─────────────────────────────────────────── //
-    nvtx_push("backtracking", NVTX_GREEN);
     std::vector<int> path = backtracking_termination(delta, delta_state, delta_dur, T);
-    nvtxRangePop();
 
-    auto end = std::chrono::high_resolution_clock::now();
-    *kernel_ms = std::chrono::duration<double>(end - start).count();
-    
     // Free GPU Memory
     hsmm_free_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
     CUDA_CHECK(cudaFree(d_delta));
@@ -593,13 +562,11 @@ void HSMM::run_induction(
             &N, &D, &T
         };
 
-        nvtx_push("kernel_persistent", NVTX_ORANGE);
         cudaLaunchCooperativeKernel(
             (void*)kernel_persistent,
             dim3(N, N), dim3(block_size),
             args, shmem);
         CUDA_CHECK(cudaGetLastError());
-        nvtxRangePop();
 
     } else {
         std::cout << "[Induction] fallback: kernel separati\n";
@@ -609,30 +576,22 @@ void HSMM::run_induction(
 
             const int nxt = 1 - cur;
 
-            // [V1] - Sequential Reduction
-            // int bs = tau;
-            // size_t shmem =  tau * (sizeof(double) + sizeof(int));  // sh_val | sh_d
-
             // [V2] - Parallel Reduction
             int bs = 1;
             while (bs < tau) bs <<= 1;
             const size_t sm = bs * (sizeof(double) + sizeof(int));
 
-            nvtx_push("kernel_induction", NVTX_ORANGE);
             kernel_induction<<<dim3(N, N), dim3(bs), sm>>>(
                 d_obs_seq, d_emission_probs, d_delta, d_AP,
                 d_em[cur], d_em[nxt],
                 d_best_state_ji, d_best_d_ji, N, D, tau, t);
             CUDA_CHECK(cudaGetLastError());
-            nvtxRangePop();
 
-            nvtx_push("kernel_reduce_i", NVTX_PURPLE);
             kernel_reduce_i<<<1, N>>>(
                 d_best_state_ji, d_best_d_ji,
                 d_delta, d_delta_state, d_delta_dur,
                 N, D, t);
             CUDA_CHECK(cudaGetLastError());
-            nvtxRangePop();
 
             cur = nxt;
         }

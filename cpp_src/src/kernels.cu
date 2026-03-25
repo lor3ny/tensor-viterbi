@@ -11,9 +11,9 @@ __global__ void kernel_compute_AP(
     double*                    AP,
     int N, int D)
 {
-    int j = threadIdx.x;   // stato destinazione
-    int i = threadIdx.y;   // stato sorgente
-    int d = blockIdx.x;    // durata
+    const int j = blockIdx.x;    // stato corrente
+    const int i = blockIdx.y;    // stato precedente
+    const int d = threadIdx.x;   // durata | [V2] d va da 0 a blockDim.x-1 (potenza di 2)
 
     if (i >= N || j >= N || d >= D) return;
 
@@ -33,7 +33,7 @@ __global__ void kernel_induction(
 {
     const int j = blockIdx.x;    // stato corrente
     const int i = blockIdx.y;    // stato precedente
-    const int d = threadIdx.x;   // durata | [V2] d va da 0 a blockDim.x-1 (potenza di 2)
+    const int d = threadIdx.x;   // [V1] 0 ... tau-1 | [V2] 0 ... blockDim.x-1 (potenza di 2)
 
 
     // ── [V1] shared memory: solo riduzione ────────────────────────────────────── //
@@ -95,7 +95,7 @@ __global__ void kernel_induction(
 
     long long t1 = clock64();
 
-        if (d < tau) {
+    if (d < tau) {
         sh_val[d] = em_val
                   + delta[(t - 1 - d) * N + i]
                   + AP[d * N*N + j*N + i];
@@ -138,8 +138,8 @@ __global__ void kernel_induction(
     //     __syncthreads();
     // }
 
-    // [V3] Same as V2, but with intra-warp optimization (no __syncthreads() when stride<32) //
-    // ── cross-warp: serve __syncthreads() ───────────────────── //
+    // [V3] Same as V2, but with intra-warp optimization //
+    // ── cross-warp ───────────────────── //
     for (int stride = blockDim.x >> 1; stride >= 32; stride >>= 1) {
         if (d < stride) {
             double other_val = sh_val[d + stride];
@@ -152,7 +152,7 @@ __global__ void kernel_induction(
         __syncthreads();
     }
 
-    // ── intra-warp: __syncwarp() ───────────────────────────── //
+    // ── intra-warp ───────────────────────────── //
     if (d < 32) {
     for (int stride = min(16, (int)(blockDim.x >> 1)); stride > 0; stride >>= 1) {
             if (d < stride) {
@@ -177,9 +177,9 @@ __global__ void kernel_induction(
     long long t3 = clock64();
 
     // [DEBUG]
-    if (d == 0 && j == 0 && i == 0 && (t >= 200 && t < 205)) {
-        printf("emission: %lld, score: %lld, reduction: %lld (cycles)\n", t1-t0, t2-t1, t3-t2);
-    }
+    // if (d == 0 && j == 0 && i == 0 && (t >= 200 && t < 205)) {
+    //     printf("emission: %lld, score: %lld, reduction: %lld (cycles)\n", t1-t0, t2-t1, t3-t2);
+    // }
 }
 
 
@@ -350,12 +350,7 @@ __global__ void kernel_persistent(
         long long s2 = clock64();
 
         // [DEBUG]
-        // if (t == 50 && i == 0 && d == 0 && j < 3) {
-        //     printf("persistent t=50 j=%d delta=%.6f state=%d dur=%d\n",
-        //         j, delta[50*N+j], delta_state[50*N+j], delta_dur[50*N+j]);
-        // }
-
-        if ((t >= 200 && t < 205) && j == 0 && i == 0 && d == 0)
-            printf("grid.sync 1: %lld  grid.sync 2: %lld\n", s1-s0, s2-s1);
+        // if ((t >= 200 && t < 205) && j == 0 && i == 0 && d == 0)
+        //     printf("grid.sync 1: %lld  grid.sync 2: %lld\n", s1-s0, s2-s1);
     }
 }

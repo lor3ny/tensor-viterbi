@@ -77,7 +77,7 @@ public:
     std::vector<int> decode_tensor_viterbi();
 
 
-    std::vector<int> decode_tensor_viterbi_cuda(double* kernel_ms);
+    std::vector<int> decode_tensor_viterbi_cuda();
 
     void run_induction(
         double* d_delta, const double* d_AP,
