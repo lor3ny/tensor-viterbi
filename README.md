@@ -46,13 +46,12 @@ tensor-viterbi/
 - Python >= 3.10
 - numpy
 - deprecated
-  
-#### (optional) if you want also native versions:
-- CUDA toolkit *>=* 12.0
-- pybind11 *>=* 2.12 
-- scikit-build-core *>=* 0.9
 
-
+#### (optional) for C++/CUDA native versions:
+- CUDA toolkit >= 12.0
+- pybind11 >= 2.12
+- CMake >= 3.18
+- GCC matching your Python environment (see note below)
 
 ### Installation
 
@@ -62,27 +61,31 @@ tensor-viterbi/
 pip install numpy deprecated
 ```
 
-Then import directly, the native extension is optional and gracefully skipped if not built:
+The native extension is optional and gracefully skipped if not built:
 
 ```python
 from tensor_viterbi import HSMM, decode_log_tensor_viterbi_cached
 ```
 
-#### With C++/CUDA extension
+#### With C++/CUDA extension (CMake)
 
-**1. Install build dependencies**
-
-```bash
-pip install scikit-build-core pybind11
-```
-
-**2. Build and install in editable mode**
+**1. Install pybind11**
 
 ```bash
-pip install -e .
+pip install pybind11
 ```
 
-This runs CMake, compiles `src/bindings.cpp` + the CUDA kernels, and places `_native.so` inside `tensor_viterbi/viterbi/`.
+**2. Build with CMake**
+
+```bash
+cmake -B build
+cmake --build build
+```
+
+The `.so` is placed directly into `tensor_viterbi/viterbi/` — no install step needed.
+
+- FIXING: Some errors with Anaconda GCC
+- FIXING: it doesn't find pybind path sometime
 
 **3. (Optional) Build the standalone C++ executable**
 
@@ -92,8 +95,6 @@ make            # produces ./tensor-viterbi
 make debug      # debug build
 make clean
 ```
-
-> The Makefile targets NVIDIA A100 (`sm_80`). Edit `ARCH` in `src/Makefile` or `CMAKE_CUDA_ARCHITECTURES` in `CMakeLists.txt` for other GPUs.
 
 
 
