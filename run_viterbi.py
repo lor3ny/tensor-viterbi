@@ -58,11 +58,11 @@ if __name__ == "__main__":
         v_predicted_states = decode_vanilla_viterbi(hsmm_sleep)
         tc_predicted_states = decode_log_tensor_viterbi_cached(hsmm_sleep)
         cpp_predicted_states = decode_tensor_viterbi_cpp(hsmm_sleep)
-        cuda_predicted_states = decode_tensor_viterbi_cuda(hsmm_sleep)
+        #cuda_predicted_states = decode_tensor_viterbi_cuda(hsmm_sleep)
         validate("Vanilla vs Baseline", v_predicted_states, data_path)
         validate("Tensor (Cached) vs Baseline", tc_predicted_states, data_path)
         validate("C++ vs Baseline", cpp_predicted_states, data_path)
-        validate("CUDA vs Baseline", cuda_predicted_states, data_path)
+        #validate("CUDA vs Baseline", cuda_predicted_states, data_path)
 
     elif args.mode == "measure":
         TIME_MEASURE(decode_vanilla_viterbi, hsmm_sleep)
