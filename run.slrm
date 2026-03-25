@@ -1,0 +1,29 @@
+#!/bin/bash
+#SBATCH --job-name=tensor-viterbi
+#SBATCH --output=tensor_viterbi_%j.out
+#SBATCH --error=tensor_viterbi_%j.err
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --time=01:00:00
+#SBATCH --account=IscrC_FOCAL
+#SBATCH --partition=boost_usr_prod
+
+module purge
+module load gcc
+module load python
+module load cuda
+
+
+export CC=$(which gcc)
+export CXX=$(which g++)
+
+# Verify
+gcc --version
+$CC --version
+
+source /leonardo/home/userexternal/lpiarull/fast-viterbi/hsmmlearn/.venv/bin/activate
+
+cd /leonardo/home/userexternal/lpiarull/fast-viterbi
+
+python run_viterbi.py -m measure -dp data/20states_1000steps_20dur.json
