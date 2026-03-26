@@ -465,37 +465,16 @@ std::vector<int> HSMM::decode_tensor_viterbi_cuda()
     CUDA_CHECK(cudaMalloc(&d_em[0], D * N * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_em[1], D * N * sizeof(double)));
 
-    // Load data to GPU
+    // * ── PHASE 1 — Initialization (0 <= t < D) & AP ────────────────────────────── //
 
-    // * ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── //
-    std::vector<double> PAST_DELTA(D * N);
-    for (int d = 0; d < D; ++d)
-        for (int n = 0; n < N; ++n)
-            PAST_DELTA[d*N + n] = duration_probs_[n*D + d] + start_probs_[n];
-
-    std::vector<double> CUM_EMISSION(D * N, 0.0);
-    for (int t = 0; t < D; ++t) {
-        int obs = obs_seq_[t];
-        for (int n = 0; n < N; ++n) {
-            double prev = (t > 0) ? CUM_EMISSION[(t-1)*N + n] : 0.0;
-            CUM_EMISSION[t*N + n] = prev + emission_probs_[obs*N + n];
-        }
-    }
-
-    for (int t = 0; t < D; ++t){
-        for (int n = 0; n < N; ++n){
-            delta[t*N + n] = PAST_DELTA[t*N + n] + CUM_EMISSION[t*N + n];
-            delta_dur  [t*N + n] = t + 1;
-        }
-    }
-
-    // ! temporaneo: copia DELTA su GPU (per ora delta è solo CPU, ma in futuro sarà direttamente in global)
-    CUDA_CHECK(cudaMemcpy(d_delta, delta.data(), N * T * sizeof(double), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_delta_dur, delta_dur.data(), N * T * sizeof(int), cudaMemcpyHostToDevice)); // initialize to 1
-
-
-    // * ── AP: (D x N x N) ──────────────────────────────────────────────────── //
-    kernel_compute_AP<<<dim3(N,N), dim3(D)>>>(d_trans_mat, d_duration_probs, d_AP, N, D); 
+    size_t sm = D * sizeof(double);
+    kernel_initialization<<<dim3(N,N), dim3(D), sm>>>(
+        d_start_probs, d_duration_probs,
+        d_emission_probs, d_obs_seq,
+        d_delta, d_delta_dur,
+        d_trans_mat, d_AP,
+        N, D
+    );
     CUDA_CHECK(cudaGetLastError());
 
     // * ── PHASE 2 — Induction (t >= 1) ─────────────────────────────────────────── //
@@ -538,7 +517,7 @@ void HSMM::run_induction(
     int* d_delta_state, int* d_delta_dur,
     int T, int N, int D)
 {
-    // ── calcola block_size per il caso stazionario (tau = D) ─────────────── //
+    // ── max block size (rounding D to nearest power of 2) ─────────────── //
     int block_size = 1;
     while (block_size < D) block_size <<= 1;
     const size_t shmem = block_size * (sizeof(double) + sizeof(int));

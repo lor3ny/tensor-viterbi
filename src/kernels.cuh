@@ -2,6 +2,18 @@
 
 #include <cuda_runtime.h>
 
+// ── Initialization kernel ────────────────────────────────────────────────────────────── //
+
+__global__ void kernel_initialization(
+        const double* __restrict__ d_start_probs,
+        const double* __restrict__ d_duration_probs,
+        const double* __restrict__ d_emission_probs, 
+        const int*    __restrict__ d_obs_seq,
+        double* d_delta, int* d_delta_dur,
+        const double* __restrict__ d_trans_mat,
+        double* d_AP,
+        int N, int D);
+
 // ── AP kernel ────────────────────────────────────────────────────────────── //
 
 __global__ void kernel_compute_AP(

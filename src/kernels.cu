@@ -5,6 +5,44 @@
 
 namespace cg = cooperative_groups;
 
+
+__global__ void kernel_initialization(
+        const double* __restrict__ start_probs,
+        const double* __restrict__ duration_probs,
+        const double* __restrict__ emission_probs, 
+        const int*    __restrict__ obs_seq,
+        double* delta, int* delta_dur,
+        const double* __restrict__ trans_mat,
+        double* AP, int N, int D)
+{
+    const int j = blockIdx.x;    // stato corrente
+    const int i = blockIdx.y;    // stato precedente
+    const int d = threadIdx.x;   // durata 
+
+    if (i >= N || j >= N || d >= D) return;
+
+    // AP
+    AP[d*N*N + i*N + j] = trans_mat[i*N + j] + duration_probs[i*D + d];
+
+    // ── Phase 1 — solo un blocco per stato (i==0 arbitrario) ─────────── //
+    if (i != 0) return;
+
+    // ── Emissions ────────────────────────── //
+    extern __shared__ double sh_em[];
+    sh_em[d] = emission_probs[obs_seq[d] * N + j];
+    __syncthreads();
+
+    // Prefix sum sequenziale — thread d somma sh_em[0..d]
+    double emissions = 0.0;
+    for (int k = 0; k <= d; ++k)
+        emissions += sh_em[k];
+
+    delta    [d * N + j] = duration_probs[j * D + d] + start_probs[j] + emissions;
+    delta_dur[d * N + j] = d + 1;
+
+}
+
+
 __global__ void kernel_compute_AP(
     const double* __restrict__ trans_mat,
     const double* __restrict__ duration_probs,
@@ -13,7 +51,7 @@ __global__ void kernel_compute_AP(
 {
     const int j = blockIdx.x;    // stato corrente
     const int i = blockIdx.y;    // stato precedente
-    const int d = threadIdx.x;   // durata | [V2] d va da 0 a blockDim.x-1 (potenza di 2)
+    const int d = threadIdx.x;   // durata 
 
     if (i >= N || j >= N || d >= D) return;
 
