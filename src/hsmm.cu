@@ -6,16 +6,9 @@
 
 #include <cuda.h>
 #include <cuda_runtime.h>
-#include <nvtx3/nvToolsExt.h>
 #include <cooperative_groups.h>
 
 #define SMOOTHNESS 1e-30
-
-#define NVTX_BLUE    0xFF2196F3
-#define NVTX_GREEN   0xFF4CAF50
-#define NVTX_ORANGE  0xFFFF9800
-#define NVTX_RED     0xFFF44336
-#define NVTX_PURPLE  0xFF9C27B0
 
 #define CUDA_CHECK(call)                                                        \
     do {                                                                        \
@@ -27,17 +20,6 @@
         }                                                                       \
     } while (0)
 
-inline void nvtx_push(const char* label, uint32_t color) {
-    nvtxEventAttributes_t attr;
-    memset(&attr, 0, sizeof(nvtxEventAttributes_t));  // ← zero esplicito
-    attr.version       = NVTX_VERSION;
-    attr.size          = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
-    attr.colorType     = NVTX_COLOR_ARGB;
-    attr.color         = color;
-    attr.messageType   = NVTX_MESSAGE_TYPE_ASCII;
-    attr.message.ascii = label;
-    nvtxRangePushEx(&attr);
-}
 
 bool check_cooperative_launch(const void* kernel, int block_size, size_t shmem, int required_blocks)
 {

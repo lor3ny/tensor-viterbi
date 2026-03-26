@@ -8,22 +8,21 @@
 #SBATCH --time=01:00:00
 #SBATCH --account=IscrC_FOCAL
 #SBATCH --partition=boost_usr_prod
+#SBATCH --gres=gpu:1
 
 module purge
-module load gcc
 module load python
 module load cuda
 
-
-export CC=$(which gcc)
-export CXX=$(which g++)
-
-# Verify
-gcc --version
-$CC --version
-
-source /leonardo/home/userexternal/lpiarull/fast-viterbi/hsmmlearn/.venv/bin/activate
+source /leonardo/home/userexternal/lpiarull/fast-viterbi/.venv/bin/activate
 
 cd /leonardo/home/userexternal/lpiarull/fast-viterbi
 
-python run_viterbi.py -m measure -dp data/20states_1000steps_20dur.json
+python run_viterbi.py --baseline --cuda --cpp -m measure -dp data/32states_1000steps_100dur.json
+
+python run_viterbi.py --baseline --cuda --cpp -m measure -dp data/32states_10000steps_200dur.json
+
+
+python run_viterbi.py --baseline --cuda --cpp -m measure -dp data/64states_1000steps_100dur.json
+
+python run_viterbi.py --baseline --cuda --cpp -m measure -dp data/64states_10000steps_200dur.json

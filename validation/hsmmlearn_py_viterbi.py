@@ -235,7 +235,7 @@ def validate_py(title_str: str, computed_states: np.ndarray, json_file: str):
     decoded_states = ViterbiImpl(tau, J, M, log_d, log_p, log_pi, log_pdf)
 
     acc = compute_accuracy(decoded_states, computed_states)
-    print(f"{title_str} Accuracy - {acc:.2%}") 
+    print(f"\n{title_str} Accuracy - {acc:.2%}\n") 
 
 
 def benchmark_baseline_py(json_file: str, csv_path="benchmark.csv", iterations=100,):
@@ -255,7 +255,7 @@ def benchmark_baseline_py(json_file: str, csv_path="benchmark.csv", iterations=1
         for i, t in enumerate(times):
             writer.writerow(["HSMMLearn_Python", i, f"{t:.6f}"])
 
-    print(f"HSMMLearn C++: avg={sum(times)/len(times):.4f}s  min={min(times):.4f}s  max={max(times):.4f}s")
+    print(f"\nHSMMLearn C++: avg={sum(times)/len(times):.4f}s  min={min(times):.4f}s  max={max(times):.4f}s\n")
     return
 
 def measure_baseline_py(json_file: str):
@@ -263,5 +263,5 @@ def measure_baseline_py(json_file: str):
     start_time = time.perf_counter()
     decoded_states = ViterbiImpl(tau, J, M, log_d, log_p, log_pi, log_pdf)
     elapsed = time.perf_counter() - start_time
-    print(f"Execution time of HSMMLearn Python: {elapsed:.4f} seconds")
-    return
+    print(f"\nExecution time of HSMMLearn Python: {elapsed:.4f} seconds\n")
+    return elapsed

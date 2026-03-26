@@ -316,7 +316,7 @@ if __name__ == "__main__":
     dur   = _random_duration(J, M, rng)
     obs   = _random_obs(T, E, rng)
 
-    out_path = args.out or f"data/{J}states_{T}steps_{M}dur.json"
+    out_path = args.out or f"{J}states_{T}steps_{M}dur.json"
 
     generate_hmm_input(
         n_states       = J,

@@ -14,6 +14,13 @@ Tensor Hidden Semi-Markov Model (HSMM) Viterbi decoding in Python, C++, and CUDA
 | `decode_tensor_viterbi` | ⚠️ Deprecated | Linear-space tensor, underflows after ~370 timesteps |
 
 
+## Actual Issues
+
+- Leonardo: issues on path, if we use default GCC 8.5.0 everything works. If I load GCC 12.2 as a module, it compiles well but it execute using GCC 8.5.0 runtime causing crash.
+
+- Marenostrum:?
+
+- Alps: 
 
 ## Repo Structure
 
@@ -47,6 +54,7 @@ tensor-viterbi/
 - numpy
 - deprecated
 
+
 #### (optional) for C++/CUDA native versions:
 - CUDA toolkit >= 12.0
 - pybind11 >= 2.12
@@ -60,6 +68,16 @@ The library is designed to run on HPC clusters. Since some systems require manua
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+```
+
+#### Validation Requirements
+
+Oour implementation is validated against the hsmmlearn repository by jvkersch, if you want to use our validation scripts you need to clone the repo in the main folder. Just use the following command:
+
+```bash
+git clone https://github.com/jvkersch/hsmmlearn.git
+cd hsmmlearn
+pip install .
 ```
 
 #### Python only (no C++/CUDA)
@@ -118,7 +136,7 @@ hsmm = HSMM.load_model("data/20states_1000steps_20dur.json")
 path = decode_log_tensor_viterbi_cached(hsmm)
 ```
 
-### CLI runner
+### Testing
 
 ```bash
 # Validate against hsmmlearn baseline
