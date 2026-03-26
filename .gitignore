@@ -46,3 +46,4 @@ build/*
 .venv/*
 *.cmake
 CMakeCache.*
+hsmmlearn/*

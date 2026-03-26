@@ -92,7 +92,7 @@ def benchmark_baseline(json_file: str, csv_path="benchmark.csv", iterations=100,
         for i, t in enumerate(times):
             writer.writerow(["HSMMLearn_CPP", i, f"{t:.6f}"])
 
-    print(f"HSMMLearn C++: avg={sum(times)/len(times):.4f}s  min={min(times):.4f}s  max={max(times):.4f}s")
+    print(f"\nHSMMLearn C++: avg={sum(times)/len(times):.4f}s  min={min(times):.4f}s  max={max(times):.4f}s\n")
     return
 
 def measure_baseline(json_file: str):
@@ -100,8 +100,8 @@ def measure_baseline(json_file: str):
     start_time = time.perf_counter()
     decoded_states = model.decode(obs_seq)
     elapsed = time.perf_counter() - start_time
-    print(f"Execution time of HSMMLearn C++: {elapsed:.4f} seconds")
-    return
+    print(f"\nExecution time of HSMMLearn C++: {elapsed:.4f} seconds\n")
+    return elapsed
 
 def validate(title_str: str, computed_states: np.ndarray, json_file: str, print_states: bool = False):
     model, obs_seq = load_sleep_model_hsmmlearn(json_file)
@@ -112,4 +112,4 @@ def validate(title_str: str, computed_states: np.ndarray, json_file: str, print_
         print(f'HSMMLearn Decoded States: {decoded_states}')
         
     acc = compute_accuracy(decoded_states, computed_states)
-    print(f"{title_str} Accuracy - {acc:.2%}") 
+    print(f"\n{title_str} Accuracy - {acc:.2%}\n") 
