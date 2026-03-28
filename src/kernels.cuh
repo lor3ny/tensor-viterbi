@@ -12,7 +12,7 @@ __global__ void kernel_initialization(
         double* d_delta, int* d_delta_dur,
         const double* __restrict__ d_trans_mat,
         double* d_AP,
-        int N, int D);
+        int N, int D, int T);
 
     
 // ── Induction kernel ─────────────────────────────────────────────────────── //
@@ -25,7 +25,7 @@ __global__ void kernel_induction(
     double*                    d_em_nxt,   // D×N — emissions iterazione corrente
     double* best_val_ji,   // N×N output
     int*    best_d_ji,     // N×N output
-    int N, int D, int tau, int t);
+    int N, int D, int T, int tau, int t);
 
 
 // ── Reduction kernel su i (argmax) ─────────────────────────────────────── //
@@ -35,7 +35,7 @@ __global__ void kernel_reduce_i(
     double*                    d_delta,       // T×N
     int*                       d_delta_state, // T×N
     int*                       d_delta_dur,   // T×N
-    int N, int D, int t);
+    int N, int D, int T, int t);
 
 
 // ── Persistent kernel (induction + reduction) ───────────────────────────── //

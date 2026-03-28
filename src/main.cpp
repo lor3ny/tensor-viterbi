@@ -29,8 +29,8 @@ void print_result(const int* result, int T) {
 int main() {
     
     // Load model from JSON
-    HSMM model = HSMM("../data/16states_1000steps_100dur.json");
-    // HSMM model = HSMM("../data/32states_100000steps_1000dur.json");
+    // HSMM model = HSMM("../data/16states_1000steps_100dur.json");
+    HSMM model = HSMM("../data/32states_100000steps_1000dur.json");
     // HSMM model = HSMM("../data/64states_100000steps_1000dur.json");
     // HSMM model = HSMM("../data/sleep_data_10states_100000_200.json");
     model.to_log_space();

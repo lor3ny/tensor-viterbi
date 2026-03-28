@@ -13,7 +13,7 @@ __global__ void kernel_initialization(
         const int*    __restrict__ obs_seq,
         double* delta, int* delta_dur,
         const double* __restrict__ trans_mat,
-        double* AP, int N, int D)
+        double* AP, int N, int D, int T)
 {
     const int j = blockIdx.x;    // stato corrente
     const int i = blockIdx.y;    // stato precedente
@@ -37,9 +37,8 @@ __global__ void kernel_initialization(
     for (int k = 0; k <= d; ++k)
         emissions += sh_em[k];
 
-    delta    [d * N + j] = duration_probs[j * D + d] + start_probs[j] + emissions;
-    delta_dur[d * N + j] = d + 1;
-
+    delta    [j*T + d] = duration_probs[j*D + d] + start_probs[j] + emissions;
+    delta_dur[j*T + d] = d + 1;
 }
 
 
@@ -52,7 +51,7 @@ __global__ void kernel_induction(
     double*                    d_em_nxt,   // D×N — emissions iterazione corrente
     double* best_state_ji,   // N×N output
     int*    best_d_ji,     // N×N output
-    int N, int D, int tau, int t)
+    int N, int D, int T, int tau, int t)
 {
     const int j = blockIdx.x;    // stato corrente
     const int i = blockIdx.y;    // stato precedente
@@ -83,7 +82,7 @@ __global__ void kernel_induction(
     //* Brick *//
     if (d < tau) {
         sh_val[d] = em_val
-                  + delta[(t - 1 - d) * N + i]
+                  + delta[i*T + (t-1-d)]
                   + AP[j * N*D + i*D + d];
         sh_d[d] = d;
     } else {
@@ -135,7 +134,7 @@ __global__ void kernel_reduce_i(
     double*                    delta,       // T×N
     int*                       delta_state, // T×N
     int*                       delta_dur,   // T×N
-    int N, int D, int t)
+    int N, int D, int T, int t)
 {
     const int j = threadIdx.x;   // un thread per j
 
@@ -156,11 +155,11 @@ __global__ void kernel_reduce_i(
     }
 
     // ── aggiornamento condizionale su delta ───────────────────────────────── //
-    const bool update = (t >= D) || (best_val > delta[t * N + j]);
+    const bool update = (t >= D) || (best_val > delta[j*T + t]);
     if (update) {
-        delta      [t * N + j] = best_val;
-        delta_state[t * N + j] = best_i;
-        delta_dur  [t * N + j] = best_d + 1;
+        delta      [j*T + t] = best_val;
+        delta_state[j*T + t] = best_i;
+        delta_dur  [j*T + t] = best_d + 1;
     }
 
 }
@@ -211,7 +210,7 @@ __global__ void kernel_persistent(
         //* Brick *//
         if (d < tau) {
             sh_val[d] = em_val
-                      + delta[(t - 1 - d) * N + i]
+                      + delta[i*T + (t-1-d)]
                       + AP[j * N*D + i*D + d];
             sh_d[d] = d;
         } else {
@@ -273,11 +272,11 @@ __global__ void kernel_persistent(
                 }
             }
 
-            const bool update = (t >= D) || (best_val >= delta[t * N + j]);
+            const bool update = (t >= D) || (best_val >= delta[j*T + t]);
             if (update) {
-                delta      [t * N + j] = best_val;
-                delta_state[t * N + j] = best_i;
-                delta_dur  [t * N + j] = best_d + 1;
+                delta      [j*T + t] = best_val;
+                delta_state[j*T + t] = best_i;
+                delta_dur  [j*T + t] = best_d + 1;
             }
         }
 
