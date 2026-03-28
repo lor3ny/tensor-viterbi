@@ -21,11 +21,14 @@ endif()
 # 3. Tell CMake to look in that specific directory
 set(pybind11_DIR ${PYBIND11_CMAKE_DIR})
 
+# Force pybind11 to use the modern FindPython (prevents CMP0148 warning)
+set(PYBIND11_FINDPYTHON ON)
+
 # 4. Now find_package will work!
 find_package(pybind11 CONFIG REQUIRED)
 
-# ── CUDA architecture (A100 @ CINECA Leonardo) ───────────────────────────── #
-set(CMAKE_CUDA_ARCHITECTURES 80)
+# ── CUDA architecture ───────────────────────────── #
+set(CMAKE_CUDA_ARCHITECTURES native)
 
 # ── Native extension: _native.so ─────────────────────────────────────────── #
 pybind11_add_module(_native
