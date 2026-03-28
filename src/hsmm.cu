@@ -237,37 +237,41 @@ std::vector<int> HSMM::backtracking_termination(const std::vector<double>& delta
 {
     std::vector<int> path(T, 0);
 
-    // ── Termination — trova il miglior stato finale ───────────────────────── //
+    // Termination
     int t = T - 1;
     int curr_state = 0;
-    double best_val = delta[t * N_ + 0];
+    double best_val = delta[0*T + t];
     for (int n = 1; n < N_; ++n) {
-        if (delta[t * N_ + n] > best_val) {
-            best_val   = delta[t * N_ + n];
+        if (delta[n*T + t] > best_val) {
+            best_val   = delta[n*T + t];
             curr_state = n;
         }
     }
 
-    // ── Backtracking ──────────────────────────────────────────────────────── //
+    // Backtracking
     while (t >= 0) {
-        int d      = psi_dur  [t * N_ + curr_state];
-        int prev_s = psi_state[t * N_ + curr_state];
-        int start_t = t - d + 1;
-
-        // [DEBUG] Controlli di validità
-        if (d <= 0 || start_t < 0) {
-            std::cerr << "[ERROR] backtracking: d=" << d << " at t=" << t << " state=" << curr_state << "\n";
-            std::cerr << "[ERROR] backtracking: start_t=" << start_t << " at t=" << t << " d=" << d << "\n";
+        int d      = psi_dur  [curr_state*T + t];
+        int prev_s = psi_state[curr_state*T + t];
+ 
+        if (d <= 0) {
+            std::cerr << "[ERROR] backtracking: d=" << d
+                      << " at t=" << t << " state=" << curr_state << "\n";
             break;
         }
-
+        int start_t = t - d + 1;
+        if (start_t < 0) {
+            std::cerr << "[ERROR] backtracking: start_t=" << start_t
+                      << " at t=" << t << " d=" << d << "\n";
+            break;
+        }
+ 
         for (int k = start_t; k <= t; ++k)
             path[k] = curr_state;
-
+ 
         t          = t - d;
         curr_state = prev_s;
     }
-
+ 
     return path;
 }
  
@@ -277,11 +281,12 @@ std::vector<int> HSMM::decode_tensor_viterbi()
     const int N = N_;
     const int D = D_;
 
-    std::vector<double> delta(T * N, SMOOTHNESS);       // delta[t*N + n]
+    // layout N×T: delta[n*T + t]
+    std::vector<double> delta(T * N, SMOOTHNESS);
     std::vector<int>    delta_state(T * N, 0);
     std::vector<int>    delta_dur  (T * N, 1);
-    std::vector<double> score(D * N * N, 0.0);        // score[d*N*N + j*N + i]
     std::vector<double> EMISSION_PROBS(D * N, 0.0);
+    std::vector<double> score(N * N * D, 0.0);
 
 
     // ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── //
@@ -301,17 +306,17 @@ std::vector<int> HSMM::decode_tensor_viterbi()
     
     for (int t = 0; t < D; ++t){
         for (int n = 0; n < N; ++n) {
-            delta      [t*N + n] = PAST_DELTA[t*N + n] + CUM_EMISSION[t*N + n];
-            delta_dur  [t*N + n] = t + 1;
+            delta    [n*T + t] = PAST_DELTA[t*N + n] + CUM_EMISSION[t*N + n];
+            delta_dur[n*T + t] = t + 1;
         }
     }
 
-    // ── AP: (D x N x N) ──────────────────────────────────────────────────── //
-    std::vector<double> AP(D * N * N);
-    for (int d = 0; d < D; ++d)
-        for (int j = 0; j < N; ++j)
-            for (int i = 0; i < N; ++i)
-                AP[d * N*N + j*N + i] = trans_mat_[j*N + i] + duration_probs_[j*D + d];
+    // ── AP: (N x N x D) ──────────────────────────────────────────────────── //
+    std::vector<double> AP(N * N * D);
+    for (int j = 0; j < N; ++j)
+        for (int i = 0; i < N; ++i)
+            for (int d = 0; d < D; ++d)
+                AP[j*N*D + i*D + d] = trans_mat_[j*N + i] + duration_probs_[j*D + d];
 
     // ── PHASE 2 — Induction (t >= 1) ─────────────────────────────────────────── //
     for (int t = 1; t < T; ++t) {
@@ -322,14 +327,14 @@ std::vector<int> HSMM::decode_tensor_viterbi()
         for (int n = 0; n < N; ++n) {
             double new_em = emission_probs_[obs_seq_[t] * N + n];
             for (int d = tau-1; d >= 1; --d)
-                EMISSION_PROBS[d * N + n] = new_em + EMISSION_PROBS[(d-1) * N + n];
-            EMISSION_PROBS[0 * N + n] = new_em;
+                EMISSION_PROBS[d*N + n] = new_em + EMISSION_PROBS[(d-1)*N + n];
+            EMISSION_PROBS[0*N + n] = new_em;
         }
 
         // ── 2. Past Delta Tensor ────────────────────────────────────────────── //
         for (int d = 0; d < tau; ++d)
             for (int n = 0; n < N; ++n)
-                PAST_DELTA[d * N + n] = delta[(t - 1 - d) * N + n];
+                PAST_DELTA[d*N + n] = delta[n*T + (t-1-d)];
 
 
         // ── 3. Argmax su (d, i_prev) per ogni stato corrente j ─────────────── //
@@ -343,7 +348,7 @@ std::vector<int> HSMM::decode_tensor_viterbi()
                 for (int i = 0; i < N; ++i) {
                     const double val = ep
                                     + PAST_DELTA[d * N + i]
-                                    + AP[d * N * N + j * N + i];
+                                     + AP[j*N*D + i*D + d];
                     if (val > best_val) {
                         best_val = val;
                         best_d   = d;
@@ -352,11 +357,11 @@ std::vector<int> HSMM::decode_tensor_viterbi()
                 }
             }
 
-            const bool update = (t >= D) || (best_val > delta[t * N + j]);
+            const bool update = (t >= D) || (best_val > delta[j*T + t]);
             if (update) {
-                delta      [t * N + j] = best_val;
-                delta_state[t * N + j] = best_i;
-                delta_dur  [t * N + j] = best_d + 1;
+                delta      [j*T + t] = best_val;
+                delta_state[j*T + t] = best_i;
+                delta_dur  [j*T + t] = best_d + 1;
             }
         }
     }
@@ -455,7 +460,7 @@ std::vector<int> HSMM::decode_tensor_viterbi_cuda()
         d_emission_probs, d_obs_seq,
         d_delta, d_delta_dur,
         d_trans_mat, d_AP,
-        N, D
+        N, D, T
     );
     CUDA_CHECK(cudaGetLastError());
 
@@ -473,7 +478,7 @@ std::vector<int> HSMM::decode_tensor_viterbi_cuda()
     CUDA_CHECK(cudaMemcpy(delta_state.data(), d_delta_state, N * T * sizeof(int), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(delta_dur.data(), d_delta_dur, N * T * sizeof(int), cudaMemcpyDeviceToHost));
 
-    // * ── Backtracking ─────────────────────────────────────────── //
+    //* Backtracking *//
     std::vector<int> path = backtracking_termination(delta, delta_state, delta_dur, T);
 
     // Free GPU Memory
@@ -537,7 +542,6 @@ void HSMM::run_induction(
 
             const int nxt = 1 - cur;
 
-            // [V2] - Parallel Reduction
             int bs = 1;
             while (bs < tau) bs <<= 1;
             const size_t sm = bs * (sizeof(double) + sizeof(int));
@@ -545,13 +549,13 @@ void HSMM::run_induction(
             kernel_induction<<<dim3(N, N), dim3(bs), sm>>>(
                 d_obs_seq, d_emission_probs, d_delta, d_AP,
                 d_em[cur], d_em[nxt],
-                d_best_state_ji, d_best_d_ji, N, D, tau, t);
+                d_best_state_ji, d_best_d_ji, N, D, T, tau, t);
             CUDA_CHECK(cudaGetLastError());
 
             kernel_reduce_i<<<1, N>>>(
                 d_best_state_ji, d_best_d_ji,
                 d_delta, d_delta_state, d_delta_dur,
-                N, D, t);
+                N, D, T, t);
             CUDA_CHECK(cudaGetLastError());
 
             cur = nxt;
