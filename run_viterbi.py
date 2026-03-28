@@ -105,10 +105,10 @@ if __name__ == "__main__":
             # measure_baseline_py(data_path)
 
 
-        print("\nRunning: Tensor Viterbi (Cached)...\n")
-        _, tc_elapsed = TIME_MEASURE(decode_log_tensor_viterbi_cached, my_hsmm)
-        if baseline_elapsed is not None:
-            print(f"\n  -> speedup vs HSMMLearn C++: {baseline_elapsed / tc_elapsed:.2f}x\n")
+        #print("\nRunning: Tensor Viterbi (Cached)...\n")
+        #_, tc_elapsed = TIME_MEASURE(decode_log_tensor_viterbi_cached, my_hsmm)
+        #if baseline_elapsed is not None:
+        #    print(f"\n  -> speedup vs HSMMLearn C++: {baseline_elapsed / tc_elapsed:.2f}x\n")
 
         if args.cpp:
             print("\nRunning: Tensor Viterbi C++...\n")
@@ -125,8 +125,8 @@ if __name__ == "__main__":
 
     elif args.mode == "benchmark":
 
-        print("\nRunning: Tensor Viterbi (Cached)...\n")
-        TIME_BENCHMARK(decode_log_tensor_viterbi_cached, my_hsmm, csv_path="viterbi_benchmark.csv", iterations=10)
+        #print("\nRunning: Tensor Viterbi (Cached)...\n")
+        #TIME_BENCHMARK(decode_log_tensor_viterbi_cached, my_hsmm, csv_path="viterbi_benchmark.csv", iterations=10)
 
         if args.cpp:
             print("\nRunning: Tensor Viterbi C++...\n")
