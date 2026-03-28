@@ -14,14 +14,6 @@ __global__ void kernel_initialization(
         double* d_AP,
         int N, int D);
 
-// ── AP kernel ────────────────────────────────────────────────────────────── //
-
-__global__ void kernel_compute_AP(
-    const double* __restrict__ trans_mat,
-    const double* __restrict__ duration_probs,
-    double*                    AP,
-    int N, int D);
-
     
 // ── Induction kernel ─────────────────────────────────────────────────────── //
 __global__ void kernel_induction(
