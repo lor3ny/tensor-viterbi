@@ -283,8 +283,8 @@ std::vector<int> HSMM::decode_tensor_viterbi()
 
     // layout N×T: delta[n*T + t]
     std::vector<double> delta(T * N, SMOOTHNESS);
-    std::vector<int>    delta_state(T * N, 0);
-    std::vector<int>    delta_dur  (T * N, 1);
+    std::vector<int>    psi_state(T * N, 0);
+    std::vector<int>    psi_dur  (T * N, 1);
     std::vector<double> EMISSION_PROBS(D * N, 0.0);
     std::vector<double> score(N * N * D, 0.0);
 
@@ -307,7 +307,7 @@ std::vector<int> HSMM::decode_tensor_viterbi()
     for (int t = 0; t < D; ++t){
         for (int n = 0; n < N; ++n) {
             delta    [n*T + t] = PAST_DELTA[t*N + n] + CUM_EMISSION[t*N + n];
-            delta_dur[n*T + t] = t + 1;
+            psi_dur[n*T + t] = t + 1;
         }
     }
 
@@ -360,14 +360,14 @@ std::vector<int> HSMM::decode_tensor_viterbi()
             const bool update = (t >= D) || (best_val > delta[j*T + t]);
             if (update) {
                 delta      [j*T + t] = best_val;
-                delta_state[j*T + t] = best_i;
-                delta_dur  [j*T + t] = best_d + 1;
+                psi_state[j*T + t] = best_i;
+                psi_dur  [j*T + t] = best_d + 1;
             }
         }
     }
 
     // Backtracking
-    std::vector<int> path = backtracking_termination(delta, delta_state, delta_dur, T);
+    std::vector<int> path = backtracking_termination(delta, psi_state, psi_dur, T);
 
     return path;
 }
@@ -422,8 +422,8 @@ std::vector<int> HSMM::decode_tensor_viterbi_cuda()
     const int D = D_;
 
     std::vector<double> delta(T * N, -std::numeric_limits<double>::infinity());
-    std::vector<int>    delta_state(T * N, 0);
-    std::vector<int>    delta_dur  (T * N, 1);
+    std::vector<int>    psi_state(T * N, 0);
+    std::vector<int>    psi_dur  (T * N, 1);
 
     // GPU memory allocation
     double* d_trans_mat      = nullptr;
@@ -438,13 +438,13 @@ std::vector<int> HSMM::decode_tensor_viterbi_cuda()
     double* d_emissions = nullptr;
     double* d_best_state_ji = nullptr;
     int*    d_best_d_ji = nullptr;
-    int*    d_delta_state = nullptr;
-    int*    d_delta_dur = nullptr;
+    int*    d_psi_state = nullptr;
+    int*    d_psi_dur = nullptr;
     CUDA_CHECK(cudaMalloc(&d_delta, N * T * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_best_state_ji, N * N * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_best_d_ji, N * N * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_delta_state, N * T * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_delta_dur, N * T * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_psi_state, N * T * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_psi_dur, N * T * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_AP, D * N * N * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_emissions, D * N * sizeof(double)));
 
@@ -461,7 +461,7 @@ std::vector<int> HSMM::decode_tensor_viterbi_cuda()
     kernel_initialization<<<dim3(N,N), dim3(bs_init), sm>>>(
         d_start_probs, d_duration_probs,
         d_emission_probs, d_obs_seq,
-        d_delta, d_delta_dur,
+        d_delta, d_psi_dur,
         d_trans_mat, d_AP,
         N, D, T
     );
@@ -473,16 +473,16 @@ std::vector<int> HSMM::decode_tensor_viterbi_cuda()
         d_emission_probs, d_obs_seq,
         d_em,
         d_best_state_ji, d_best_d_ji,
-        d_delta_state, d_delta_dur,
+        d_psi_state, d_psi_dur,
         T, N, D);
     
     // Retrieve data from GPU
     CUDA_CHECK(cudaMemcpy(delta.data(), d_delta, N * T * sizeof(double), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(delta_state.data(), d_delta_state, N * T * sizeof(int), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(delta_dur.data(), d_delta_dur, N * T * sizeof(int), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(psi_state.data(), d_psi_state, N * T * sizeof(int), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(psi_dur.data(), d_psi_dur, N * T * sizeof(int), cudaMemcpyDeviceToHost));
 
     //* Backtracking *//
-    std::vector<int> path = backtracking_termination(delta, delta_state, delta_dur, T);
+    std::vector<int> path = backtracking_termination(delta, psi_state, psi_dur, T);
 
     // Free GPU Memory
     hsmm_free_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
@@ -491,8 +491,8 @@ std::vector<int> HSMM::decode_tensor_viterbi_cuda()
     CUDA_CHECK(cudaFree(d_emissions));
     CUDA_CHECK(cudaFree(d_best_state_ji));
     CUDA_CHECK(cudaFree(d_best_d_ji));
-    CUDA_CHECK(cudaFree(d_delta_state));
-    CUDA_CHECK(cudaFree(d_delta_dur));
+    CUDA_CHECK(cudaFree(d_psi_state));
+    CUDA_CHECK(cudaFree(d_psi_dur));
     CUDA_CHECK(cudaFree(d_em[0]));
     CUDA_CHECK(cudaFree(d_em[1]));
 
@@ -504,7 +504,7 @@ void HSMM::run_induction(
     const double* d_emission_probs, const int* d_obs_seq,
     double** d_em,
     double* d_best_state_ji, int* d_best_d_ji,
-    int* d_delta_state, int* d_delta_dur,
+    int* d_psi_state, int* d_psi_dur,
     int T, int N, int D)
 {
     // ── max block size (rounding D to nearest power of 2) ─────────────── //
@@ -527,7 +527,7 @@ void HSMM::run_induction(
             &d_obs_seq, &d_emission_probs, &d_delta, &d_AP,
             &d_em[0], &d_em[1],
             &d_best_state_ji, &d_best_d_ji,
-            &d_delta_state, &d_delta_dur,
+            &d_psi_state, &d_psi_dur,
             &N, &D, &T
         };
 
@@ -557,7 +557,7 @@ void HSMM::run_induction(
 
             kernel_reduce_i<<<1, N>>>(
                 d_best_state_ji, d_best_d_ji,
-                d_delta, d_delta_state, d_delta_dur,
+                d_delta, d_psi_state, d_psi_dur,
                 N, D, T, t);
             CUDA_CHECK(cudaGetLastError());
 

@@ -11,7 +11,7 @@ __global__ void kernel_initialization(
         const double* __restrict__ duration_probs,
         const double* __restrict__ emission_probs,
         const int*    __restrict__ obs_seq,
-        double* delta, int* delta_dur,
+        double* delta, int* psi_dur,
         const double* __restrict__ trans_mat,
         double* AP, int N, int D, int T)
 {
@@ -67,7 +67,7 @@ __global__ void kernel_initialization(
 
     if (d < D) {
         delta    [j*T + d] = duration_probs[j*D + d] + start_probs[j] + val;
-        delta_dur[j*T + d] = d + 1;
+        psi_dur[j*T + d] = d + 1;
     }
 }
 
@@ -76,8 +76,8 @@ __global__ void kernel_induction(
     const double* __restrict__ emission_probs,
     const double* __restrict__ delta,
     const double* __restrict__ AP,
-    const double* __restrict__ d_em_cur,   // D×N — emissions iterazione precedente
-    double*                    d_em_nxt,   // D×N — emissions iterazione corrente
+    const double* __restrict__ em_cur,   // D×N — emissions iterazione precedente
+    double*                    em_nxt,   // D×N — emissions iterazione corrente
     double* best_state_ji,   // N×N output
     int*    best_d_ji,     // N×N output
     int N, int D, int T, int tau, int t)
@@ -101,11 +101,11 @@ __global__ void kernel_induction(
         if (d == 0) {
             em_val = new_em;
         } else {
-            em_val = new_em + d_em_cur[j * D + d - 1];
+            em_val = new_em + em_cur[j * D + d - 1];
         }
         // scrive per t+1 — solo un blocco per j (i=0 è arbitrario, tutti scrivono lo stesso)
         if (i == 0)
-            d_em_nxt[j * D + d] = em_val;
+            em_nxt[j * D + d] = em_val;
     }
 
     //* Brick *//
@@ -167,8 +167,8 @@ __global__ void kernel_reduce_i(
     const double* __restrict__ best_state_ji,   // N×N
     const int*    __restrict__ best_d_ji,     // N×N
     double*                    delta,       // T×N
-    int*                       delta_state, // T×N
-    int*                       delta_dur,   // T×N
+    int*                       psi_state, // T×N
+    int*                       psi_dur,   // T×N
     int N, int D, int T, int t)
 {
     const int j = threadIdx.x;   // un thread per j
@@ -193,8 +193,8 @@ __global__ void kernel_reduce_i(
     const bool update = (t >= D) || (best_val > delta[j*T + t]);
     if (update) {
         delta      [j*T + t] = best_val;
-        delta_state[j*T + t] = best_i;
-        delta_dur  [j*T + t] = best_d + 1;
+        psi_state[j*T + t] = best_i;
+        psi_dur  [j*T + t] = best_d + 1;
     }
 
 }
@@ -210,8 +210,8 @@ __global__ void kernel_persistent(
     double*                    d_em1,
     double*                    best_state_ji,  // N×N — buffer intermedio
     int*                       best_d_ji,    // N×N — buffer intermedio
-    int*                       delta_state,  // T×N
-    int*                       delta_dur,    // T×N
+    int*                       psi_state,  // T×N
+    int*                       psi_dur,    // T×N
     int N, int D, int T)
 {
     cg::grid_group grid = cg::this_grid();
@@ -230,16 +230,16 @@ __global__ void kernel_persistent(
         const int tau = min(t, D);
 
         const int nxt = 1 - cur;
-        double* d_em_cur = (cur == 0) ? d_em0 : d_em1;
-        double* d_em_nxt = (cur == 0) ? d_em1 : d_em0;
+        double* em_cur = (cur == 0) ? d_em0 : d_em1;
+        double* em_nxt = (cur == 0) ? d_em1 : d_em0;
 
         //* Cached Emissions *//
         double em_val = -1e300;
         if (d < tau) {
             const double new_em = emission_probs[obs_seq[t] * N + j];
-            em_val = (d == 0) ? new_em : new_em + d_em_cur[j * D + d - 1];
+            em_val = (d == 0) ? new_em : new_em + em_cur[j * D + d - 1];
             if (i == 0)
-                d_em_nxt[j * D + d] = em_val;
+                em_nxt[j * D + d] = em_val;
         }
 
         //* Brick *//
@@ -316,8 +316,8 @@ __global__ void kernel_persistent(
             const bool update = (t >= D) || (best_val >= delta[j*T + t]);
             if (update) {
                 delta      [j*T + t] = best_val;
-                delta_state[j*T + t] = best_i;
-                delta_dur  [j*T + t] = best_d + 1;
+                psi_state[j*T + t] = best_i;
+                psi_dur  [j*T + t] = best_d + 1;
             }
         }
 
