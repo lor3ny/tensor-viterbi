@@ -106,17 +106,37 @@ __global__ void kernel_induction(
     }
 
     // intra-warp //
+    // if (d < 32) {
+    // for (int stride = min(16, (int)(blockDim.x >> 1)); stride > 0; stride >>= 1) {
+    //         if (d < stride) {
+    //             double other_val = sh_val[d + stride];
+    //             if (other_val > sh_val[d] ||
+    //             (other_val == sh_val[d] && sh_d[d + stride] < sh_d[d])) {
+    //                 sh_val[d] = other_val;
+    //                 sh_d[d]   = sh_d[d + stride];
+    //             }
+    //         }
+    //         __syncwarp();
+    //     }
+    // }
+
     if (d < 32) {
-    for (int stride = min(16, (int)(blockDim.x >> 1)); stride > 0; stride >>= 1) {
-            if (d < stride) {
-                double other_val = sh_val[d + stride];
-                if (other_val > sh_val[d] ||
-                (other_val == sh_val[d] && sh_d[d + stride] < sh_d[d])) {
-                    sh_val[d] = other_val;
-                    sh_d[d]   = sh_d[d + stride];
-                }
+        double reg_val = sh_val[d];
+        int    reg_d   = sh_d[d];
+
+        for (int stride = min(16, (int)(blockDim.x >> 1)); stride > 0; stride >>= 1) {
+            double other_val = __shfl_down_sync(0xffffffff, reg_val, stride);
+            int    other_d   = __shfl_down_sync(0xffffffff, reg_d,   stride);
+            if (other_val > reg_val ||
+            (other_val == reg_val && other_d < reg_d)) {
+                reg_val = other_val;
+                reg_d   = other_d;
             }
-            __syncwarp();
+        }
+        // solo thread 0 scrive il risultato finale in shared
+        if (d == 0) {
+            sh_val[0] = reg_val;
+            sh_d[0]   = reg_d;
         }
     }
 
@@ -235,20 +255,40 @@ __global__ void kernel_persistent(
         }
 
         // ── intra-warp reduction ──────────────────────────────────────────── //
+        // if (d < 32) {
+        //     for (int stride = min(16, (int)(blockDim.x >> 1)); stride > 0; stride >>= 1) {
+        //         if (d < stride) {
+        //             double other_val = sh_val[d + stride];
+        //             if (other_val > sh_val[d] ||
+        //                (other_val == sh_val[d] && sh_d[d + stride] < sh_d[d])) {
+        //                 sh_val[d] = other_val;
+        //                 sh_d[d]   = sh_d[d + stride];
+        //             }
+        //         }
+        //         __syncwarp();
+        //     }
+        // }
+
         if (d < 32) {
+            double reg_val = sh_val[d];
+            int    reg_d   = sh_d[d];
+
             for (int stride = min(16, (int)(blockDim.x >> 1)); stride > 0; stride >>= 1) {
-                if (d < stride) {
-                    double other_val = sh_val[d + stride];
-                    if (other_val > sh_val[d] ||
-                       (other_val == sh_val[d] && sh_d[d + stride] < sh_d[d])) {
-                        sh_val[d] = other_val;
-                        sh_d[d]   = sh_d[d + stride];
-                    }
+                double other_val = __shfl_down_sync(0xffffffff, reg_val, stride);
+                int    other_d   = __shfl_down_sync(0xffffffff, reg_d,   stride);
+                if (other_val > reg_val ||
+                (other_val == reg_val && other_d < reg_d)) {
+                    reg_val = other_val;
+                    reg_d   = other_d;
                 }
-                __syncwarp();
+            }
+            // solo thread 0 scrive il risultato finale in shared
+            if (d == 0) {
+                sh_val[0] = reg_val;
+                sh_d[0]   = reg_d;
             }
         }
-
+            
         if (d == 0) {
             best_state_ji[j * N + i] = sh_val[0];
             best_d_ji  [j * N + i] = sh_d[0];
