@@ -9,38 +9,67 @@ namespace cg = cooperative_groups;
 __global__ void kernel_initialization(
         const double* __restrict__ start_probs,
         const double* __restrict__ duration_probs,
-        const double* __restrict__ emission_probs, 
+        const double* __restrict__ emission_probs,
         const int*    __restrict__ obs_seq,
         double* delta, int* delta_dur,
         const double* __restrict__ trans_mat,
         double* AP, int N, int D, int T)
 {
-    const int j = blockIdx.x;    // stato corrente
-    const int i = blockIdx.y;    // stato precedente
-    const int d = threadIdx.x;   // durata 
+    const int j    = blockIdx.x;
+    const int i    = blockIdx.y;
+    const int d    = threadIdx.x;
 
-    if (i >= N || j >= N || d >= D) return;
+    if (i >= N || j >= N) return;
 
-    //* AP *//
-    AP[j *N*D + i*D + d] = trans_mat[j*N + i] + duration_probs[j*D + d];
-    
-    // ── Phase 1 — solo un blocco per stato (i==0 arbitrario) ─────────── //
+    // ── AP ───────────────────────────────────────────────────────────────── //
+    if (d < D)
+        AP[j*N*D + i*D + d] = trans_mat[j*N + i] + duration_probs[j*D + d];
+
     if (i != 0) return;
 
-    //* Emissions *//
-    extern __shared__ double sh_em[];
-    sh_em[d] = emission_probs[obs_seq[d] * N + j];
-    __syncthreads();
+    const int warp_id   = d / 32;
+    const int lane      = d % 32;
+    const int num_warps = blockDim.x / 32;
 
-    // Prefix sum sequenziale — thread d somma sh_em[0..d]
-    double emissions = 0.0;
-    for (int k = 0; k <= d; ++k)
-        emissions += sh_em[k];
+    extern __shared__ double sh[];
+    double* sh_em        = sh;
+    double* sh_warp_sums = sh + blockDim.x;
 
-    delta    [j*T + d] = duration_probs[j*D + d] + start_probs[j] + emissions;
-    delta_dur[j*T + d] = d + 1;
+    double val = (d < D) ? emission_probs[obs_seq[d] * N + j] : 0.0;
+
+    // ── Level 1 ──────────────────────────────────────────────────────────── //
+    for (int stride = 1; stride < 32; stride <<= 1) {
+        double v = __shfl_up_sync(0xffffffff, val, stride);
+        if (lane >= stride) val += v;
+    }
+
+    sh_em[d] = val;
+    if (lane == 31)
+        sh_warp_sums[warp_id] = val;
+
+    __syncthreads();  // sync 1
+
+    // ── Level 2 ──────────────────────────────────────────────────────────── //
+    if (d < 32) {
+            double ws = (d < num_warps) ? sh_warp_sums[d] : 0.0;
+            for (int stride = 1; stride < 32; stride <<= 1) {
+                double v = __shfl_up_sync(0xffffffff, ws, stride);
+                if (d >= stride) ws += v;
+            }
+            if (d < num_warps)
+                sh_warp_sums[d] = ws;
+        }
+
+        __syncthreads();  // sync 2
+
+    val = (warp_id > 0) ? sh_em[d] + sh_warp_sums[warp_id - 1] : sh_em[d];
+
+
+    if (d < D) {
+        delta    [j*T + d] = duration_probs[j*D + d] + start_probs[j] + val;
+        delta_dur[j*T + d] = d + 1;
+    }
 }
-
 
 __global__ void kernel_induction(
     const int*    __restrict__ obs_seq,
@@ -106,20 +135,6 @@ __global__ void kernel_induction(
     }
 
     // intra-warp //
-    // if (d < 32) {
-    // for (int stride = min(16, (int)(blockDim.x >> 1)); stride > 0; stride >>= 1) {
-    //         if (d < stride) {
-    //             double other_val = sh_val[d + stride];
-    //             if (other_val > sh_val[d] ||
-    //             (other_val == sh_val[d] && sh_d[d + stride] < sh_d[d])) {
-    //                 sh_val[d] = other_val;
-    //                 sh_d[d]   = sh_d[d + stride];
-    //             }
-    //         }
-    //         __syncwarp();
-    //     }
-    // }
-
     if (d < 32) {
         double reg_val = sh_val[d];
         int    reg_d   = sh_d[d];
@@ -254,21 +269,7 @@ __global__ void kernel_persistent(
             __syncthreads();
         }
 
-        // ── intra-warp reduction ──────────────────────────────────────────── //
-        // if (d < 32) {
-        //     for (int stride = min(16, (int)(blockDim.x >> 1)); stride > 0; stride >>= 1) {
-        //         if (d < stride) {
-        //             double other_val = sh_val[d + stride];
-        //             if (other_val > sh_val[d] ||
-        //                (other_val == sh_val[d] && sh_d[d + stride] < sh_d[d])) {
-        //                 sh_val[d] = other_val;
-        //                 sh_d[d]   = sh_d[d + stride];
-        //             }
-        //         }
-        //         __syncwarp();
-        //     }
-        // }
-
+        // ── intra-warp ──────────────────────────────────────────── //
         if (d < 32) {
             double reg_val = sh_val[d];
             int    reg_d   = sh_d[d];

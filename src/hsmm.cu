@@ -454,8 +454,11 @@ std::vector<int> HSMM::decode_tensor_viterbi_cuda()
 
     // * ── PHASE 1 — Initialization (0 <= t < D) & AP ────────────────────────────── //
 
-    size_t sm = D * sizeof(double);
-    kernel_initialization<<<dim3(N,N), dim3(D), sm>>>(
+    int bs_init = 1;
+    while (bs_init < D) bs_init <<= 1;
+    const int num_warps = bs_init / 32;
+    const size_t sm = (bs_init + num_warps) * sizeof(double);
+    kernel_initialization<<<dim3(N,N), dim3(bs_init), sm>>>(
         d_start_probs, d_duration_probs,
         d_emission_probs, d_obs_seq,
         d_delta, d_delta_dur,
