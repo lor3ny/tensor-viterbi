@@ -68,12 +68,22 @@ public:
     // ------------------------------------------------------------------ //
     // Viterbi Algorithm
     // ------------------------------------------------------------------ //
+    
+    std::vector<double> compute_survival_probs() const;
+
+    void tail_adjustment(   std::vector<double>& delta,
+                            std::vector<int>&    psi_state,
+                            std::vector<int>&    psi_dur,
+                            const std::vector<double>& EMISSION_PROBS,
+                            const std::vector<double>& PAST_DELTA,
+                            const std::vector<double>& survival_probs,
+                            int T) const;
 
     std::vector<int> backtracking_termination(const std::vector<double>& delta,
                                               const std::vector<int>&    psi_state,
                                               const std::vector<int>&    psi_dur,
                                               int                        T) const;
-
+    
     std::vector<int> decode_tensor_viterbi();
 
 

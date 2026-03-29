@@ -32,8 +32,7 @@ bool check_cooperative_launch(const void* kernel, int block_size, size_t shmem, 
     std::cout << "SM count: " << num_sm << "\n";
 
     int max_blocks_per_sm;
-    cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-        &max_blocks_per_sm, kernel, block_size, shmem);
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_sm, kernel, block_size, shmem);
     std::cout << "Max blocks per SM: "    << max_blocks_per_sm << "\n";
     std::cout << "Blocchi richiesti:  "   << required_blocks   << "\n";
     std::cout << "Max blocchi totali: "   << max_blocks_per_sm * num_sm << "\n";
@@ -229,7 +228,68 @@ void HSMM::to_log_space()
 //! ---------------------------------------------------------------------- 
 //! Viterbi Algorithm
 //! ----------------------------------------------------------------------
- 
+
+std::vector<double> HSMM::compute_survival_probs() const
+{
+    const int N = N_;
+    const int D = D_;
+
+    // layout D×N: survival_probs[d*N + n]
+    std::vector<double> survival_probs(D * N, -std::numeric_limits<double>::infinity());
+    for (int j = 0; j < N; ++j) {
+        double cum = -std::numeric_limits<double>::infinity();
+        for (int d = D-1; d >= 0; --d) {
+            double lp = duration_probs_[j*D + d];
+            double m  = std::max(cum, lp);
+            cum = (m == -std::numeric_limits<double>::infinity())
+                ? lp
+                : m + std::log(std::exp(cum - m) + std::exp(lp - m));
+            survival_probs[d*N + j] = cum;   // ← d*N + j invece di j*D + d
+        }
+    }
+    return survival_probs;
+}
+
+void HSMM::tail_adjustment( std::vector<double>& delta,
+                            std::vector<int>&    psi_state,
+                            std::vector<int>&    psi_dur,
+                            const std::vector<double>& EMISSION_PROBS,
+                            const std::vector<double>& PAST_DELTA,
+                            const std::vector<double>& survival_probs,
+                            int T) const
+{
+    const int t   = T - 1;
+    const int tau = std::min(t, D_);
+
+    for (int j = 0; j < N_; ++j) {
+        double best_val = -std::numeric_limits<double>::infinity();
+        int    best_d   = 0;
+        int    best_i   = 0;
+
+        for (int d = 0; d < tau; ++d) {
+            const double ep = EMISSION_PROBS[d*N_ + j];
+            for (int i = 0; i < N_; ++i) {
+                // AP tail: trans_mat + log_surv invece di trans_mat + duration_probs
+                const double ap_tail = trans_mat_[j*N_ + i] + survival_probs[d*N_ + j];
+                const double val = ep
+                                + PAST_DELTA[d*N_ + i]
+                                + ap_tail;
+                if (val > best_val) {
+                    best_val = val;
+                    best_d   = d;
+                    best_i   = i;
+                }
+            }
+        }
+
+        // sovrascrive sempre — il tail adjustment vince sempre su t=T-1
+        delta      [j*T + t] = best_val;
+        psi_state  [j*T + t] = best_i;
+        psi_dur    [j*T + t] = best_d + 1;
+    }
+}
+
+
 std::vector<int> HSMM::backtracking_termination(const std::vector<double>& delta,
                                                  const std::vector<int>&    psi_state,
                                                  const std::vector<int>&    psi_dur,
@@ -252,18 +312,17 @@ std::vector<int> HSMM::backtracking_termination(const std::vector<double>& delta
     while (t >= 0) {
         int d      = psi_dur  [curr_state*T + t];
         int prev_s = psi_state[curr_state*T + t];
- 
-        if (d <= 0) {
+        int start_t = t - d + 1;
+
+        #ifdef DEBUG
+        if (d <= 0 || start_t < 0) {
             std::cerr << "[ERROR] backtracking: d=" << d
                       << " at t=" << t << " state=" << curr_state << "\n";
-            break;
-        }
-        int start_t = t - d + 1;
-        if (start_t < 0) {
             std::cerr << "[ERROR] backtracking: start_t=" << start_t
                       << " at t=" << t << " d=" << d << "\n";
             break;
         }
+        #endif
  
         for (int k = start_t; k <= t; ++k)
             path[k] = curr_state;
@@ -286,10 +345,12 @@ std::vector<int> HSMM::decode_tensor_viterbi()
     std::vector<int>    psi_state(T * N, 0);
     std::vector<int>    psi_dur  (T * N, 1);
     std::vector<double> EMISSION_PROBS(D * N, 0.0);
+    std::vector<double> survival_probs(D * N, 0.0);
     std::vector<double> score(N * N * D, 0.0);
 
+    survival_probs = compute_survival_probs();
 
-    // ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── //
+    //* ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── *//
     std::vector<double> PAST_DELTA(D * N);
     for (int d = 0; d < D; ++d)
         for (int n = 0; n < N; ++n)
@@ -318,12 +379,12 @@ std::vector<int> HSMM::decode_tensor_viterbi()
             for (int d = 0; d < D; ++d)
                 AP[j*N*D + i*D + d] = trans_mat_[j*N + i] + duration_probs_[j*D + d];
 
-    // ── PHASE 2 — Induction (t >= 1) ─────────────────────────────────────────── //
+    //* ── PHASE 2 — Induction (t >= 1) ─────────────────────────────────────────── *//
     for (int t = 1; t < T; ++t) {
 
         const int tau = std::min(t, D);   // d valido: 0 .. tau-1
 
-        // ── 1. Emission Tensor  ("Produttoria") ─────────────────────────────── //
+        // ── 1. Emission Matrix ─────────────────────────────── //
         for (int n = 0; n < N; ++n) {
             double new_em = emission_probs_[obs_seq_[t] * N + n];
             for (int d = tau-1; d >= 1; --d)
@@ -331,13 +392,13 @@ std::vector<int> HSMM::decode_tensor_viterbi()
             EMISSION_PROBS[0*N + n] = new_em;
         }
 
-        // ── 2. Past Delta Tensor ────────────────────────────────────────────── //
+        // ── 2. Past Delta Matrix ────────────────────────────────────────────── //
         for (int d = 0; d < tau; ++d)
             for (int n = 0; n < N; ++n)
                 PAST_DELTA[d*N + n] = delta[n*T + (t-1-d)];
 
 
-        // ── 3. Argmax su (d, i_prev) per ogni stato corrente j ─────────────── //
+        // ── 3. Argmax on (d, i) for each state j ─────────────── //
         for (int j = 0; j < N; ++j) {
             double best_val = -std::numeric_limits<double>::infinity();
             int    best_d   = 0;
@@ -347,7 +408,7 @@ std::vector<int> HSMM::decode_tensor_viterbi()
                 const double ep = EMISSION_PROBS[d * N + j];
                 for (int i = 0; i < N; ++i) {
                     const double val = ep
-                                    + PAST_DELTA[d * N + i]
+                                     + PAST_DELTA[d * N + i]
                                      + AP[j*N*D + i*D + d];
                     if (val > best_val) {
                         best_val = val;
@@ -366,7 +427,11 @@ std::vector<int> HSMM::decode_tensor_viterbi()
         }
     }
 
-    // Backtracking
+    //* ── TAIL ADJUSTMENT — t = T-1 ─────────────────────────────────────────── *//
+    // Ricalcola delta[j*T + (T-1)] per ogni j usando survival probs invece di duration_probs
+    tail_adjustment(delta, psi_state, psi_dur, EMISSION_PROBS, PAST_DELTA, survival_probs, T);
+
+    //* Backtracking *//
     std::vector<int> path = backtracking_termination(delta, psi_state, psi_dur, T);
 
     return path;
