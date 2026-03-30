@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=tensor-viterbi
-#SBATCH --output=tensor_viterbi_%j.out
-#SBATCH --error=tensor_viterbi_%j.err
+#SBATCH --output=logs/tensor_viterbi_%j.out
+#SBATCH --error=logs/tensor_viterbi_%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
@@ -19,10 +19,7 @@ source /leonardo/home/userexternal/lpiarull/fast-viterbi/.venv/bin/activate
 cd /leonardo/home/userexternal/lpiarull/fast-viterbi
 
 python run_viterbi.py --baseline --cuda --cpp -m measure -dp data/32states_1000steps_100dur.json
-
-python run_viterbi.py --baseline --cuda --cpp -m measure -dp data/32states_10000steps_200dur.json
-
-
 python run_viterbi.py --baseline --cuda --cpp -m measure -dp data/64states_1000steps_100dur.json
 
+python run_viterbi.py --baseline --cuda --cpp -m measure -dp data/32states_10000steps_200dur.json
 python run_viterbi.py --baseline --cuda --cpp -m measure -dp data/64states_10000steps_200dur.json

@@ -7,6 +7,19 @@ import time
 from hsmmlearn.emissions import AbstractEmissions
 from hsmmlearn.hsmm import HSMMModel
 
+# ── ANSI colors (disabled automatically when output is not a terminal) ────────
+import sys
+_TTY = sys.stdout.isatty()
+def _c(code): return code if _TTY else ""
+
+R     = _c("\033[0m")
+BOLD  = _c("\033[1m")
+GREEN = _c("\033[92m")
+GRAY  = _c("\033[90m")
+WHITE = _c("\033[97m")
+YEL   = _c("\033[93m")
+# ─────────────────────────────────────────────────────────────────────────────
+
 
 
 class RawEmissions(AbstractEmissions):
@@ -92,7 +105,9 @@ def benchmark_baseline(json_file: str, csv_path="benchmark.csv", iterations=100,
         for i, t in enumerate(times):
             writer.writerow(["HSMMLearn_CPP", i, f"{t:.6f}"])
 
-    print(f"\nHSMMLearn C++: avg={sum(times)/len(times):.4f}s  min={min(times):.4f}s  max={max(times):.4f}s\n")
+    avg, mn, mx = sum(times) / len(times), min(times), max(times)
+    print(f"  {WHITE}HSMMLearn C++{R}")
+    print(f"  avg {BOLD}{GREEN}{avg:.4f} s{R}   min {GREEN}{mn:.4f} s{R}   max {GREEN}{mx:.4f} s{R}\n")
     return
 
 def measure_baseline(json_file: str):
@@ -100,7 +115,7 @@ def measure_baseline(json_file: str):
     start_time = time.perf_counter()
     decoded_states = model.decode(obs_seq)
     elapsed = time.perf_counter() - start_time
-    print(f"\nExecution time of HSMMLearn C++: {elapsed:.4f} seconds\n")
+    print(f"  {GRAY}time{R}  {WHITE}HSMMLearn C++{R}  {BOLD}{GREEN}{elapsed:.4f} s{R}\n")
     return elapsed
 
 def validate(title_str: str, computed_states: np.ndarray, json_file: str, print_states: bool = False):
@@ -112,4 +127,5 @@ def validate(title_str: str, computed_states: np.ndarray, json_file: str, print_
         print(f'HSMMLearn Decoded States: {decoded_states}')
         
     acc = compute_accuracy(decoded_states, computed_states)
-    print(f"\n{title_str} Accuracy - {acc:.2%}\n") 
+    acc_color = GREEN if acc >= 0.95 else YEL
+    print(f"  {GRAY}accuracy{R}  {WHITE}{title_str}{R}  {BOLD}{acc_color}{acc:.2%}{R}\n")

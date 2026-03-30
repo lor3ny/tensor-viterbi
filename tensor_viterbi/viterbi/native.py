@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from tensor_viterbi.hsmm import HSMM
 
 try:
-    from _native import (
+    from ._native import (
         decode_tensor_viterbi_cpp as _decode_cpp,
         decode_tensor_viterbi_cuda as _decode_cuda,
     )

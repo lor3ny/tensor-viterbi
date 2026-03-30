@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.20)
 
 project(tensor-viterbi VERSION 1.0 LANGUAGES CXX)
 
@@ -69,7 +69,7 @@ if(GPU_PLATFORM STREQUAL "ROCM")
 else()
     enable_language(CUDA)
     set(CMAKE_CUDA_STANDARD 17)
-    set(CMAKE_CUDA_ARCHITECTURES native)
+    set(CMAKE_CUDA_ARCHITECTURES "80" CACHE STRING "GPU Architectures")
     set(NATIVE_SOURCES src/hsmm.cu src/kernels.cu)
     add_definitions(-DUSE_CUDA)
 endif()
