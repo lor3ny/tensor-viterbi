@@ -42,8 +42,7 @@ tensor-viterbi/
 ├── data/                    # JSON model files
 ├── validation/              # hsmmlearn baseline
 ├── run_viterbi.py           # CLI runner
-├── CMakeLists.txt
-└── pyproject.toml
+└── CMakeLists.txt
 ```
 
 ## How to Start
@@ -83,7 +82,7 @@ pip install .
 #### Python only (no C++/CUDA)
 
 ```bash
-pip install numpy deprecated
+pip install numpy
 ```
 
 The native extension is optional and gracefully skipped if not built:

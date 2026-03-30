@@ -2,7 +2,7 @@
 #include "kernels.cuh"
 
 #include <iostream>
-#include <iomanip>
+#include <limits>
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -21,259 +21,80 @@
     } while (0)
 
 
-bool check_cooperative_launch(const void* kernel, int block_size, size_t shmem, int required_blocks)
+// ============================================================
+// File-scope helpers (not part of the public API)
+// ============================================================
+
+static bool check_cooperative_launch(const void* kernel, int block_size, size_t shmem, int required_blocks)
 {
     int supports_coop;
     cudaDeviceGetAttribute(&supports_coop, cudaDevAttrCooperativeLaunch, 0);
-    std::cout << "Cooperative launch supported: " << supports_coop << "\n";
 
     int num_sm;
     cudaDeviceGetAttribute(&num_sm, cudaDevAttrMultiProcessorCount, 0);
-    std::cout << "SM count: " << num_sm << "\n";
 
     int max_blocks_per_sm;
     cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_sm, kernel, block_size, shmem);
-    std::cout << "Max blocks per SM: "    << max_blocks_per_sm << "\n";
-    std::cout << "Blocchi richiesti:  "   << required_blocks   << "\n";
-    std::cout << "Max blocchi totali: "   << max_blocks_per_sm * num_sm << "\n";
 
-    if (!supports_coop) {
-        std::cerr << "[FAIL] GPU non supporta cooperative launch\n";
+    if (!supports_coop || required_blocks > max_blocks_per_sm * num_sm)
         return false;
-    }
-    if (required_blocks > max_blocks_per_sm * num_sm) {
-        std::cerr << "[FAIL] Troppi blocchi per cooperative launch\n";
-        return false;
-    }
-    std::cout << "[OK] Cooperative launch fattibile\n";
+
     return true;
 }
 
-HSMM::HSMM(const std::vector<std::string>&  states,
-           const std::vector<std::string>&  emissions,
-           const std::vector<double>&       trans_mat,
-           const std::vector<double>&       emission_probs,
-           const std::vector<double>&       start_probs,
-           const std::vector<double>&       duration_probs)
+// forward declaration — defined after decode_tensor_viterbi_cuda
+static void run_induction(
+    double* d_delta, const double* d_AP,
+    const double* d_emission_probs, const int* d_obs_seq,
+    double** d_em,
+    double* d_best_val_ji, int* d_best_d_ji,
+    int* d_psi_state, int* d_psi_dur,
+    int T, int N, int D);
+
+
+static std::vector<double> compute_survival_probs(
+    int N, int D,
+    const std::vector<double>& duration_probs)
 {
-    states_           = states;
-    emissions_        = emissions;
-    trans_mat_        = trans_mat;
-    emission_probs_   = emission_probs;
-    start_probs_      = start_probs;
-    duration_probs_   = duration_probs;
-
-    N_ = static_cast<int>(states_.size());
-    O_ = static_cast<int>(emissions_.size());
-    D_ = static_cast<int>(duration_probs.size() / N_);
-}
-
-HSMM::HSMM(const std::string& json_data_path)
-{
-    std::ifstream file(json_data_path);
-    if (!file.is_open())
-        throw std::runtime_error("load_sleep_model: cannot open \"" + json_data_path + "\"");
-
-    nlohmann::json cfg;
-    file >> cfg;
-
-    const int O = cfg["n_bins"].get<int>();
-
-    // -------- STATES --------
-    std::vector<std::string> states;
-    for (const auto& s : cfg["states"])
-        states.push_back(s["name"].get<std::string>());
-
-    const int N = static_cast<int>(states.size());
-
-    // -------- EMISSIONS --------
-    std::vector<std::string> emissions(O);
-    for (int o = 0; o < O; ++o)
-        emissions[o] = std::to_string(o);
-
-    // -------- OBS SEQ --------
-    const int T = cfg["obs_seq"].size();
-
-    const auto& raw_obs = cfg["obs_seq"];
-    std::vector<int> obs_seq(raw_obs.size());
-    for (std::size_t t = 0; t < raw_obs.size(); ++t)
-        obs_seq[t] = raw_obs[t].get<int>() - 1;
-
-    // -------- TRANS --------
-    std::vector<double> trans_mat(N * N);
-    for (int i = 0; i < N; ++i)
-        for (int j = 0; j < N; ++j)
-            trans_mat[j*N + i] = cfg["trans_mat"][i][j].get<double>();
-
-    // -------- EMISSION PROBS --------
-    std::vector<double> emission_probs(O * N, 0.0);
-    for (int s = 0; s < N; ++s) {
-        const auto& ep = cfg["states"][s]["emission_probs"];
-        for (int o = 0; o < O; ++o)
-            emission_probs[o * N + s] = ep[o].get<double>();
-    }
-
-    // -------- START --------
-    std::vector<double> start_probs = cfg["pi"].get<std::vector<double>>();
-
-    // -------- DURATIONS --------
-    const int D = cfg["states"][0]["duration_probs"].size();
-
-    std::vector<double> duration_probs;
-    duration_probs.reserve(N * D);
-
-    for (int s = 0; s < N; ++s) {
-        const auto& dp = cfg["states"][s]["duration_probs"];
-        for (const auto& val : dp)
-            duration_probs.push_back(val.get<double>());
-    }
-
-    states_           = states;
-    emissions_        = emissions;
-    trans_mat_        = trans_mat;
-    emission_probs_   = emission_probs;
-    start_probs_      = start_probs;
-    duration_probs_   = duration_probs;
-
-    N_ = N;
-    O_ = O;
-    D_ = D;
-    T_ = T;
-
-    obs_seq_ = obs_seq;
-}
-
-void HSMM::print() const {
-    const int N = num_states();
-    const int O = num_emissions();
-    const int D = max_duration();
-    const int T = obs_length();
-
-    std::cout << "===== HSMM MODEL =====\n";
-
-    // Dimensioni
-    std::cout << "\nDimensions:\n";
-    std::cout << "  N (states)    = " << N << "\n";
-    std::cout << "  O (emissions) = " << O << "\n";
-    std::cout << "  D (max dur)   = " << D << "\n";
-    std::cout << "  T (obs len)   = " << T << "\n";
-
-    // Stati
-    std::cout << "\nStates (" << N << "):\n";
-    for (int i = 0; i < N; ++i)
-        std::cout << "  [" << i << "] " << states_[i] << "\n";
-
-    // Emissioni
-    std::cout << "\nEmissions (" << O << "):\n";
-    for (int o = 0; o < O; ++o)
-        std::cout << "  [" << o << "] " << emissions_[o] << "\n";
-
-    // Start probabilities
-    std::cout << "\nStart probabilities (pi):\n";
-    for (int i = 0; i < N; ++i)
-        std::cout << "  " << states_[i] << ": " << start_probs_[i] << "\n";
-
-    // Transition matrix
-    std::cout << "\nTransition matrix (N x N):\n";
-    for (int i = 0; i < N; ++i) {
-        for (int j = 0; j < N; ++j) {
-            std::cout << std::setw(8) << trans_mat_[i * N + j] << " ";
-        }
-        std::cout << "\n";
-    }
-
-    // Emission probabilities
-    std::cout << "\nEmission probabilities (O x N):\n";
-    for (int o = 0; o < O; ++o) {
-        std::cout << "Obs " << o << ": ";
-        for (int s = 0; s < N; ++s) {
-            std::cout << std::setw(8) << emission_probs_[o * N + s] << " ";
-        }
-        std::cout << "\n";
-    }
-
-
-    // Duration probabilities
-    std::cout << "\nDuration probabilities:\n";
-    for (int s = 0; s < N; ++s) {
-        std::cout << "State " << states_[s] << ": [ ";
-
-        for (int d = 0; d < D; ++d) {
-            int idx = s * D + d;
-            std::cout << duration_probs_[idx] << " ";
-        }
-
-        std::cout << "]\n";
-    }
-
-    std::cout << "\n======================\n";
-    std::cout.flush();
-}
-
-void HSMM::to_log_space()
-{
-    for (double& v : trans_mat_)
-        v = std::log(v + SMOOTHNESS);
-
-    for (double& v : emission_probs_)
-        v = std::log(v + SMOOTHNESS);
-
-    for (double& v : start_probs_)
-        v = std::log(v + SMOOTHNESS);
-
-    for (double& v : duration_probs_)
-        v = std::log(v + SMOOTHNESS);
-}
-
-//! ---------------------------------------------------------------------- 
-//! Viterbi Algorithm
-//! ----------------------------------------------------------------------
-
-std::vector<double> HSMM::compute_survival_probs() const
-{
-    const int N = N_;
-    const int D = D_;
-
-    // layout D×N: survival_probs[d*N + n]
+    // layout D×N: survival_probs[d*N + j]
     std::vector<double> survival_probs(D * N, -std::numeric_limits<double>::infinity());
     for (int j = 0; j < N; ++j) {
         double cum = -std::numeric_limits<double>::infinity();
-        for (int d = D-1; d >= 0; --d) {
-            double lp = duration_probs_[j*D + d];
+        for (int d = D - 1; d >= 0; --d) {
+            double lp = duration_probs[j * D + d];
             double m  = std::max(cum, lp);
             cum = (m == -std::numeric_limits<double>::infinity())
                 ? lp
                 : m + std::log(std::exp(cum - m) + std::exp(lp - m));
-            survival_probs[d*N + j] = cum;   // ← d*N + j invece di j*D + d
+            survival_probs[d * N + j] = cum;
         }
     }
     return survival_probs;
 }
 
-void HSMM::tail_adjustment( std::vector<double>& delta,
-                            std::vector<int>&    psi_state,
-                            std::vector<int>&    psi_dur,
-                            const std::vector<double>& EMISSION_PROBS,
-                            const std::vector<double>& PAST_DELTA,
-                            const std::vector<double>& survival_probs,
-                            int T) const
+static void tail_adjustment(
+    std::vector<double>& delta,
+    std::vector<int>&    psi_state,
+    std::vector<int>&    psi_dur,
+    const std::vector<double>& EMISSION_PROBS,
+    const std::vector<double>& PAST_DELTA,
+    const std::vector<double>& survival_probs,
+    const std::vector<double>& trans_mat,
+    int N, int D, int T)
 {
     const int t   = T - 1;
-    const int tau = std::min(t, D_);
+    const int tau = std::min(t, D);
 
-    for (int j = 0; j < N_; ++j) {
+    for (int j = 0; j < N; ++j) {
         double best_val = -std::numeric_limits<double>::infinity();
         int    best_d   = 0;
         int    best_i   = 0;
 
         for (int d = 0; d < tau; ++d) {
-            const double ep = EMISSION_PROBS[d*N_ + j];
-            for (int i = 0; i < N_; ++i) {
-                // AP tail: trans_mat + log_surv invece di trans_mat + duration_probs
-                const double ap_tail = trans_mat_[j*N_ + i] + survival_probs[d*N_ + j];
-                const double val = ep
-                                + PAST_DELTA[d*N_ + i]
-                                + ap_tail;
+            const double ep = EMISSION_PROBS[d * N + j];
+            for (int i = 0; i < N; ++i) {
+                const double ap_tail = trans_mat[j * N + i] + survival_probs[d * N + j];
+                const double val = ep + PAST_DELTA[d * N + i] + ap_tail;
                 if (val > best_val) {
                     best_val = val;
                     best_d   = d;
@@ -282,184 +103,72 @@ void HSMM::tail_adjustment( std::vector<double>& delta,
             }
         }
 
-        // sovrascrive sempre — il tail adjustment vince sempre su t=T-1
-        delta      [j*T + t] = best_val;
-        psi_state  [j*T + t] = best_i;
-        psi_dur    [j*T + t] = best_d + 1;
+        delta    [j * T + t] = best_val;
+        psi_state[j * T + t] = best_i;
+        psi_dur  [j * T + t] = best_d + 1;
     }
 }
 
-
-std::vector<int> HSMM::backtracking_termination(const std::vector<double>& delta,
-                                                 const std::vector<int>&    psi_state,
-                                                 const std::vector<int>&    psi_dur,
-                                                 int                        T) const
+static std::vector<int> backtracking_termination(
+    const std::vector<double>& delta,
+    const std::vector<int>&    psi_state,
+    const std::vector<int>&    psi_dur,
+    int N, int T)
 {
     std::vector<int> path(T, 0);
 
-    // Termination
     int t = T - 1;
     int curr_state = 0;
-    double best_val = delta[0*T + t];
-    for (int n = 1; n < N_; ++n) {
-        if (delta[n*T + t] > best_val) {
-            best_val   = delta[n*T + t];
+    double best_val = delta[0 * T + t];
+    for (int n = 1; n < N; ++n) {
+        if (delta[n * T + t] > best_val) {
+            best_val   = delta[n * T + t];
             curr_state = n;
         }
     }
 
-    // Backtracking
     while (t >= 0) {
-        int d      = psi_dur  [curr_state*T + t];
-        int prev_s = psi_state[curr_state*T + t];
+        int d       = psi_dur  [curr_state * T + t];
+        int prev_s  = psi_state[curr_state * T + t];
         int start_t = t - d + 1;
 
-        #ifdef DEBUG
-        if (d <= 0 || start_t < 0) {
-            std::cerr << "[ERROR] backtracking: d=" << d
-                      << " at t=" << t << " state=" << curr_state << "\n";
-            std::cerr << "[ERROR] backtracking: start_t=" << start_t
-                      << " at t=" << t << " d=" << d << "\n";
-            break;
-        }
-        #endif
- 
         for (int k = start_t; k <= t; ++k)
             path[k] = curr_state;
- 
+
         t          = t - d;
         curr_state = prev_s;
     }
- 
-    return path;
-}
- 
-std::vector<int> HSMM::decode_tensor_viterbi()
-{
-    const int T = T_;
-    const int N = N_;
-    const int D = D_;
-
-    // layout N×T: delta[n*T + t]
-    std::vector<double> delta(T * N, SMOOTHNESS);
-    std::vector<int>    psi_state(T * N, 0);
-    std::vector<int>    psi_dur  (T * N, 1);
-    std::vector<double> EMISSION_PROBS(D * N, 0.0);
-    std::vector<double> survival_probs(D * N, 0.0);
-    std::vector<double> score(N * N * D, 0.0);
-
-    survival_probs = compute_survival_probs();
-
-    //* ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── *//
-    std::vector<double> PAST_DELTA(D * N);
-    for (int d = 0; d < D; ++d)
-        for (int n = 0; n < N; ++n)
-            PAST_DELTA[d*N + n] = duration_probs_[n*D + d] + start_probs_[n];
-
-    std::vector<double> CUM_EMISSION(D * N, 0.0);
-    for (int d = 0; d < D; ++d) {
-        int obs = obs_seq_[d];
-        for (int n = 0; n < N; ++n) {
-            double prev = (d > 0) ? CUM_EMISSION[(d-1)*N + n] : 0.0;
-            CUM_EMISSION[d*N + n] = prev + emission_probs_[obs*N + n];
-        }
-    }
-    
-    for (int t = 0; t < D; ++t){
-        for (int n = 0; n < N; ++n) {
-            delta    [n*T + t] = PAST_DELTA[t*N + n] + CUM_EMISSION[t*N + n];
-            psi_dur[n*T + t] = t + 1;
-        }
-    }
-
-    // ── AP: (N x N x D) ──────────────────────────────────────────────────── //
-    std::vector<double> AP(N * N * D);
-    for (int j = 0; j < N; ++j)
-        for (int i = 0; i < N; ++i)
-            for (int d = 0; d < D; ++d)
-                AP[j*N*D + i*D + d] = trans_mat_[j*N + i] + duration_probs_[j*D + d];
-
-    //* ── PHASE 2 — Induction (t >= 1) ─────────────────────────────────────────── *//
-    for (int t = 1; t < T; ++t) {
-
-        const int tau = std::min(t, D);   // d valido: 0 .. tau-1
-
-        // ── 1. Emission Matrix ─────────────────────────────── //
-        for (int n = 0; n < N; ++n) {
-            double new_em = emission_probs_[obs_seq_[t] * N + n];
-            for (int d = tau-1; d >= 1; --d)
-                EMISSION_PROBS[d*N + n] = new_em + EMISSION_PROBS[(d-1)*N + n];
-            EMISSION_PROBS[0*N + n] = new_em;
-        }
-
-        // ── 2. Past Delta Matrix ────────────────────────────────────────────── //
-        for (int d = 0; d < tau; ++d)
-            for (int n = 0; n < N; ++n)
-                PAST_DELTA[d*N + n] = delta[n*T + (t-1-d)];
-
-
-        // ── 3. Argmax on (d, i) for each state j ─────────────── //
-        for (int j = 0; j < N; ++j) {
-            double best_val = -std::numeric_limits<double>::infinity();
-            int    best_d   = 0;
-            int    best_i   = 0;
-
-            for (int d = 0; d < tau; ++d) {
-                const double ep = EMISSION_PROBS[d * N + j];
-                for (int i = 0; i < N; ++i) {
-                    const double val = ep
-                                     + PAST_DELTA[d * N + i]
-                                     + AP[j*N*D + i*D + d];
-                    if (val > best_val) {
-                        best_val = val;
-                        best_d   = d;
-                        best_i   = i;
-                    }
-                }
-            }
-
-            const bool update = (t >= D) || (best_val > delta[j*T + t]);
-            if (update) {
-                delta      [j*T + t] = best_val;
-                psi_state[j*T + t] = best_i;
-                psi_dur  [j*T + t] = best_d + 1;
-            }
-        }
-    }
-
-    //* ── TAIL ADJUSTMENT — t = T-1 ─────────────────────────────────────────── *//
-    // Ricalcola delta[j*T + (T-1)] per ogni j usando survival probs invece di duration_probs
-    tail_adjustment(delta, psi_state, psi_dur, EMISSION_PROBS, PAST_DELTA, survival_probs, T);
-
-    //* Backtracking *//
-    std::vector<int> path = backtracking_termination(delta, psi_state, psi_dur, T);
 
     return path;
 }
 
-void HSMM::hsmm_to_gpu(
+static void hsmm_to_gpu(
+    int N, int O, int D, int T,
+    const std::vector<double>& trans_mat,
+    const std::vector<double>& emission_probs,
+    const std::vector<double>& start_probs,
+    const std::vector<double>& duration_probs,
+    const std::vector<int>&    obs_seq,
     double*& d_trans_mat,
     double*& d_emission_probs,
     double*& d_start_probs,
     double*& d_duration_probs,
     int*&    d_obs_seq)
 {
-    int T = static_cast<int>(obs_seq_.size());
+    CUDA_CHECK(cudaMalloc(&d_trans_mat,      N * N * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_emission_probs, O * N * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_start_probs,    N     * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_duration_probs, N * D * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_obs_seq,        T     * sizeof(int)));
 
-    CUDA_CHECK(cudaMalloc(&d_trans_mat,      N_ * N_ * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_emission_probs, O_ * N_ * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_start_probs,    N_      * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_duration_probs, N_ * D_ * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_obs_seq,        T_      * sizeof(int)));
-
-    CUDA_CHECK(cudaMemcpy(d_trans_mat,      trans_mat_.data(),      N_ * N_ * sizeof(double), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_emission_probs, emission_probs_.data(), O_ * N_ * sizeof(double), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_start_probs,    start_probs_.data(),    N_      * sizeof(double), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_duration_probs, duration_probs_.data(), N_ * D_ * sizeof(double), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_obs_seq,        obs_seq_.data(),        T_      * sizeof(int),    cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_trans_mat,      trans_mat.data(),      N * N * sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_emission_probs, emission_probs.data(), O * N * sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_start_probs,    start_probs.data(),    N     * sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_duration_probs, duration_probs.data(), N * D * sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_obs_seq,        obs_seq.data(),        T     * sizeof(int),    cudaMemcpyHostToDevice));
 }
 
-void HSMM::hsmm_free_gpu(
+static void hsmm_free_gpu(
     double*& d_trans_mat,
     double*& d_emission_probs,
     double*& d_start_probs,
@@ -479,60 +188,168 @@ void HSMM::hsmm_free_gpu(
     d_obs_seq        = nullptr;
 }
 
-std::vector<int> HSMM::decode_tensor_viterbi_cuda()
-{
-    // CPU-side data structures
-    const int T = T_;
-    const int N = N_;
-    const int D = D_;
 
-    std::vector<double> delta(T * N, -std::numeric_limits<double>::infinity());
+// ============================================================
+// Public API — namespace hsmm (declared in hsmm.hpp)
+// ============================================================
+namespace hsmm {
+
+std::vector<int> decode_tensor_viterbi(
+    const int                  n_states,
+    const std::vector<double>& trans_mat,
+    const std::vector<double>& emission_probs,
+    const std::vector<double>& start_probs,
+    const std::vector<double>& duration_probs,
+    const std::vector<int>&    obs_seq)
+{
+    const int N = n_states;
+    const int T = static_cast<int>(obs_seq.size());
+    const int D = static_cast<int>(duration_probs.size()) / N;
+
+    std::vector<double> delta    (T * N, SMOOTHNESS);
+    std::vector<int>    psi_state(T * N, 0);
+    std::vector<int>    psi_dur  (T * N, 1);
+    std::vector<double> EMISSION_PROBS(D * N, 0.0);
+
+    const std::vector<double> survival_probs = compute_survival_probs(N, D, duration_probs);
+
+    //* ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── *//
+    std::vector<double> PAST_DELTA(D * N);
+    for (int d = 0; d < D; ++d)
+        for (int n = 0; n < N; ++n)
+            PAST_DELTA[d * N + n] = duration_probs[n * D + d] + start_probs[n];
+
+    std::vector<double> CUM_EMISSION(D * N, 0.0);
+    for (int d = 0; d < D; ++d) {
+        int obs = obs_seq[d];
+        for (int n = 0; n < N; ++n) {
+            double prev = (d > 0) ? CUM_EMISSION[(d - 1) * N + n] : 0.0;
+            CUM_EMISSION[d * N + n] = prev + emission_probs[obs * N + n];
+        }
+    }
+
+    for (int t = 0; t < D; ++t)
+        for (int n = 0; n < N; ++n) {
+            delta  [n * T + t] = PAST_DELTA[t * N + n] + CUM_EMISSION[t * N + n];
+            psi_dur[n * T + t] = t + 1;
+        }
+
+    // ── AP: (N x N x D) ──────────────────────────────────────────────────── //
+    std::vector<double> AP(N * N * D);
+    for (int j = 0; j < N; ++j)
+        for (int i = 0; i < N; ++i)
+            for (int d = 0; d < D; ++d)
+                AP[j * N * D + i * D + d] = trans_mat[j * N + i] + duration_probs[j * D + d];
+
+    //* ── PHASE 2 — Induction (t >= 1) ──────────────────────────────────────── *//
+    for (int t = 1; t < T; ++t) {
+        const int tau = std::min(t, D);
+
+        for (int n = 0; n < N; ++n) {
+            double new_em = emission_probs[obs_seq[t] * N + n];
+            for (int d = tau - 1; d >= 1; --d)
+                EMISSION_PROBS[d * N + n] = new_em + EMISSION_PROBS[(d - 1) * N + n];
+            EMISSION_PROBS[0 * N + n] = new_em;
+        }
+
+        for (int d = 0; d < tau; ++d)
+            for (int n = 0; n < N; ++n)
+                PAST_DELTA[d * N + n] = delta[n * T + (t - 1 - d)];
+
+        for (int j = 0; j < N; ++j) {
+            double best_val = -std::numeric_limits<double>::infinity();
+            int    best_d   = 0;
+            int    best_i   = 0;
+
+            for (int d = 0; d < tau; ++d) {
+                const double ep = EMISSION_PROBS[d * N + j];
+                for (int i = 0; i < N; ++i) {
+                    const double val = ep + PAST_DELTA[d * N + i] + AP[j * N * D + i * D + d];
+                    if (val > best_val) {
+                        best_val = val;
+                        best_d   = d;
+                        best_i   = i;
+                    }
+                }
+            }
+
+            const bool update = (t >= D) || (best_val > delta[j * T + t]);
+            if (update) {
+                delta    [j * T + t] = best_val;
+                psi_state[j * T + t] = best_i;
+                psi_dur  [j * T + t] = best_d + 1;
+            }
+        }
+    }
+
+    //* ── TAIL ADJUSTMENT — t = T-1 ──────────────────────────────────────────── *//
+    tail_adjustment(delta, psi_state, psi_dur,
+                    EMISSION_PROBS, PAST_DELTA, survival_probs,
+                    trans_mat, N, D, T);
+
+    return backtracking_termination(delta, psi_state, psi_dur, N, T);
+}
+
+
+std::vector<int> decode_tensor_viterbi_cuda(
+    const int                  n_states,
+    const std::vector<double>& trans_mat,
+    const std::vector<double>& emission_probs,
+    const std::vector<double>& start_probs,
+    const std::vector<double>& duration_probs,
+    const std::vector<int>&    obs_seq)
+{
+    const int N = n_states;
+    const int T = static_cast<int>(obs_seq.size());
+    const int O = static_cast<int>(emission_probs.size()) / N;
+    const int D = static_cast<int>(duration_probs.size()) / N;
+
+    std::vector<double> delta    (T * N, -std::numeric_limits<double>::infinity());
     std::vector<int>    psi_state(T * N, 0);
     std::vector<int>    psi_dur  (T * N, 1);
 
-    // GPU memory allocation
     double* d_trans_mat      = nullptr;
     double* d_emission_probs = nullptr;
     double* d_start_probs    = nullptr;
     double* d_duration_probs = nullptr;
-    int*    d_obs_seq        = nullptr;    
-    hsmm_to_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
+    int*    d_obs_seq        = nullptr;
+    hsmm_to_gpu(N, O, D, T,
+                trans_mat, emission_probs, start_probs, duration_probs, obs_seq,
+                d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
 
-    double* d_delta = nullptr;
-    double* d_AP = nullptr;
-    double* d_emissions = nullptr;
-    double* d_best_state_ji = nullptr;
-    int*    d_best_d_ji = nullptr;
-    int*    d_psi_state = nullptr;
-    int*    d_psi_dur = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_delta, N * T * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_best_state_ji, N * N * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_best_d_ji, N * N * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_psi_state, N * T * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_psi_dur, N * T * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_AP, D * N * N * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_emissions, D * N * sizeof(double)));
+    double* d_delta          = nullptr;
+    double* d_AP             = nullptr;
+    double* d_emissions      = nullptr;
+    double* d_best_state_ji  = nullptr;
+    int*    d_best_d_ji      = nullptr;
+    int*    d_psi_state      = nullptr;
+    int*    d_psi_dur        = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_delta,         N * T     * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_AP,            D * N * N * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_emissions,     D * N     * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_best_state_ji, N * N     * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_best_d_ji,     N * N     * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_psi_state,     N * T     * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_psi_dur,       N * T     * sizeof(int)));
 
     double* d_em[2] = {nullptr, nullptr};
     CUDA_CHECK(cudaMalloc(&d_em[0], D * N * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_em[1], D * N * sizeof(double)));
 
-    // * ── PHASE 1 — Initialization (0 <= t < D) & AP ────────────────────────────── //
-
+    //* ── PHASE 1 — Initialization & AP ──────────────────────────────────────── *//
     int bs_init = 1;
     while (bs_init < D) bs_init <<= 1;
-    const int num_warps = bs_init / 32;
-    const size_t sm = (bs_init + num_warps) * sizeof(double);
-    kernel_initialization<<<dim3(N,N), dim3(bs_init), sm>>>(
+    const int    num_warps = bs_init / 32;
+    const size_t sm_init   = (bs_init + num_warps) * sizeof(double);
+    kernel_initialization<<<dim3(N, N), dim3(bs_init), sm_init>>>(
         d_start_probs, d_duration_probs,
         d_emission_probs, d_obs_seq,
         d_delta, d_psi_dur,
         d_trans_mat, d_AP,
-        N, D, T
-    );
+        N, D, T);
     CUDA_CHECK(cudaGetLastError());
 
-    // * ── PHASE 2 — Induction (t >= 1) ─────────────────────────────────────────── //
+    //* ── PHASE 2 — Induction ─────────────────────────────────────────────────── *//
     run_induction(
         d_delta, d_AP,
         d_emission_probs, d_obs_seq,
@@ -540,16 +357,11 @@ std::vector<int> HSMM::decode_tensor_viterbi_cuda()
         d_best_state_ji, d_best_d_ji,
         d_psi_state, d_psi_dur,
         T, N, D);
-    
-    // Retrieve data from GPU
-    CUDA_CHECK(cudaMemcpy(delta.data(), d_delta, N * T * sizeof(double), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(psi_state.data(), d_psi_state, N * T * sizeof(int), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(psi_dur.data(), d_psi_dur, N * T * sizeof(int), cudaMemcpyDeviceToHost));
 
-    //* Backtracking *//
-    std::vector<int> path = backtracking_termination(delta, psi_state, psi_dur, T);
+    CUDA_CHECK(cudaMemcpy(delta.data(),     d_delta,     N * T * sizeof(double), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(psi_state.data(), d_psi_state, N * T * sizeof(int),    cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(psi_dur.data(),   d_psi_dur,   N * T * sizeof(int),    cudaMemcpyDeviceToHost));
 
-    // Free GPU Memory
     hsmm_free_gpu(d_trans_mat, d_emission_probs, d_start_probs, d_duration_probs, d_obs_seq);
     CUDA_CHECK(cudaFree(d_delta));
     CUDA_CHECK(cudaFree(d_AP));
@@ -561,10 +373,17 @@ std::vector<int> HSMM::decode_tensor_viterbi_cuda()
     CUDA_CHECK(cudaFree(d_em[0]));
     CUDA_CHECK(cudaFree(d_em[1]));
 
-    return path;
+    return backtracking_termination(delta, psi_state, psi_dur, N, T);
 }
 
-void HSMM::run_induction(
+} // namespace hsmm
+
+
+// ============================================================
+// run_induction (defined here — after decode_tensor_viterbi_cuda
+// because it is used only by that function)
+// ============================================================
+static void run_induction(
     double* d_delta, const double* d_AP,
     const double* d_emission_probs, const int* d_obs_seq,
     double** d_em,
@@ -572,22 +391,16 @@ void HSMM::run_induction(
     int* d_psi_state, int* d_psi_dur,
     int T, int N, int D)
 {
-    // ── max block size (rounding D to nearest power of 2) ─────────────── //
     int block_size = 1;
     while (block_size < D) block_size <<= 1;
     const size_t shmem = block_size * (sizeof(double) + sizeof(int));
 
-    // ── euristica: usa persistent kernel se fattibile ─────────────────────── //
     bool use_persistent = check_cooperative_launch(
         (void*)kernel_persistent, block_size, shmem, N * N);
 
-    //use_persistent = false;  // forzatamente disabilitato
-    
     int cur = 0;
 
     if (use_persistent) {
-        std::cout << "[Induction] persistent kernel\n";
-
         void* args[] = {
             &d_obs_seq, &d_emission_probs, &d_delta, &d_AP,
             &d_em[0], &d_em[1],
@@ -595,19 +408,14 @@ void HSMM::run_induction(
             &d_psi_state, &d_psi_dur,
             &N, &D, &T
         };
-
         cudaLaunchCooperativeKernel(
             (void*)kernel_persistent,
             dim3(N, N), dim3(block_size),
             args, shmem);
         CUDA_CHECK(cudaGetLastError());
-
     } else {
-        std::cout << "[Induction] fallback: kernel separati\n";
-
         for (int t = 1; t < T; ++t) {
             const int tau = std::min(t, D);
-
             const int nxt = 1 - cur;
 
             int bs = 1;

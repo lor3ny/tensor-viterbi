@@ -7,12 +7,7 @@ from tensor_viterbi import HSMM
 from tensor_viterbi.viterbi import (
     decode_vanilla_viterbi,
     decode_log_tensor_viterbi_cached,
-    decode_tensor_viterbi_cpp,
-    decode_tensor_viterbi_cuda,  # uncomment when CUDA is available
 )
-
-from validation.hsmmlearn_viterbi import validate, measure_baseline, benchmark_baseline
-from validation.hsmmlearn_py_viterbi import validate_py, measure_baseline_py, benchmark_baseline_py
 
 
 def TIME_MEASURE(func, *args, **kwargs):
@@ -56,6 +51,25 @@ if __name__ == "__main__":
 
     data_path = args.data_path
 
+    if args.cpp:
+        from tensor_viterbi.viterbi import (
+            decode_tensor_viterbi_cpp,
+        )
+    if args.cuda:
+        from tensor_viterbi.viterbi import (
+            decode_tensor_viterbi_cuda,
+        )
+    if args.baseline:
+        from validation.hsmmlearn_viterbi import (
+            validate,
+            measure_baseline,
+            benchmark_baseline
+        )
+        from validation.hsmmlearn_py_viterbi import (
+            validate_py,
+            measure_baseline_py, 
+            benchmark_baseline_py
+        )
     
     
     my_hsmm = HSMM.load_model(data_path)
@@ -63,6 +77,9 @@ if __name__ == "__main__":
     N = len(my_hsmm.states)
     T = len(my_hsmm.obs_seq)
     D = my_hsmm.duration_probs.shape[0]
+
+    # Args for the native (C++/CUDA) functions: (n_states, trans_mat, emission_probs, start_probs, duration_probs, obs_seq)
+    _cpp_args = (N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
     print(f"\n===== DATA SUMMARY =====")
     print(f"  Data path : {data_path}")
     print(f"  States (N): {N}  -> {my_hsmm.states}")
@@ -76,20 +93,20 @@ if __name__ == "__main__":
         tc_predicted_states = decode_log_tensor_viterbi_cached(my_hsmm)
         validate("Tensor (Cached) vs Baseline", tc_predicted_states, data_path)
 
+        # print("\nRunning: Vanilla Viterbi (baseline)...\n")
+        # v_predicted_states = decode_vanilla_viterbi(my_hsmm)
+        # validate("Vanilla vs Baseline", v_predicted_states, data_path)
+
         if args.cpp:
             print("\nRunning: Tensor Viterbi C++...\n")
-            cpp_predicted_states = decode_tensor_viterbi_cpp(data_path)
+            cpp_predicted_states = decode_tensor_viterbi_cpp(*_cpp_args)
             validate("C++ vs Baseline", cpp_predicted_states, data_path)
 
         if args.cuda:
             print("\nRunning: Tensor Viterbi CUDA...\n")
-            cuda_predicted_states = decode_tensor_viterbi_cuda(data_path)
+            cuda_predicted_states = decode_tensor_viterbi_cuda(*_cpp_args)
             validate("CUDA vs Baseline", cuda_predicted_states, data_path)
 
-        if args.baseline:
-            print("\nRunning: Vanilla Viterbi (baseline)...\n")
-            v_predicted_states = decode_vanilla_viterbi(my_hsmm)
-            validate("Vanilla vs Baseline", v_predicted_states, data_path)
 
 
     elif args.mode == "measure":
@@ -105,20 +122,20 @@ if __name__ == "__main__":
             # measure_baseline_py(data_path)
 
 
-        #print("\nRunning: Tensor Viterbi (Cached)...\n")
-        #_, tc_elapsed = TIME_MEASURE(decode_log_tensor_viterbi_cached, my_hsmm)
-        #if baseline_elapsed is not None:
-        #    print(f"\n  -> speedup vs HSMMLearn C++: {baseline_elapsed / tc_elapsed:.2f}x\n")
+        print("\nRunning: Tensor Viterbi (Cached)...\n")
+        _, tc_elapsed = TIME_MEASURE(decode_log_tensor_viterbi_cached, my_hsmm)
+        if baseline_elapsed is not None:
+           print(f"\n  -> speedup vs HSMMLearn C++: {baseline_elapsed / tc_elapsed:.2f}x\n")
 
         if args.cpp:
             print("\nRunning: Tensor Viterbi C++...\n")
-            _, cpp_elapsed = TIME_MEASURE(decode_tensor_viterbi_cpp, data_path)
+            _, cpp_elapsed = TIME_MEASURE(decode_tensor_viterbi_cpp, *_cpp_args)
             if baseline_elapsed is not None:
                 print(f"\n  -> speedup vs HSMMLearn C++: {baseline_elapsed / cpp_elapsed:.2f}x\n")
 
         if args.cuda:
             print("\nRunning: Tensor Viterbi CUDA...\n")
-            _, cuda_elapsed = TIME_MEASURE(decode_tensor_viterbi_cuda, data_path)
+            _, cuda_elapsed = TIME_MEASURE(decode_tensor_viterbi_cuda, *_cpp_args)
             if baseline_elapsed is not None:
                 print(f"\n  -> speedup vs HSMMLearn C++: {baseline_elapsed / cuda_elapsed:.2f}x\n")
 
@@ -130,11 +147,11 @@ if __name__ == "__main__":
 
         if args.cpp:
             print("\nRunning: Tensor Viterbi C++...\n")
-            TIME_BENCHMARK(decode_tensor_viterbi_cpp, data_path, csv_path="viterbi_benchmark.csv", iterations=10)
+            TIME_BENCHMARK(decode_tensor_viterbi_cpp, *_cpp_args, csv_path="viterbi_benchmark.csv", iterations=10)
 
         if args.cuda:
             print("\nRunning: Tensor Viterbi CUDA...\n")
-            TIME_BENCHMARK(decode_tensor_viterbi_cuda, data_path, csv_path="viterbi_benchmark.csv", iterations=10)
+            TIME_BENCHMARK(decode_tensor_viterbi_cuda, *_cpp_args, csv_path="viterbi_benchmark.csv", iterations=10)
 
         if args.baseline:
             print("\nRunning: HSMMLearn C++ (baseline)...\n")

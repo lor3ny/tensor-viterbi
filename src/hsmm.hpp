@@ -1,100 +1,40 @@
 #pragma once
 
 #include <vector>
-#include <string>
-#include <tuple>
-#include <limits>
-#include <stdexcept>
-#include <fstream>
 
-#include "json.hpp"
+namespace hsmm {
 
-class HSMM {
+/**
+ * Decode using CPU tensor Viterbi.
+ * All matrix parameters must be in log space.
+ *
+ * @param n_states       Number of states N.
+ * @param trans_mat      N×N transition matrix, row-major.
+ * @param emission_probs O×N emission probability matrix, row-major.
+ * @param start_probs    N-element initial state distribution.
+ * @param duration_probs N×D duration probability matrix, row-major.
+ * @param obs_seq        T-element observation sequence, 0-indexed.
+ */
+std::vector<int> decode_tensor_viterbi(
+    int                        n_states,
+    const std::vector<double>& trans_mat,
+    const std::vector<double>& emission_probs,
+    const std::vector<double>& start_probs,
+    const std::vector<double>& duration_probs,
+    const std::vector<int>&    obs_seq
+);
 
+/**
+ * Decode using GPU (CUDA) tensor Viterbi.
+ * All matrix parameters must be in log space.
+ */
+std::vector<int> decode_tensor_viterbi_cuda(
+    int                        n_states,
+    const std::vector<double>& trans_mat,
+    const std::vector<double>& emission_probs,
+    const std::vector<double>& start_probs,
+    const std::vector<double>& duration_probs,
+    const std::vector<int>&    obs_seq
+);
 
-private:
-
-    std::vector<std::string> states_;           // size N
-    std::vector<std::string> emissions_;        // size O
-    std::vector<double>      trans_mat_;        // N×N  row-major
-    std::vector<double>      emission_probs_;   // O×N  row-major
-    std::vector<double>      start_probs_;      // N
-    std::vector<double>      duration_probs_;   // N×D  row-major
-
-    int N_; // number of states
-    int O_; // number of distinct emissions
-    int D_; // maximum duration
-    int T_; // length of observation sequence
-
-    std::vector<int> obs_seq_;  // integer-coded observation sequence (T)
-
-    void hsmm_to_gpu(double*& d_trans_mat, double*& d_emission_probs,
-                    double*& d_start_probs, double*& d_duration_probs,
-                    int*& d_obs_seq);
-
-    void hsmm_free_gpu(double*& d_trans_mat, double*& d_emission_probs,
-                       double*& d_start_probs, double*& d_duration_probs,
-                       int*& d_obs_seq);
-
-public:
-
-    /**
-     * @param states         State labels (size N).
-     * @param emissions      Emission labels (size O).
-     * @param trans_mat      N×N transition matrix (row-major).
-     * @param emission_probs O×N emission probability matrix (row-major).
-     * @param start_probs    N-element initial state distribution.
-     * @param duration_probs N×D duration probability matrix (row-major).
-     */
-    HSMM(const std::vector<std::string>&  states,
-         const std::vector<std::string>&  emissions,
-         const std::vector<double>&       trans_mat,
-         const std::vector<double>&       emission_probs,
-         const std::vector<double>&       start_probs,
-         const std::vector<double>&       duration_probs);
-    
-    HSMM(const std::string& json_data_path);
-    
-    int num_states()    const { return static_cast<int>(states_.size()); }
-    int num_emissions() const { return static_cast<int>(emissions_.size()); }
-    int max_duration()  const { return D_; }
-    int obs_length()    const { return static_cast<int>(obs_seq_.size()); }
-    void set_obs_seq(const std::vector<int>& obs_seq){ this->obs_seq_ = obs_seq; }
-    
-    void to_log_space();
-
-    void print() const;
-
-    // ------------------------------------------------------------------ //
-    // Viterbi Algorithm
-    // ------------------------------------------------------------------ //
-    
-    std::vector<double> compute_survival_probs() const;
-
-    void tail_adjustment(   std::vector<double>& delta,
-                            std::vector<int>&    psi_state,
-                            std::vector<int>&    psi_dur,
-                            const std::vector<double>& EMISSION_PROBS,
-                            const std::vector<double>& PAST_DELTA,
-                            const std::vector<double>& survival_probs,
-                            int T) const;
-
-    std::vector<int> backtracking_termination(const std::vector<double>& delta,
-                                              const std::vector<int>&    psi_state,
-                                              const std::vector<int>&    psi_dur,
-                                              int                        T) const;
-    
-    std::vector<int> decode_tensor_viterbi();
-
-
-    std::vector<int> decode_tensor_viterbi_cuda();
-
-    void run_induction(
-        double* d_delta, const double* d_AP,
-        const double* d_emission_probs, const int* d_obs_seq,
-        double** d_em,
-        double* d_best_val_ji, int* d_best_d_ji,
-        int* d_delta_state, int* d_delta_dur,
-        int T, int N, int D);
-
-};
+} // namespace hsmm
