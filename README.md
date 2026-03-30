@@ -71,7 +71,7 @@ source .venv/bin/activate
 
 #### Validation Requirements
 
-Oour implementation is validated against the hsmmlearn repository by jvkersch, if you want to use our validation scripts you need to clone the repo in the main folder. Just use the following command:
+Our implementation is validated against the hsmmlearn repository by jvkersch, if you want to use our validation scripts you need to clone the repo in the main folder. Just use the following command:
 
 ```bash
 git clone https://github.com/jvkersch/hsmmlearn.git
