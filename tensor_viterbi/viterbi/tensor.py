@@ -89,7 +89,7 @@ def _tail_adjustment(
 def decode_log_tensor_viterbi_cached(
         hsmm: HSMM
 ) -> np.ndarray:
-    
+
     T = len(hsmm.obs_seq)
     N = len(hsmm.states)
     D = hsmm.duration_probs.shape[0]
@@ -98,35 +98,36 @@ def decode_log_tensor_viterbi_cached(
     psi_state = np.zeros((T, N), dtype=int)
     psi_dur = np.zeros((T, N), dtype=int)
 
+    # Pre-convert once to avoid repeated .astype(int) inside the loop
+    obs_seq_int = hsmm.obs_seq.astype(int)
+
     #! PHASE 1 - INITIALIZATION 0<=t<D
     survival_probs = _compute_survival_probs(hsmm.duration_probs)
 
     PAST_DELTA = hsmm.duration_probs + hsmm.start_probs[np.newaxis, :]
 
-    obs_indices = hsmm.obs_seq[:D].astype(int)
-    emission_rows = hsmm.emission_probs[obs_indices, :]
-    cum_emission = np.cumsum(emission_rows, axis=0)
-    EMISSION_PROBS = cum_emission
+    EMISSION_PROBS = np.cumsum(hsmm.emission_probs[obs_seq_int[:D], :], axis=0)
 
     delta[0:D] = PAST_DELTA + EMISSION_PROBS
-    psi_dur[0:D] = np.arange(1, D + 1)[:, np.newaxis] * np.ones((1, N), dtype=int)
+    psi_dur[0:D] = np.arange(1, D + 1)[:, np.newaxis]  # broadcasts to (D, N)
 
     #! PHASE 2 - INDUCTION  t>0
     AP = hsmm.trans_mat[np.newaxis, :, :] + hsmm.duration_probs[:, :, np.newaxis]
     EMISSION_CACHE = np.zeros((D, N), dtype=float)
+
+    # Pre-allocate (D, N, N) buffers to avoid per-iteration heap allocation
+    DELTA_EMISSION = np.empty((D, N, N))
+    RESULT_B = np.empty((D, N, N))
+    arange_N = np.arange(N)
+
     for t in range(1, T):
         if t > D:
-            _index_t = hsmm.obs_seq[t].astype(int)
-            _probs_t = hsmm.emission_probs[_index_t, :]
-
-            EMISSION_PROBS = EMISSION_CACHE + _probs_t
-
+            _probs_t = hsmm.emission_probs[obs_seq_int[t], :]
+            np.add(EMISSION_CACHE, _probs_t, out=EMISSION_PROBS)
             EMISSION_CACHE[1:, :] = EMISSION_PROBS[: D - 1, :]
         else:
-            segment_indices = hsmm.obs_seq[max(0, t - D + 1) : t + 1].astype(int)
-            relevant_probs = hsmm.emission_probs[segment_indices, :]
-            cum_emission = np.cumsum(np.flip(relevant_probs, axis=0), axis=0)
-
+            segment_indices = obs_seq_int[max(0, t - D + 1) : t + 1]
+            cum_emission = np.cumsum(np.flip(hsmm.emission_probs[segment_indices, :], axis=0), axis=0)
             EMISSION_PROBS[: cum_emission.shape[0], :] = cum_emission
 
             if t == D:
@@ -135,26 +136,27 @@ def decode_log_tensor_viterbi_cached(
         window = delta[max(0, t - D) : t, :]
         PAST_DELTA[: window.shape[0], :] = window[::-1]
 
-        DELTA_EMISSION = PAST_DELTA[:, np.newaxis, :] + AP
-        RESULT_B = EMISSION_PROBS[:, :, np.newaxis] + DELTA_EMISSION
+        np.add(PAST_DELTA[:, np.newaxis, :], AP, out=DELTA_EMISSION)
+        np.add(EMISSION_PROBS[:, :, np.newaxis], DELTA_EMISSION, out=RESULT_B)
 
         planes = RESULT_B.transpose(1, 0, 2)
-        sliced = planes[:, : min(t, D), :]
+        t_capped = min(t, D)
+        sliced = planes[:, :t_capped, :]
         flat_idx = np.argmax(sliced.reshape(N, -1), axis=1)
 
-        slice_shape = sliced.shape[1:]
-        d_arr, i_arr = np.unravel_index(flat_idx, slice_shape)
+        d_arr, i_arr = np.unravel_index(flat_idx, (t_capped, N))
 
-        best_vals = planes[np.arange(N), d_arr, i_arr]
+        best_vals = planes[arange_N, d_arr, i_arr]
 
         if t < D:
             cond = best_vals < delta[t, :]
+            delta[t, :] = np.where(cond, delta[t, :], best_vals)
+            psi_state[t, :] = np.where(cond, psi_state[t, :], i_arr)
+            psi_dur[t, :] = np.where(cond, psi_dur[t, :], d_arr + 1)
         else:
-            cond = np.zeros(N, dtype=bool)
-
-        delta[t, :] = np.where(cond, delta[t, :], best_vals)
-        psi_state[t, :] = np.where(cond, psi_state[t, :], i_arr)
-        psi_dur[t, :] = np.where(cond, psi_dur[t, :], d_arr + 1)
+            delta[t, :] = best_vals
+            psi_state[t, :] = i_arr
+            psi_dur[t, :] = d_arr + 1
 
     #! TAIL ADJUSTMENT — t = T-1
     _tail_adjustment(delta, psi_state, psi_dur,

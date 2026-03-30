@@ -1,6 +1,8 @@
 #include "hsmm.hpp"
 #include "kernels.cuh"
 
+#include <algorithm>
+#include <cstring>
 #include <iostream>
 #include <limits>
 
@@ -214,68 +216,135 @@ std::vector<int> decode_tensor_viterbi(
     const int N = n_states;
     const int T = static_cast<int>(obs_seq.size());
     const int D = static_cast<int>(duration_probs.size()) / N;
+    const double NEG_INF = -std::numeric_limits<double>::infinity();
 
-    std::vector<double> delta    (T * N, SMOOTHNESS);
-    std::vector<int>    psi_state(T * N, 0);
-    std::vector<int>    psi_dur  (T * N, 1);
-    std::vector<double> EMISSION_PROBS(D * N, 0.0);
+    // State-major layout (n*T+t) — required by backtracking_termination
+    std::vector<double> delta    (N * T, NEG_INF);
+    std::vector<int>    psi_state(N * T, 0);
+    std::vector<int>    psi_dur  (N * T, 1);
+    // Time-major mirror (t*N+n) — for cache-friendly PAST_DELTA gather
+    std::vector<double> delta_t  (T * N, NEG_INF);
+
+    // AP[d*N*N + j*N + i] = trans_mat[j,i] + duration_probs[j,d]
+    // Matches Python: AP[d, j, i] = trans_mat[j, i] + duration_probs[d, j]
+    // Inner loop over i is contiguous → SIMD-friendly
+    std::vector<double> AP(D * N * N);
+    for (int d = 0; d < D; ++d)
+        for (int j = 0; j < N; ++j)
+            for (int i = 0; i < N; ++i)
+                AP[d * N * N + j * N + i] = trans_mat[j * N + i] + duration_probs[j * D + d];
 
     const std::vector<double> survival_probs = compute_survival_probs(N, D, duration_probs);
 
-    //* ── PHASE 1 — Initialization (0 <= t < D) ────────────────────────────── *//
-    std::vector<double> PAST_DELTA(D * N);
-    for (int d = 0; d < D; ++d)
-        for (int n = 0; n < N; ++n)
-            PAST_DELTA[d * N + n] = duration_probs[n * D + d] + start_probs[n];
+    // EMISSION_PROBS[d*N+j]     = sum of (d+1) emissions ending at obs[t], for state j
+    // EMISSION_CACHE[d*N+j]     = sum of d emissions ending at obs[t-1]  (rolling)
+    //   EMISSION_CACHE[0,:] always stays 0
+    // PAST_DELTA[d*N+i]         = delta[t-1-d, i]
+    // RESULT_B[d*N*N + j*N + i] = EMISSION_PROBS[d,j] + PAST_DELTA[d,i] + AP[d,j,i]
+    //   pre-allocated to avoid heap allocation on every iteration (matches Python pattern)
+    std::vector<double> EMISSION_PROBS(D * N, 0.0);
+    std::vector<double> EMISSION_CACHE(D * N, 0.0);
+    std::vector<double> PAST_DELTA    (D * N, NEG_INF);
+    std::vector<double> RESULT_B      (D * N * N);
 
-    std::vector<double> CUM_EMISSION(D * N, 0.0);
+    //* ── PHASE 1 — Initialization 0 <= t < D ──────────────────────────────── *//
+    // EMISSION_PROBS[d, j] = cumsum(emission_probs[obs[0:d+1], :], axis=0)[d, j]
     for (int d = 0; d < D; ++d) {
-        int obs = obs_seq[d];
-        for (int n = 0; n < N; ++n) {
-            double prev = (d > 0) ? CUM_EMISSION[(d - 1) * N + n] : 0.0;
-            CUM_EMISSION[d * N + n] = prev + emission_probs[obs * N + n];
+        const double* em_d = &emission_probs[obs_seq[d] * N];
+        for (int j = 0; j < N; ++j) {
+            const double prev = (d > 0) ? EMISSION_PROBS[(d - 1) * N + j] : 0.0;
+            EMISSION_PROBS[d * N + j] = prev + em_d[j];
+        }
+    }
+    // delta[t, j] = duration_probs[j, t] + start_probs[j] + EMISSION_PROBS[t, j]
+    for (int d = 0; d < D; ++d) {
+        for (int j = 0; j < N; ++j) {
+            const double v = duration_probs[j * D + d] + start_probs[j] + EMISSION_PROBS[d * N + j];
+            delta  [j * T + d] = v;
+            delta_t[d * N + j] = v;
+            psi_dur[j * T + d] = d + 1;
         }
     }
 
-    for (int t = 0; t < D; ++t)
-        for (int n = 0; n < N; ++n) {
-            delta  [n * T + t] = PAST_DELTA[t * N + n] + CUM_EMISSION[t * N + n];
-            psi_dur[n * T + t] = t + 1;
-        }
-
-    // ── AP: (N x N x D) ──────────────────────────────────────────────────── //
-    std::vector<double> AP(N * N * D);
-    for (int j = 0; j < N; ++j)
-        for (int i = 0; i < N; ++i)
-            for (int d = 0; d < D; ++d)
-                AP[j * N * D + i * D + d] = trans_mat[j * N + i] + duration_probs[j * D + d];
-
-    //* ── PHASE 2 — Induction (t >= 1) ──────────────────────────────────────── *//
+    //* ── PHASE 2 — Induction t >= 1 ────────────────────────────────────────── *//
     for (int t = 1; t < T; ++t) {
-        const int tau = std::min(t, D);
+        const int tau      = std::min(t, D);
+        const double* em_t = &emission_probs[obs_seq[t] * N];
 
-        for (int n = 0; n < N; ++n) {
-            double new_em = emission_probs[obs_seq[t] * N + n];
-            for (int d = tau - 1; d >= 1; --d)
-                EMISSION_PROBS[d * N + n] = new_em + EMISSION_PROBS[(d - 1) * N + n];
-            EMISSION_PROBS[0 * N + n] = new_em;
+        // --- Update EMISSION_PROBS ---
+        if (t > D) {
+            // Rolling cache: EMISSION_PROBS[d, j] = EMISSION_CACHE[d, j] + em_t[j]
+            // Matches Python: np.add(EMISSION_CACHE, _probs_t, out=EMISSION_PROBS)
+            for (int d = 0; d < D; ++d) {
+                const double* c = &EMISSION_CACHE[d * N];
+                double*       p = &EMISSION_PROBS[d * N];
+                for (int j = 0; j < N; ++j)
+                    p[j] = c[j] + em_t[j];
+            }
+            // Shift cache: EMISSION_CACHE[1:] = EMISSION_PROBS[0:D-1]
+            // Matches Python: EMISSION_CACHE[1:, :] = EMISSION_PROBS[: D - 1, :]
+            std::memcpy(EMISSION_CACHE.data() + N, EMISSION_PROBS.data(),
+                        (D - 1) * N * sizeof(double));
+        } else {
+            // Recompute from scratch for t <= D (reversed cumsum over obs[t..t-tau+1])
+            // Matches Python: cumsum(flip(emission_probs[segment, :], axis=0), axis=0)
+            for (int j = 0; j < N; ++j)
+                EMISSION_PROBS[j] = em_t[j];
+            for (int d = 1; d < tau; ++d) {
+                const double* em_back = &emission_probs[obs_seq[t - d] * N];
+                const double* prev_p  = &EMISSION_PROBS[(d - 1) * N];
+                double*       cur_p   = &EMISSION_PROBS[d * N];
+                for (int j = 0; j < N; ++j)
+                    cur_p[j] = prev_p[j] + em_back[j];
+            }
+            // Initialise rolling cache once t == D
+            // Matches Python: EMISSION_CACHE[1:, :] = cum_emission[: D - 1, :]
+            if (t == D)
+                std::memcpy(EMISSION_CACHE.data() + N, EMISSION_PROBS.data(),
+                            (D - 1) * N * sizeof(double));
         }
 
+        // --- Gather PAST_DELTA[d, i] = delta[t-1-d, i] ---
+        // Time-major mirror: each memcpy reads N contiguous doubles (no stride)
         for (int d = 0; d < tau; ++d)
-            for (int n = 0; n < N; ++n)
-                PAST_DELTA[d * N + n] = delta[n * T + (t - 1 - d)];
+            std::memcpy(&PAST_DELTA[d * N], &delta_t[(t - 1 - d) * N],
+                        N * sizeof(double));
 
+        // --- Phase A: fill RESULT_B tensor ---
+        // RESULT_B[d, j, i] = EMISSION_PROBS[d, j] + PAST_DELTA[d, i] + AP[d, j, i]
+        // Matches Python:
+        //   np.add(PAST_DELTA[:, np.newaxis, :], AP, out=DELTA_EMISSION)
+        //   np.add(EMISSION_PROBS[:, :, np.newaxis], DELTA_EMISSION, out=RESULT_B)
+        // Loop order d→j→i: writes to RESULT_B[d*N*N+j*N+i] and reads from AP[d*N*N+j*N+i]
+        // are fully contiguous in i (innermost axis) → auto-vectorisable
+        for (int d = 0; d < tau; ++d) {
+            const double* pd    = &PAST_DELTA[d * N];
+            const double* ap_d  = &AP[d * N * N];
+            double*       rb_d  = &RESULT_B[d * N * N];
+            for (int j = 0; j < N; ++j) {
+                const double  ep    = EMISSION_PROBS[d * N + j];
+                const double* ap_dj = &ap_d[j * N];
+                double*       rb_dj = &rb_d[j * N];
+                for (int i = 0; i < N; ++i)
+                    rb_dj[i] = ep + pd[i] + ap_dj[i];
+            }
+        }
+
+        // --- Phase B: argmax over (d, i) for each j ---
+        // Matches Python:
+        //   planes   = RESULT_B.transpose(1, 0, 2)           # (N, tau, N)
+        //   flat_idx = np.argmax(planes.reshape(N, -1), axis=1)
+        //   d_arr, i_arr = np.unravel_index(flat_idx, (tau, N))
         for (int j = 0; j < N; ++j) {
-            double best_val = -std::numeric_limits<double>::infinity();
+            double best_val = NEG_INF;
             int    best_d   = 0;
             int    best_i   = 0;
 
             for (int d = 0; d < tau; ++d) {
-                const double ep = EMISSION_PROBS[d * N + j];
+                const double* rb_dj = &RESULT_B[d * N * N + j * N];
                 for (int i = 0; i < N; ++i) {
-                    const double val = ep + PAST_DELTA[d * N + i] + AP[j * N * D + i * D + d];
-                    if (val > best_val) {
-                        best_val = val;
+                    if (rb_dj[i] > best_val) {
+                        best_val = rb_dj[i];
                         best_d   = d;
                         best_i   = i;
                     }
@@ -285,9 +354,11 @@ std::vector<int> decode_tensor_viterbi(
             const bool update = (t >= D) || (best_val > delta[j * T + t]);
             if (update) {
                 delta    [j * T + t] = best_val;
+                delta_t  [t * N + j] = best_val;
                 psi_state[j * T + t] = best_i;
                 psi_dur  [j * T + t] = best_d + 1;
             }
+            // t < D + no update: delta_t[t*N+j] already holds the Phase-1 value ✓
         }
     }
 
