@@ -19,6 +19,7 @@ std::vector<int> decode_tensor_viterbi(
     int                        n_states,
     const std::vector<double>& trans_mat,
     const std::vector<double>& emission_probs,
+    const std::vector<double>& emission_probs_linear,
     const std::vector<double>& start_probs,
     const std::vector<double>& duration_probs,
     const std::vector<int>&    obs_seq
@@ -32,6 +33,7 @@ std::vector<int> decode_tensor_viterbi_cuda(
     int                        n_states,
     const std::vector<double>& trans_mat,
     const std::vector<double>& emission_probs,
+    const std::vector<double>& emission_probs_linear,
     const std::vector<double>& start_probs,
     const std::vector<double>& duration_probs,
     const std::vector<int>&    obs_seq

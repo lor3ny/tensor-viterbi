@@ -14,6 +14,7 @@ static py::array_t<int> _run(
     const int n_states,
     arr_d trans_mat,        // (N, N) — log space, Python row-major layout
     arr_d emission_probs,   // (O, N) — log space
+    arr_d emission_probs_linear, // (O, N) — linear space (not log), for debugging
     arr_d start_probs,      // (N,)   — log space
     arr_d duration_probs,   // (D, N) — log space, Python layout D×N
     arr_i obs_seq,          // (T,)   — 0-indexed int
@@ -30,6 +31,9 @@ static py::array_t<int> _run(
     // emission_probs (O,N): Python row-major flat[o*N+s] — matches C++ layout
     std::vector<double> ep(emission_probs.data(), emission_probs.data() + O * N);
 
+    // emission_probs_linear (O,N): Python row-major flat[o*N+s] — matches C++ layout
+    std::vector<double> epl(emission_probs_linear.data(), emission_probs_linear.data() + O * N);
+
     // start_probs (N,)
     std::vector<double> sp(start_probs.data(), start_probs.data() + N);
 
@@ -44,8 +48,8 @@ static py::array_t<int> _run(
     std::vector<int> obs(obs_seq.data(), obs_seq.data() + T);
 
     std::vector<int> result = cuda
-        ? hsmm::decode_tensor_viterbi_cuda(N, tm, ep, sp, dp, obs)
-        : hsmm::decode_tensor_viterbi(N, tm, ep, sp, dp, obs);
+        ? hsmm::decode_tensor_viterbi_cuda(N, tm, ep, epl, sp, dp, obs)
+        : hsmm::decode_tensor_viterbi(N, tm, ep, epl, sp, dp, obs);
 
     auto out = py::array_t<int>(result.size());
     std::copy(result.begin(), result.end(), out.mutable_data());
@@ -58,25 +62,25 @@ PYBIND11_MODULE(_native, m) {
 
     m.def("decode_tensor_viterbi_cpp",
           [](int n_states,
-             arr_d trans_mat, arr_d emission_probs,
+             arr_d trans_mat, arr_d emission_probs, arr_d emission_probs_linear,
              arr_d start_probs, arr_d duration_probs,
              arr_i obs_seq) {
-              return _run(n_states, trans_mat, emission_probs,
+              return _run(n_states, trans_mat, emission_probs, emission_probs_linear,
                           start_probs, duration_probs, obs_seq, false);
           },
-          py::arg("n_states"), py::arg("trans_mat"), py::arg("emission_probs"),
+          py::arg("n_states"), py::arg("trans_mat"), py::arg("emission_probs"), py::arg("emission_probs_linear"), 
           py::arg("start_probs"), py::arg("duration_probs"), py::arg("obs_seq"),
           "Run tensor Viterbi on CPU (C++). Data must already be in log space.");
 
     m.def("decode_tensor_viterbi_cuda",
           [](int n_states,
-             arr_d trans_mat, arr_d emission_probs,
+             arr_d trans_mat, arr_d emission_probs, arr_d emission_probs_linear,
              arr_d start_probs, arr_d duration_probs,
              arr_i obs_seq) {
-              return _run(n_states, trans_mat, emission_probs,
+              return _run(n_states, trans_mat, emission_probs, emission_probs_linear,
                           start_probs, duration_probs, obs_seq, true);
           },
-          py::arg("n_states"), py::arg("trans_mat"), py::arg("emission_probs"),
+          py::arg("n_states"), py::arg("trans_mat"), py::arg("emission_probs"), py::arg("emission_probs_linear"),
           py::arg("start_probs"), py::arg("duration_probs"), py::arg("obs_seq"),
           "Run tensor Viterbi on GPU (CUDA). Data must already be in log space.");
 }
