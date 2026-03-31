@@ -57,6 +57,7 @@ def TIME_BENCHMARK(func, *args, csv_path="benchmark.csv", iterations=100, **kwar
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--py", action="store_true", help="Enable Python backend")
     parser.add_argument("--cuda", action="store_true", help="Enable CUDA backend")
     parser.add_argument("--cpp", action="store_true", help="Enable C++ backend")
     parser.add_argument("--omp", action="store_true", help="Enable OpenMP backend")
@@ -120,9 +121,11 @@ if __name__ == "__main__":
 
     if args.mode == "validate":
 
-        print(f"{YEL}{BOLD}▶ Tensor Viterbi (Cached){R}")
-        tc_predicted_states = decode_log_tensor_viterbi_cached(my_hsmm)
-        validate("Tensor (Cached) vs Baseline", tc_predicted_states, data_path)
+
+        if args.py:
+            print(f"{YEL}{BOLD}▶ Tensor Viterbi (Cached){R}")
+            tc_predicted_states = decode_log_tensor_viterbi_cached(my_hsmm)
+            validate("Tensor (Cached) vs Baseline", tc_predicted_states, data_path)
 
         # v_predicted_states = decode_vanilla_viterbi(my_hsmm)
         # validate("Vanilla vs Baseline", v_predicted_states, data_path)
@@ -157,11 +160,13 @@ if __name__ == "__main__":
 
             # TIME_MEASURE(decode_vanilla_viterbi, my_hsmm)
             # measure_baseline_py(data_path)
+    
 
-        print(f"{YEL}{BOLD}▶ Tensor Viterbi (Cached){R}")
-        _, tc_elapsed = TIME_MEASURE(decode_log_tensor_viterbi_cached, my_hsmm)
-        if baseline_elapsed is not None:
-            print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{baseline_elapsed / tc_elapsed:.2f}x{R} vs HSMMLearn C++\n")
+        if args.py:
+            print(f"{YEL}{BOLD}▶ Tensor Viterbi (Cached){R}")
+            _, tc_elapsed = TIME_MEASURE(decode_log_tensor_viterbi_cached, my_hsmm)
+            if baseline_elapsed is not None:
+                print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{baseline_elapsed / tc_elapsed:.2f}x{R} vs HSMMLearn C++\n")
 
         if args.cpp:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi C++{R}")
@@ -188,7 +193,9 @@ if __name__ == "__main__":
 
     elif args.mode == "benchmark":
 
-        # TIME_BENCHMARK(decode_log_tensor_viterbi_cached, my_hsmm, csv_path="viterbi_benchmark.csv", iterations=10)
+        if args.py:
+            print(f"{YEL}{BOLD}▶ Tensor Viterbi Python{R}")
+            TIME_BENCHMARK(decode_log_tensor_viterbi_cached, my_hsmm, csv_path="viterbi_benchmark.csv", iterations=10)
 
         if args.cpp:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi C++{R}")

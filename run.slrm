@@ -25,7 +25,7 @@ cd /leonardo/home/userexternal/lpiarull/fast-viterbi
 
 #python run_viterbi.py --baseline --cpp -m measure -dp data/16states_1000steps_100dur.json
 #python run_viterbi.py --baseline --cpp -m measure -dp data/32states_1000steps_100dur.json
-python run_viterbi.py --baseline --cpp --omp -m measure -dp data/64states_10000steps_200dur.json
+python run_viterbi.py --cpp --omp -m measure -dp data/64states_100000steps_1000dur.json
 
 # python run_viterbi.py --baseline --cpp --omp -m measure -dp data/16states_10000steps_200dur.json
 # python run_viterbi.py --baseline --cpp --omp -m measure -dp data/32states_10000steps_200dur.json

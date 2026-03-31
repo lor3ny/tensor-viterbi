@@ -96,15 +96,15 @@ static void tail_adjustment(
         int    best_i   = 0;
 
         for (int d = 0; d < tau; ++d) {
-            const double ep = EMISSION_PROBS[d * N + j];
+            const double  ep   = EMISSION_PROBS[d * N + j] + survival_probs[d * N + j];
+            const double* tm_j = &trans_mat[j * N];
+            const double* pd   = &delta_t[(t - 1 - d) * N];
+            #pragma GCC ivdep
             for (int i = 0; i < N; ++i) {
-                const double ap_tail = trans_mat[j * N + i] + survival_probs[d * N + j];
-                const double val = ep + delta_t[(t - 1 - d) * N + i] + ap_tail;
-                if (val > best_val) {
-                    best_val = val;
-                    best_d   = d;
-                    best_i   = i;
-                }
+                const double val = ep + pd[i] + tm_j[i];
+                best_i   = (val > best_val) ? i   : best_i;
+                best_d   = (val > best_val) ? d   : best_d;
+                best_val = (val > best_val) ? val : best_val;
             }
         }
 
@@ -231,19 +231,21 @@ std::vector<int> decode_tensor_viterbi(
     std::vector<double> delta_t  (T * N, NEG_INF);
 
 
-    //* Brick Compuring: AP = TRANS_MAT + DURATION_PROBS
-    std::vector<double> AP(D * N * N);
-    for (int d = 0; d < D; ++d)
-        for (int j = 0; j < N; ++j)
+    //* AP = TRANS_MAT + DURATION_PROBS — layout [j, d, i] (j outermost)
+    // AP[j*D*N + d*N + i]: for fixed j, all (d, i) entries are contiguous.
+    // The argmax inner loop accesses AP[j*D*N + d*N ..] with d varying —
+    // a contiguous D*N*8 = 100 KB block per j, fitting in L2.
+    std::vector<double> AP(N * D * N);
+    for (int j = 0; j < N; ++j)
+        for (int d = 0; d < D; ++d)
             for (int i = 0; i < N; ++i)
-                AP[d * N * N + j * N + i] = trans_mat[j * N + i] + duration_probs[j * D + d];
+                AP[j * D * N + d * N + i] = trans_mat[j * N + i] + duration_probs[j * D + d];
 
     const std::vector<double> survival_probs = compute_survival_probs(N, D, duration_probs);
 
 
     std::vector<double> EMISSION_PROBS(D * N, 0.0);
     std::vector<double> EMISSION_CACHE(D * N, 0.0);
-    std::vector<double> RESULT_B      (D * N * N);
 
     //* ── PHASE 1 — Initialization 0 <= t < D ──────────────────────────────── *//
     // EMISSION_PROBS[d, j] = cumsum(emission_probs[obs[0:d+1], :], axis=0)[d, j]
@@ -301,35 +303,26 @@ std::vector<int> decode_tensor_viterbi(
                             (D - 1) * N * sizeof(double));
         }
 
-        //* PAST DELTA IS EXTRACTED DURING UPDATE TO AVOID REDUNDANT MEMCPY
-        //* BRICK UPDATE: RESULT_B[d, j, i] = EMISSION_PROBS + PAST_DELTA + AP
-        for (int d = 0; d < tau; ++d) {
-            const double* pd    = &delta_t[(t - 1 - d) * N];
-            const double* ap_d  = &AP[d * N * N];
-            double*       rb_d  = &RESULT_B[d * N * N];
-            for (int j = 0; j < N; ++j) {
-                const double  ep    = EMISSION_PROBS[d * N + j];
-                const double* ap_dj = &ap_d[j * N];
-                double*       rb_dj = &rb_d[j * N];
-                for (int i = 0; i < N; ++i)
-                    rb_dj[i] = ep + pd[i] + ap_dj[i];
-            }
-        }
-
-        //* ARGMAX
+        //* FUSED BRICK UPDATE + ARGMAX
+        // AP layout [j,d,i]: ap_dj = &AP[j*D*N + d*N] is contiguous over d —
+        // the full D*N block for this j stays in L2 across the d loop.
+        // Branchless ternaries + ivdep let the compiler emit AVX2 cmov/blend
+        // for the inner i reduction, avoiding branch mispredictions.
         for (int j = 0; j < N; ++j) {
             double best_val = NEG_INF;
             int    best_d   = 0;
             int    best_i   = 0;
 
             for (int d = 0; d < tau; ++d) {
-                const double* rb_dj = &RESULT_B[d * N * N + j * N];
+                const double  ep    = EMISSION_PROBS[d * N + j];
+                const double* ap_dj = &AP[j * D * N + d * N];
+                const double* pd    = &delta_t[(t - 1 - d) * N];
+                #pragma GCC ivdep
                 for (int i = 0; i < N; ++i) {
-                    if (rb_dj[i] > best_val) {
-                        best_val = rb_dj[i];
-                        best_d   = d;
-                        best_i   = i;
-                    }
+                    const double val = ep + pd[i] + ap_dj[i];
+                    best_i   = (val > best_val) ? i   : best_i;
+                    best_d   = (val > best_val) ? d   : best_d;
+                    best_val = (val > best_val) ? val : best_val;
                 }
             }
 
@@ -376,12 +369,13 @@ std::vector<int> decode_tensor_viterbi_omp(
     std::vector<double> survival_probs(D * N, NEG_INF);
 
     //* ── AP = TRANS_MAT + DURATION_PROBS ───────────────────────────────────── *//
-    // d, j, i are fully independent — collapse all three loops.
+    // Layout [j, d, i]: AP[j*D*N + d*N + i]. For fixed j the full D*N*8 = 100 KB
+    // block is contiguous, fitting in L2 across the d loop of the argmax.
+    // j, d, i are fully independent — collapse all three loops.
     // Declared here (shared) so Phase 2 and tail adjustment can access them.
-    std::vector<double> AP(D * N * N);
+    std::vector<double> AP(N * D * N);
     std::vector<double> EMISSION_PROBS(D * N, 0.0);
     std::vector<double> EMISSION_CACHE(D * N, 0.0);
-    std::vector<double> RESULT_B      (D * N * N);
 
     //* ── Single persistent thread team for all phases ──────────────────────── *//
     // One spawn/join for the whole function. Sequential steps use omp single
@@ -400,12 +394,12 @@ std::vector<int> decode_tensor_viterbi_omp(
             }
         }
 
-        // ── AP (d, j, i fully independent) ───────────────────────────────── //
+        // ── AP (j, d, i fully independent) ───────────────────────────────── //
         #pragma omp for collapse(3) schedule(static)
-        for (int d = 0; d < D; ++d)
-            for (int j = 0; j < N; ++j)
+        for (int j = 0; j < N; ++j)
+            for (int d = 0; d < D; ++d)
                 for (int i = 0; i < N; ++i)
-                    AP[d * N * N + j * N + i] = trans_mat[j * N + i] + duration_probs[j * D + d];
+                    AP[j * D * N + d * N + i] = trans_mat[j * N + i] + duration_probs[j * D + d];
 
         //* ── PHASE 1 — Initialization 0 <= t < D ──────────────────────────── *//
         // The d loop is sequential (each row reads from d-1).
@@ -471,19 +465,11 @@ std::vector<int> decode_tensor_viterbi_omp(
                 }
             }
 
-            // ── Brick Update: RB[d,j,i] = EP[d,j] + delta_t[t-1-d,i] + AP[d,j,i] ── //
-            #pragma omp for collapse(3) schedule(static)
-            for (int d = 0; d < tau; ++d)
-                for (int j = 0; j < N; ++j)
-                    for (int i = 0; i < N; ++i)
-                        RESULT_B[d * N * N + j * N + i] =
-                            EMISSION_PROBS[d * N + j]
-                            + delta_t[(t - 1 - d) * N + i]
-                            + AP[d * N * N + j * N + i];
-
-            // ── Argmax over (d, i) for each j ─────────────────────────────── //
-            // Implicit barrier after this omp for ensures delta_t[t*N+j] is
-            // fully written before the next t step reads it.
+            // ── Fused Brick Update + Argmax ───────────────────────────────── //
+            // AP layout [j,d,i]: contiguous D*N*8 = 100 KB block per j stays in L2.
+            // Branchless ternaries + ivdep enable AVX2 cmov on the inner i loop.
+            // Implicit barrier at the end ensures delta_t[t*N+j] is fully written
+            // before the next t step reads it.
             #pragma omp for schedule(static)
             for (int j = 0; j < N; ++j) {
                 double best_val = NEG_INF;
@@ -491,13 +477,15 @@ std::vector<int> decode_tensor_viterbi_omp(
                 int    best_i   = 0;
 
                 for (int d = 0; d < tau; ++d) {
-                    const double* rb_dj = &RESULT_B[d * N * N + j * N];
+                    const double  ep    = EMISSION_PROBS[d * N + j];
+                    const double* ap_dj = &AP[j * D * N + d * N];
+                    const double* pd    = &delta_t[(t - 1 - d) * N];
+                    #pragma GCC ivdep
                     for (int i = 0; i < N; ++i) {
-                        if (rb_dj[i] > best_val) {
-                            best_val = rb_dj[i];
-                            best_d   = d;
-                            best_i   = i;
-                        }
+                        const double val = ep + pd[i] + ap_dj[i];
+                        best_i   = (val > best_val) ? i   : best_i;
+                        best_d   = (val > best_val) ? d   : best_d;
+                        best_val = (val > best_val) ? val : best_val;
                     }
                 }
 
@@ -523,17 +511,15 @@ std::vector<int> decode_tensor_viterbi_omp(
                 int    best_i   = 0;
 
                 for (int d = 0; d < tau; ++d) {
-                    const double ep = EMISSION_PROBS[d * N + j];
+                    const double  ep    = EMISSION_PROBS[d * N + j] + survival_probs[d * N + j];
+                    const double* tm_j  = &trans_mat[j * N];
+                    const double* pd    = &delta_t[(t - 1 - d) * N];
+                    #pragma GCC ivdep
                     for (int i = 0; i < N; ++i) {
-                        const double val = ep
-                            + delta_t[(t - 1 - d) * N + i]
-                            + trans_mat[j * N + i]
-                            + survival_probs[d * N + j];
-                        if (val > best_val) {
-                            best_val = val;
-                            best_d   = d;
-                            best_i   = i;
-                        }
+                        const double val = ep + pd[i] + tm_j[i];
+                        best_i   = (val > best_val) ? i   : best_i;
+                        best_d   = (val > best_val) ? d   : best_d;
+                        best_val = (val > best_val) ? val : best_val;
                     }
                 }
 
