@@ -36,17 +36,20 @@ static py::array_t<int> _run(
     // start_probs (N,)
     std::vector<double> sp(start_probs.data(), start_probs.data() + N);
 
-    // duration_probs & duration_probs_linear : Python (D,N) → C++ needs (N,D) row-major: dp[s*D+d]
+    // duration_probs : Python (D,N) → C++ needs (N,D) row-major: dp[s*D+d]
     auto dp_buf = duration_probs.unchecked<2>();
     std::vector<double> dp(N * D);
+    for (int s = 0; s < N; ++s)
+        for (int d = 0; d < D; ++d)
+            dp[s * D + d] = dp_buf(d, s);
+    
+    // duration_probs_linear : Python (D,N) → C++ needs (N,D) row-major: dpl[s*D+d]
+    auto dpl_buf = duration_probs_linear.unchecked<2>();
     std::vector<double> dpl(N * D);
     for (int s = 0; s < N; ++s)
         for (int d = 0; d < D; ++d)
-        {
-            dp[s * D + d] = dp_buf(d, s);
-            dpl[s * D + d] = dp_buf(d, s);
-        }
-
+            dpl[s * D + d] = dpl_buf(d, s);
+    
     // obs_seq (T,)
     std::vector<int> obs(obs_seq.data(), obs_seq.data() + T);
 

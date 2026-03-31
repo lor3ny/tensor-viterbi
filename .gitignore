@@ -48,3 +48,9 @@ build/*
 CMakeCache.*
 hsmmlearn/*
 src/tensor-viterbi
+
+# Logs
+logs/*
+
+# scripts
+my_run.slurm

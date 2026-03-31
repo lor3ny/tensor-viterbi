@@ -15,7 +15,7 @@ class HSMM:
             self.emissions = emissions
             self.trans_mat = trans_mat
             self.emission_probs = emission_prob
-            self.duration_probs_linear = duration_probs
+            self.duration_probs_linear = duration_probs_linear
             self.start_probs = start_probs
             self.duration_probs = duration_probs
 
@@ -114,7 +114,7 @@ class HSMM:
             sleep_emissions, 
             np.log(sleep_trans_mat.T + smoothness), 
             np.log(sleep_emission_probs + smoothness), 
-            sleep_duration_probs,
+            sleep_duration_probs.T + smoothness,
             np.log(sleep_start_probs + smoothness), 
             np.log(sleep_duration_probs.T + smoothness)
         )

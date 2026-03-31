@@ -12,8 +12,6 @@
 #include <cuda_runtime.h>
 #include <cooperative_groups.h>
 
-#define SMOOTHNESS 1e-30
-
 #define CUDA_CHECK(call)                                                        \
     do {                                                                        \
         cudaError_t err = (call);                                               \
@@ -52,7 +50,7 @@ static void run_induction(
     const double* d_emission_probs, const double* duration_probs_linear,
     const int* d_obs_seq,
     double** d_em,
-    double* d_best_val_ji, int* d_best_d_ji,
+    double* d_best_val_ji, int* d_psi_dur_ji,
     int* d_psi_state, int* d_psi_dur,
     int T, int N, int D);
 
@@ -75,6 +73,7 @@ static std::vector<double> compute_survival_probs(
             survival_probs[d * N + j] = cum;
         }
     }
+    // TODO: convert to log-space
     return survival_probs;
 }
 
@@ -109,10 +108,13 @@ static void tail_adjustment(
             }
         }
 
+        printf("[CPU] j=%d | best_i=%d best_d=%d best_val=%.6f\n", j, best_i, best_d, best_val);
+
         delta    [j * T + t] = best_val;
         psi_state[j * T + t] = best_i;
         psi_dur  [j * T + t] = best_d + 1;
     }
+
 }
 
 static std::vector<int> backtracking_termination(
@@ -165,14 +167,14 @@ static void hsmm_to_gpu(
 {
     CUDA_CHECK(cudaMalloc(&d_trans_mat,      N * N * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_emission_probs, O * N * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_duration_probs_linear, O * N * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_duration_probs_linear, N * D * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_start_probs,    N     * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_duration_probs, N * D * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_obs_seq,        T     * sizeof(int)));
 
     CUDA_CHECK(cudaMemcpy(d_trans_mat,      trans_mat.data(),      N * N * sizeof(double), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_emission_probs, emission_probs.data(), O * N * sizeof(double), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_duration_probs_linear, duration_probs_linear.data(), O * N * sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_duration_probs_linear, duration_probs_linear.data(), N * D * sizeof(double), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_start_probs,    start_probs.data(),    N     * sizeof(double), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_duration_probs, duration_probs.data(), N * D * sizeof(double), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_obs_seq,        obs_seq.data(),        T     * sizeof(int),    cudaMemcpyHostToDevice));
@@ -576,16 +578,18 @@ std::vector<int> decode_tensor_viterbi_cuda(
 
     double* d_delta          = nullptr;
     double* d_AP             = nullptr;
+    double* d_AP_tail        = nullptr;
     double* d_emissions      = nullptr;
-    double* d_best_state_ji  = nullptr;
-    int*    d_best_d_ji      = nullptr;
+    double* d_psi_state_ji  = nullptr;
+    int*    d_psi_dur_ji      = nullptr;
     int*    d_psi_state      = nullptr;
     int*    d_psi_dur        = nullptr;
     CUDA_CHECK(cudaMalloc(&d_delta,         N * T     * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_AP,            D * N * N * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_AP_tail,       D * N * N * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_emissions,     D * N     * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_best_state_ji, N * N     * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_best_d_ji,     N * N     * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_psi_state_ji, N * N     * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_psi_dur_ji,     N * N     * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_psi_state,     N * T     * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_psi_dur,       N * T     * sizeof(int)));
 
@@ -594,16 +598,15 @@ std::vector<int> decode_tensor_viterbi_cuda(
     CUDA_CHECK(cudaMalloc(&d_em[1], D * N * sizeof(double)));
 
     //* ── PHASE 1 — Initialization & AP ──────────────────────────────────────── *//
-    // TODO: Add survival probs computation
     int bs_init = 1;
     while (bs_init < D) bs_init <<= 1;
     const int    num_warps = bs_init / 32;
-    const size_t sm_init   = (bs_init + num_warps) * sizeof(double);
+    const size_t sm_init = (2*bs_init + num_warps) * sizeof(double);
     kernel_initialization<<<dim3(N, N), dim3(bs_init), sm_init>>>(
         d_start_probs, d_duration_probs,
-        d_emission_probs, d_obs_seq,
-        d_delta, d_psi_dur,
-        d_trans_mat, d_AP,
+        d_duration_probs_linear, d_emission_probs,
+        d_obs_seq, d_delta, d_psi_dur,
+        d_trans_mat, d_AP, d_AP_tail,
         N, D, T);
     CUDA_CHECK(cudaGetLastError());
 
@@ -613,12 +616,31 @@ std::vector<int> decode_tensor_viterbi_cuda(
         d_emission_probs, d_duration_probs_linear, 
         d_obs_seq,
         d_em,
-        d_best_state_ji, d_best_d_ji,
+        d_psi_state_ji, d_psi_dur_ji,
         d_psi_state, d_psi_dur,
         T, N, D);
     
     //* ── Tail Adjustment ─────────────────────────────────────────────────────── *//
-    // TODO: Tail Adjustment kernel
+    const int tau = std::min(T-1, D);
+    const int cur_final = (T - 1) % 2;
+    int bs = 1;
+    while (bs < tau) bs <<= 1;
+    const size_t sm = bs * (sizeof(double) + sizeof(int));
+    kernel_tail_adjustment<<<dim3(N, N), dim3(bs), sm>>>(
+        d_AP_tail, d_em[cur_final],
+        d_delta,
+        d_psi_state_ji, d_psi_dur_ji,
+        N, D, T);
+    CUDA_CHECK(cudaGetLastError());
+
+    kernel_tail_reduce_i<<<1, N>>>(
+        d_psi_state_ji, d_psi_dur_ji,
+        d_delta, d_psi_state, d_psi_dur,
+        N, D, T, T - 1);
+    CUDA_CHECK(cudaGetLastError());
+    
+    CUDA_CHECK(cudaDeviceSynchronize());
+
 
     CUDA_CHECK(cudaMemcpy(delta.data(),     d_delta,     N * T * sizeof(double), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(psi_state.data(), d_psi_state, N * T * sizeof(int),    cudaMemcpyDeviceToHost));
@@ -627,9 +649,10 @@ std::vector<int> decode_tensor_viterbi_cuda(
     hsmm_free_gpu(d_trans_mat, d_emission_probs, d_duration_probs_linear, d_start_probs, d_duration_probs, d_obs_seq);
     CUDA_CHECK(cudaFree(d_delta));
     CUDA_CHECK(cudaFree(d_AP));
+    CUDA_CHECK(cudaFree(d_AP_tail));
     CUDA_CHECK(cudaFree(d_emissions));
-    CUDA_CHECK(cudaFree(d_best_state_ji));
-    CUDA_CHECK(cudaFree(d_best_d_ji));
+    CUDA_CHECK(cudaFree(d_psi_state_ji));
+    CUDA_CHECK(cudaFree(d_psi_dur_ji));
     CUDA_CHECK(cudaFree(d_psi_state));
     CUDA_CHECK(cudaFree(d_psi_dur));
     CUDA_CHECK(cudaFree(d_em[0]));
@@ -650,7 +673,7 @@ static void run_induction(
     const double* d_emission_probs, const double* duration_probs_linear,
     const int* d_obs_seq,
     double** d_em,
-    double* d_best_state_ji, int* d_best_d_ji,
+    double* d_psi_state_ji, int* d_psi_dur_ji,
     int* d_psi_state, int* d_psi_dur,
     int T, int N, int D)
 {
@@ -667,7 +690,7 @@ static void run_induction(
         void* args[] = {
             &d_obs_seq, &d_emission_probs, &d_delta, &d_AP,
             &d_em[0], &d_em[1],
-            &d_best_state_ji, &d_best_d_ji,
+            &d_psi_state_ji, &d_psi_dur_ji,
             &d_psi_state, &d_psi_dur,
             &N, &D, &T
         };
@@ -688,11 +711,11 @@ static void run_induction(
             kernel_induction<<<dim3(N, N), dim3(bs), sm>>>(
                 d_obs_seq, d_emission_probs, d_delta, d_AP,
                 d_em[cur], d_em[nxt],
-                d_best_state_ji, d_best_d_ji, N, D, T, tau, t);
+                d_psi_state_ji, d_psi_dur_ji, N, D, T, tau, t);
             CUDA_CHECK(cudaGetLastError());
 
             kernel_reduce_i<<<1, N>>>(
-                d_best_state_ji, d_best_d_ji,
+                d_psi_state_ji, d_psi_dur_ji,
                 d_delta, d_psi_state, d_psi_dur,
                 N, D, T, t);
             CUDA_CHECK(cudaGetLastError());
@@ -700,6 +723,4 @@ static void run_induction(
             cur = nxt;
         }
     }
-
-    CUDA_CHECK(cudaDeviceSynchronize());
 }

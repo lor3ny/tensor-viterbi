@@ -6,12 +6,14 @@
 
 __global__ void kernel_initialization(
         const double* __restrict__ start_probs,
-        const double* __restrict__ duration_probs,
-        const double* __restrict__ emission_probs, 
+        const double* __restrict__ duration_probs,         // N×D log-space
+        const double* __restrict__ duration_probs_linear,  // N×D linear-space
+        const double* __restrict__ emission_probs,
         const int*    __restrict__ obs_seq,
         double* delta, int* psi_dur,
         const double* __restrict__ trans_mat,
         double* AP,
+        double* AP_tail,
         int N, int D, int T);
 
     
@@ -54,6 +56,17 @@ __global__ void kernel_persistent(
 
 // ── Tail Adjustment kernel ─────────────────────────────────────────────── //
 __global__ void kernel_tail_adjustment(
-    const double* __restrict__ survival_probs,
-    double* delta, int* psi_state, int* psi_dur,
+    const double* __restrict__ AP_tail,         // N×N×D — trans_mat + log_surv
+    const double* __restrict__ d_em_last,       // D×N — emissions t=T-1
+    double*                    delta,           // N×T — lettura past delta
+    double*                    psi_state_ji,    // N×N — output per kernel_reduce_i
+    int*                       psi_dur_ji,      // N×N — output per kernel_reduce_i
     int N, int D, int T);
+
+__global__ void kernel_tail_reduce_i(
+    const double* __restrict__ psi_state_ji,
+    const int*    __restrict__ psi_dur_ji,
+    double*                    delta,
+    int*                       psi_state,
+    int*                       psi_dur,
+    int N, int D, int T, int t);
