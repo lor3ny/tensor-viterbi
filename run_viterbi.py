@@ -59,6 +59,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--cuda", action="store_true", help="Enable CUDA backend")
     parser.add_argument("--cpp", action="store_true", help="Enable C++ backend")
+    parser.add_argument("--omp", action="store_true", help="Enable OpenMP backend")
     parser.add_argument("--baseline", action="store_true", help="Enable baselines (HSMMLearn C++, Vanilla Viterbi)")
     parser.add_argument("--mode", "-m", choices=["validate", "measure", "benchmark"], required=True)
     parser.add_argument("--data-path", "-dp", type=str, default="data/3states_20steps_4dur.json")
@@ -77,11 +78,20 @@ if __name__ == "__main__":
         from tensor_viterbi.viterbi import (
             decode_tensor_viterbi_cuda,
         )
+    if args.omp:
+        from tensor_viterbi.viterbi import (
+            decode_tensor_viterbi_omp,
+        )
     if args.baseline:
         from validation.hsmmlearn_viterbi import (
             validate,
             measure_baseline,
             benchmark_baseline
+        )
+        from validation.hsmmlearn_omp_viterbi import (
+            validate as validate_omp,
+            measure_baseline as measure_baseline_omp,
+            benchmark_baseline as benchmark_baseline_omp,
         )
         from validation.hsmmlearn_py_viterbi import (
             validate_py,
@@ -122,6 +132,12 @@ if __name__ == "__main__":
             cpp_predicted_states = decode_tensor_viterbi_cpp(*_cpp_args)
             validate("C++ vs Baseline", cpp_predicted_states, data_path)
 
+        if args.omp:
+            print(f"{YEL}{BOLD}▶ Tensor Viterbi OMP{R}")
+            omp_predicted_states = decode_tensor_viterbi_omp(*_cpp_args)
+            validate("OMP vs Baseline", omp_predicted_states, data_path)
+            validate_omp("OMP vs Baseline (HSMMLearn OMP)", omp_predicted_states, data_path)
+
         if args.cuda:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi CUDA{R}")
             cuda_predicted_states = decode_tensor_viterbi_cuda(*_cpp_args)
@@ -130,9 +146,13 @@ if __name__ == "__main__":
 
     elif args.mode == "measure":
         baseline_elapsed = None
+        omp_baseline_elapsed = None
         if args.baseline:
             print(f"{YEL}{BOLD}▶ HSMMLearn C++ (baseline){R}")
             baseline_elapsed = measure_baseline(data_path)
+
+            print(f"{YEL}{BOLD}▶ HSMMLearn OMP (baseline){R}")
+            omp_baseline_elapsed = measure_baseline_omp(data_path)
 
             # TIME_MEASURE(decode_vanilla_viterbi, my_hsmm)
             # measure_baseline_py(data_path)
@@ -147,6 +167,12 @@ if __name__ == "__main__":
             _, cpp_elapsed = TIME_MEASURE(decode_tensor_viterbi_cpp, *_cpp_args)
             if baseline_elapsed is not None:
                 print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{baseline_elapsed / cpp_elapsed:.2f}x{R} vs HSMMLearn C++\n")
+
+        if args.omp:
+            print(f"{YEL}{BOLD}▶ Tensor Viterbi OMP{R}")
+            _, omp_elapsed = TIME_MEASURE(decode_tensor_viterbi_omp, *_cpp_args)
+            if omp_baseline_elapsed is not None:
+                print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{omp_baseline_elapsed / omp_elapsed:.2f}x{R} vs HSMMLearn C++\n")
 
         if args.cuda:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi CUDA{R}")
@@ -163,6 +189,10 @@ if __name__ == "__main__":
             print(f"{YEL}{BOLD}▶ Tensor Viterbi C++{R}")
             TIME_BENCHMARK(decode_tensor_viterbi_cpp, *_cpp_args, csv_path="viterbi_benchmark.csv", iterations=10)
 
+        if args.omp:
+            print(f"{YEL}{BOLD}▶ Tensor Viterbi OMP{R}")
+            TIME_BENCHMARK(decode_tensor_viterbi_omp, *_cpp_args, csv_path="viterbi_benchmark.csv", iterations=10)
+
         if args.cuda:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi CUDA{R}")
             TIME_BENCHMARK(decode_tensor_viterbi_cuda, *_cpp_args, csv_path="viterbi_benchmark.csv", iterations=10)
@@ -170,6 +200,9 @@ if __name__ == "__main__":
         if args.baseline:
             print(f"{YEL}{BOLD}▶ HSMMLearn C++ (baseline){R}")
             benchmark_baseline(data_path, csv_path="viterbi_benchmark.csv", iterations=10)
+
+            print(f"{YEL}{BOLD}▶ HSMMLearn OMP (baseline){R}")
+            benchmark_baseline_omp(data_path, csv_path="viterbi_benchmark.csv", iterations=10)
 
             print(f"{YEL}{BOLD}▶ HSMMLearn Python (baseline){R}")
             benchmark_baseline_py(data_path, csv_path="viterbi_benchmark.csv", iterations=10)

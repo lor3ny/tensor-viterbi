@@ -10,6 +10,8 @@ using arr_d = py::array_t<double, py::array::c_style | py::array::forcecast>;
 using arr_i = py::array_t<int,    py::array::c_style | py::array::forcecast>;
 
 
+enum class Backend { CPP, OMP, CUDA };
+
 static py::array_t<int> _run(
     const int n_states,
     arr_d trans_mat,                // (N, N) — log space, Python row-major layout
@@ -18,7 +20,7 @@ static py::array_t<int> _run(
     arr_d start_probs,              // (N,)   — log space
     arr_d duration_probs,           // (D, N) — log space, Python layout D×N
     arr_i obs_seq,                  // (T,)   — 0-indexed int
-    bool cuda)
+    Backend backend)
 {
     const int N = n_states;
     const int O = static_cast<int>(emission_probs.shape(0));
@@ -44,13 +46,16 @@ static py::array_t<int> _run(
             dp[s * D + d] = dp_buf(d, s);
             dpl[s * D + d] = dp_buf(d, s);
         }
-    
+
     // obs_seq (T,)
     std::vector<int> obs(obs_seq.data(), obs_seq.data() + T);
 
-    std::vector<int> result = cuda
-        ? hsmm::decode_tensor_viterbi_cuda(N, tm, ep, dpl, sp, dp, obs)
-        : hsmm::decode_tensor_viterbi(N, tm, ep, dpl, sp, dp, obs);
+    std::vector<int> result;
+    switch (backend) {
+        case Backend::CUDA: result = hsmm::decode_tensor_viterbi_cuda(N, tm, ep, dpl, sp, dp, obs); break;
+        case Backend::OMP:  result = hsmm::decode_tensor_viterbi_omp (N, tm, ep, dpl, sp, dp, obs); break;
+        default:            result = hsmm::decode_tensor_viterbi     (N, tm, ep, dpl, sp, dp, obs); break;
+    }
 
     auto out = py::array_t<int>(result.size());
     std::copy(result.begin(), result.end(), out.mutable_data());
@@ -67,11 +72,24 @@ PYBIND11_MODULE(_native, m) {
              arr_d start_probs, arr_d duration_probs,
              arr_i obs_seq) {
               return _run(n_states, trans_mat, emission_probs, duration_probs_linear,
-                          start_probs, duration_probs, obs_seq, false);
+                          start_probs, duration_probs, obs_seq, Backend::CPP);
           },
-          py::arg("n_states"), py::arg("trans_mat"), py::arg("emission_probs"), py::arg("duration_probs_linear"), 
+          py::arg("n_states"), py::arg("trans_mat"), py::arg("emission_probs"), py::arg("duration_probs_linear"),
           py::arg("start_probs"), py::arg("duration_probs"), py::arg("obs_seq"),
           "Run tensor Viterbi on CPU (C++). Data must already be in log space.");
+
+    m.def("decode_tensor_viterbi_omp",
+          [](int n_states,
+             arr_d trans_mat, arr_d emission_probs, arr_d duration_probs_linear,
+             arr_d start_probs, arr_d duration_probs,
+             arr_i obs_seq) {
+              return _run(n_states, trans_mat, emission_probs, duration_probs_linear,
+                          start_probs, duration_probs, obs_seq, Backend::OMP);
+          },
+          py::arg("n_states"), py::arg("trans_mat"), py::arg("emission_probs"),
+          py::arg("duration_probs_linear"), py::arg("start_probs"),
+          py::arg("duration_probs"), py::arg("obs_seq"),
+          "Run tensor Viterbi on CPU with OpenMP parallelism. Data must already be in log space.");
 
     m.def("decode_tensor_viterbi_cuda",
           [](int n_states,
@@ -79,7 +97,7 @@ PYBIND11_MODULE(_native, m) {
              arr_d start_probs, arr_d duration_probs,
              arr_i obs_seq) {
               return _run(n_states, trans_mat, emission_probs, duration_probs_linear,
-                          start_probs, duration_probs, obs_seq, true);
+                          start_probs, duration_probs, obs_seq, Backend::CUDA);
           },
           py::arg("n_states"), py::arg("trans_mat"), py::arg("emission_probs"), py::arg("duration_probs_linear"),
           py::arg("start_probs"), py::arg("duration_probs"), py::arg("obs_seq"),

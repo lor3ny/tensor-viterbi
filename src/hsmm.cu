@@ -2,9 +2,11 @@
 #include "kernels.cuh"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <omp.h>
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -342,6 +344,213 @@ std::vector<int> decode_tensor_viterbi(
     tail_adjustment(delta, psi_state, psi_dur,
                     EMISSION_PROBS, delta_t, survival_probs,
                     trans_mat, N, D, T);
+
+    return backtracking_termination(delta, psi_state, psi_dur, N, T);
+}
+
+
+std::vector<int> decode_tensor_viterbi_omp(
+    const int                  n_states,
+    const std::vector<double>& trans_mat,
+    const std::vector<double>& emission_probs,
+    const std::vector<double>& duration_probs_linear,
+    const std::vector<double>& start_probs,
+    const std::vector<double>& duration_probs,
+    const std::vector<int>&    obs_seq)
+{
+    const int N = n_states;
+    const int T = static_cast<int>(obs_seq.size());
+    const int D = static_cast<int>(duration_probs.size()) / N;
+    const double NEG_INF = -std::numeric_limits<double>::infinity();
+
+    std::vector<double> delta    (N * T, NEG_INF);
+    std::vector<int>    psi_state(N * T, 0);
+    std::vector<int>    psi_dur  (N * T, 1);
+    std::vector<double> delta_t  (T * N, NEG_INF);
+
+    //* ── AP = TRANS_MAT + DURATION_PROBS ───────────────────────────────────── *//
+    // d, j, i are fully independent — collapse all three loops.
+    std::vector<double> AP(D * N * N);
+    #pragma omp parallel for collapse(3) schedule(static)
+    for (int d = 0; d < D; ++d)
+        for (int j = 0; j < N; ++j)
+            for (int i = 0; i < N; ++i)
+                AP[d * N * N + j * N + i] = trans_mat[j * N + i] + duration_probs[j * D + d];
+
+    //* ── Survival Probs ─────────────────────────────────────────────────────── *//
+    // The d loop carries a running sum per state j, but j iterations are
+    // independent of each other — parallelize over j only.
+    std::vector<double> survival_probs(D * N, NEG_INF);
+    #pragma omp parallel for schedule(static)
+    for (int j = 0; j < N; ++j) {
+        double cum = NEG_INF;
+        for (int d = D - 1; d >= 0; --d) {
+            const double lp = duration_probs[j * D + d];
+            const double m  = std::max(cum, lp);
+            cum = (m == NEG_INF) ? lp : m + std::log(std::exp(cum - m) + std::exp(lp - m));
+            survival_probs[d * N + j] = cum;
+        }
+    }
+
+    std::vector<double> EMISSION_PROBS(D * N, 0.0);
+    std::vector<double> EMISSION_CACHE(D * N, 0.0);
+    std::vector<double> RESULT_B      (D * N * N);
+
+    //* ── PHASE 1 — Initialization 0 <= t < D ──────────────────────────────── *//
+    // The d loop is sequential (each row reads from d-1).
+    // The j loop inside is fully independent — vectorize and parallelize it.
+    for (int d = 0; d < D; ++d) {
+        const double* em_d = &emission_probs[obs_seq[d] * N];
+        #pragma omp parallel for simd schedule(static)
+        for (int j = 0; j < N; ++j) {
+            const double prev = (d > 0) ? EMISSION_PROBS[(d - 1) * N + j] : 0.0;
+            EMISSION_PROBS[d * N + j] = prev + em_d[j];
+        }
+    }
+    // d and j are fully independent here — collapse both loops.
+    #pragma omp parallel for collapse(2) schedule(static)
+    for (int d = 0; d < D; ++d)
+        for (int j = 0; j < N; ++j) {
+            delta_t[d * N + j] = duration_probs[j * D + d] + start_probs[j] + EMISSION_PROBS[d * N + j];
+            psi_dur[j * T + d] = d + 1;
+        }
+
+    //* ── PHASE 2 — Induction t >= 1 ────────────────────────────────────────── *//
+    // The t loop is sequential (each step reads delta_t written by t-1).
+    // We use a single persistent omp parallel region to avoid the cost of
+    // spawning/joining a thread team on every t step.
+    // Sequential bookkeeping uses omp single (implicit barrier included).
+    // Parallel inner loops use omp for.  The implicit barrier at the end of
+    // each omp for / omp single enforces the data-flow ordering within each step.
+    int    tau_sh  = 0;
+    const double* em_t_sh = nullptr;
+
+    #pragma omp parallel default(shared)
+    {
+        for (int t = 1; t < T; ++t) {
+
+            // Sequential setup — one thread computes, barrier broadcasts.
+            #pragma omp single
+            {
+                tau_sh  = std::min(t, D);
+                em_t_sh = &emission_probs[obs_seq[t] * N];
+            }
+            // After omp single's implicit barrier all threads see tau_sh / em_t_sh.
+            const int     tau  = tau_sh;
+            const double* em_t = em_t_sh;
+
+            // ── Emission probs ────────────────────────────────────────────── //
+            if (t > D) {
+                // Rolling update: EP[d,j] = cache[d,j] + em_t[j]
+                // d and j are fully independent.
+                #pragma omp for collapse(2) schedule(static)
+                for (int d = 0; d < D; ++d)
+                    for (int j = 0; j < N; ++j)
+                        EMISSION_PROBS[d * N + j] = EMISSION_CACHE[d * N + j] + em_t[j];
+                // Cache shift — sequential, runs after EP is fully written.
+                #pragma omp single
+                std::memcpy(EMISSION_CACHE.data() + N, EMISSION_PROBS.data(),
+                            (D - 1) * N * sizeof(double));
+            } else {
+                // Scratch build (reversed cumsum). The d loop is sequential
+                // (each row depends on d-1); the j loop inside is independent.
+                // d = 0: assign
+                #pragma omp for schedule(static)
+                for (int j = 0; j < N; ++j)
+                    EMISSION_PROBS[j] = em_t[j];
+                // d >= 1: accumulate — implicit barrier after each omp for
+                // ensures row d-1 is complete before row d reads it.
+                for (int d = 1; d < tau; ++d) {
+                    const double* em_back = &emission_probs[obs_seq[t - d] * N];
+                    const double* prev_p  = &EMISSION_PROBS[(d - 1) * N];
+                    double*       cur_p   = &EMISSION_PROBS[d * N];
+                    #pragma omp for schedule(static)
+                    for (int j = 0; j < N; ++j)
+                        cur_p[j] = prev_p[j] + em_back[j];
+                }
+                // Initialise rolling cache once t == D (sequential, one thread).
+                #pragma omp single
+                {
+                    if (t == D)
+                        std::memcpy(EMISSION_CACHE.data() + N, EMISSION_PROBS.data(),
+                                    (D - 1) * N * sizeof(double));
+                }
+            }
+
+            // ── Brick Update: RB[d,j,i] = EP[d,j] + delta_t[t-1-d,i] + AP[d,j,i] ── //
+            // d, j, i are fully independent — collapse all three loops.
+            #pragma omp for collapse(3) schedule(static)
+            for (int d = 0; d < tau; ++d)
+                for (int j = 0; j < N; ++j)
+                    for (int i = 0; i < N; ++i)
+                        RESULT_B[d * N * N + j * N + i] =
+                            EMISSION_PROBS[d * N + j]
+                            + delta_t[(t - 1 - d) * N + i]
+                            + AP[d * N * N + j * N + i];
+
+            // ── Argmax over (d, i) for each j ────────────────────────────── //
+            // Each j is independent — distribute j across threads.
+            // The implicit barrier after this omp for guarantees delta_t[t*N+j]
+            // is fully written before the next t iteration reads it.
+            #pragma omp for schedule(static)
+            for (int j = 0; j < N; ++j) {
+                double best_val = NEG_INF;
+                int    best_d   = 0;
+                int    best_i   = 0;
+
+                for (int d = 0; d < tau; ++d) {
+                    const double* rb_dj = &RESULT_B[d * N * N + j * N];
+                    for (int i = 0; i < N; ++i) {
+                        if (rb_dj[i] > best_val) {
+                            best_val = rb_dj[i];
+                            best_d   = d;
+                            best_i   = i;
+                        }
+                    }
+                }
+
+                const bool update = (t >= D) || (best_val > delta_t[t * N + j]);
+                if (update) {
+                    delta_t  [t * N + j] = best_val;
+                    psi_state[j * T + t] = best_i;
+                    psi_dur  [j * T + t] = best_d + 1;
+                }
+            }
+        } // for t
+    } // omp parallel
+
+    //* ── TAIL ADJUSTMENT — t = T-1 ──────────────────────────────────────────── *//
+    // j iterations are fully independent — parallelize directly.
+    {
+        const int t   = T - 1;
+        const int tau = std::min(t, D);
+
+        #pragma omp parallel for schedule(static)
+        for (int j = 0; j < N; ++j) {
+            double best_val = NEG_INF;
+            int    best_d   = 0;
+            int    best_i   = 0;
+
+            for (int d = 0; d < tau; ++d) {
+                const double ep = EMISSION_PROBS[d * N + j];
+                for (int i = 0; i < N; ++i) {
+                    const double val = ep
+                        + delta_t[(t - 1 - d) * N + i]
+                        + trans_mat[j * N + i]
+                        + survival_probs[d * N + j];
+                    if (val > best_val) {
+                        best_val = val;
+                        best_d   = d;
+                        best_i   = i;
+                    }
+                }
+            }
+
+            delta    [j * T + t] = best_val;
+            psi_state[j * T + t] = best_i;
+            psi_dur  [j * T + t] = best_d + 1;
+        }
+    }
 
     return backtracking_termination(delta, psi_state, psi_dur, N, T);
 }

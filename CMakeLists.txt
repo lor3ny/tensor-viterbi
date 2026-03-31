@@ -19,6 +19,10 @@ endif()
 
 message(STATUS "Selected GPU Platform: ${GPU_PLATFORM}")
 
+# --- OpenMP ---
+find_package(OpenMP REQUIRED)
+message(STATUS "OpenMP found: ${OpenMP_CXX_FLAGS}")
+
 # --- 2. Setup ROCm/HIP Logic ---
 if(GPU_PLATFORM STREQUAL "ROCM")
     # Using the config-mode search which is more reliable on LUMI
@@ -91,13 +95,15 @@ set_target_properties(_native PROPERTIES
 # --- 5. Restoring YOUR Optimization Flags ---
 target_compile_options(_native PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-O3 -Wall -Wextra -Wno-unused-parameter -ffast-math>
-    $<$<COMPILE_LANGUAGE:HIP>:-O3 -ffast-math -Wall -Wextra -Wno-unused-parameter>
-    $<$<COMPILE_LANGUAGE:CUDA>:-O3 -Xcompiler=-Wall,-Wextra,-Wno-unused-parameter>
+    $<$<COMPILE_LANGUAGE:HIP>:-O3 -ffast-math -Wall -Wextra -Wno-unused-parameter -fopenmp>
+    $<$<COMPILE_LANGUAGE:CUDA>:-O3 -Xcompiler=-Wall,-Wextra,-Wno-unused-parameter,-fopenmp>
 )
 
 target_include_directories(_native BEFORE PRIVATE ${HIPIFY_OUT_DIR})
 target_include_directories(_native PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(_native SYSTEM PRIVATE ${PYTHON_INC} ${PYBIND_INC})
+
+target_link_libraries(_native PRIVATE OpenMP::OpenMP_CXX)
 
 if(GPU_PLATFORM STREQUAL "ROCM")
     target_link_libraries(_native PRIVATE hip::host)

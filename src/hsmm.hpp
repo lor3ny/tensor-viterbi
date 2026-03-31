@@ -26,6 +26,20 @@ std::vector<int> decode_tensor_viterbi(
 );
 
 /**
+ * Decode using CPU tensor Viterbi with OpenMP parallelism.
+ * All matrix parameters must be in log space.
+ */
+std::vector<int> decode_tensor_viterbi_omp(
+    int                        n_states,
+    const std::vector<double>& trans_mat,
+    const std::vector<double>& emission_probs,
+    const std::vector<double>& duration_probs_linear,
+    const std::vector<double>& start_probs,
+    const std::vector<double>& duration_probs,
+    const std::vector<int>&    obs_seq
+);
+
+/**
  * Decode using GPU (CUDA) tensor Viterbi.
  * All matrix parameters must be in log space.
  */
