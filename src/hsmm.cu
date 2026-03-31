@@ -47,7 +47,7 @@ static bool check_cooperative_launch(const void* kernel, int block_size, size_t 
 // forward declaration — defined after decode_tensor_viterbi_cuda
 static void run_induction(
     double* d_delta, const double* d_AP,
-    const double* d_emission_probs, const double* emission_probs_linear,
+    const double* d_emission_probs, const double* duration_probs_linear,
     const int* d_obs_seq,
     double** d_em,
     double* d_best_val_ji, int* d_best_d_ji,
@@ -59,6 +59,7 @@ static std::vector<double> compute_survival_probs(
     int N, int D,
     const std::vector<double>& duration_probs)
 {
+    // TODO: compute survival in linear space using duration_probs_linear
     // layout D×N: survival_probs[d*N + j]
     std::vector<double> survival_probs(D * N, -std::numeric_limits<double>::infinity());
     for (int j = 0; j < N; ++j) {
@@ -149,27 +150,27 @@ static void hsmm_to_gpu(
     int N, int O, int D, int T,
     const std::vector<double>& trans_mat,
     const std::vector<double>& emission_probs,
-    const std::vector<double>& emission_probs_linear,
+    const std::vector<double>& duration_probs_linear,
     const std::vector<double>& start_probs,
     const std::vector<double>& duration_probs,
     const std::vector<int>&    obs_seq,
     double*& d_trans_mat,
     double*& d_emission_probs,
-    double*& d_emission_probs_linear,
+    double*& d_duration_probs_linear,
     double*& d_start_probs,
     double*& d_duration_probs,
     int*&    d_obs_seq)
 {
     CUDA_CHECK(cudaMalloc(&d_trans_mat,      N * N * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_emission_probs, O * N * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_emission_probs_linear, O * N * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_duration_probs_linear, O * N * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_start_probs,    N     * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_duration_probs, N * D * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_obs_seq,        T     * sizeof(int)));
 
     CUDA_CHECK(cudaMemcpy(d_trans_mat,      trans_mat.data(),      N * N * sizeof(double), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_emission_probs, emission_probs.data(), O * N * sizeof(double), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_emission_probs_linear, emission_probs_linear.data(), O * N * sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_duration_probs_linear, duration_probs_linear.data(), O * N * sizeof(double), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_start_probs,    start_probs.data(),    N     * sizeof(double), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_duration_probs, duration_probs.data(), N * D * sizeof(double), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_obs_seq,        obs_seq.data(),        T     * sizeof(int),    cudaMemcpyHostToDevice));
@@ -178,21 +179,21 @@ static void hsmm_to_gpu(
 static void hsmm_free_gpu(
     double*& d_trans_mat,
     double*& d_emission_probs,
-    double*& d_emission_probs_linear,
+    double*& d_duration_probs_linear,
     double*& d_start_probs,
     double*& d_duration_probs,
     int*&    d_obs_seq)
 {
     CUDA_CHECK(cudaFree(d_trans_mat));
     CUDA_CHECK(cudaFree(d_emission_probs));
-    CUDA_CHECK(cudaFree(d_emission_probs_linear));
+    CUDA_CHECK(cudaFree(d_duration_probs_linear));
     CUDA_CHECK(cudaFree(d_start_probs));
     CUDA_CHECK(cudaFree(d_duration_probs));
     CUDA_CHECK(cudaFree(d_obs_seq));
 
     d_trans_mat      = nullptr;
     d_emission_probs = nullptr;
-    d_emission_probs_linear = nullptr;
+    d_duration_probs_linear = nullptr;
     d_start_probs    = nullptr;
     d_duration_probs = nullptr;
     d_obs_seq        = nullptr;
@@ -208,7 +209,7 @@ std::vector<int> decode_tensor_viterbi(
     const int                  n_states,
     const std::vector<double>& trans_mat,
     const std::vector<double>& emission_probs,
-    const std::vector<double>& emission_probs_linear,
+    const std::vector<double>& duration_probs_linear,
     const std::vector<double>& start_probs,
     const std::vector<double>& duration_probs,
     const std::vector<int>&    obs_seq)
@@ -375,7 +376,7 @@ std::vector<int> decode_tensor_viterbi_cuda(
     const int                  n_states,
     const std::vector<double>& trans_mat,
     const std::vector<double>& emission_probs,
-    const std::vector<double>& emission_probs_linear,
+    const std::vector<double>& duration_probs_linear,
     const std::vector<double>& start_probs,
     const std::vector<double>& duration_probs,
     const std::vector<int>&    obs_seq)
@@ -391,13 +392,13 @@ std::vector<int> decode_tensor_viterbi_cuda(
 
     double* d_trans_mat      = nullptr;
     double* d_emission_probs = nullptr;
-    double* d_emission_probs_linear = nullptr;
+    double* d_duration_probs_linear = nullptr;
     double* d_start_probs    = nullptr;
     double* d_duration_probs = nullptr;
     int*    d_obs_seq        = nullptr;
     hsmm_to_gpu(N, O, D, T,
-                trans_mat, emission_probs, emission_probs_linear, start_probs, duration_probs, obs_seq,
-                d_trans_mat, d_emission_probs, d_emission_probs_linear, d_start_probs, d_duration_probs, d_obs_seq);
+                trans_mat, emission_probs, duration_probs_linear, start_probs, duration_probs, obs_seq,
+                d_trans_mat, d_emission_probs, d_duration_probs_linear, d_start_probs, d_duration_probs, d_obs_seq);
 
     double* d_delta          = nullptr;
     double* d_AP             = nullptr;
@@ -419,6 +420,7 @@ std::vector<int> decode_tensor_viterbi_cuda(
     CUDA_CHECK(cudaMalloc(&d_em[1], D * N * sizeof(double)));
 
     //* ── PHASE 1 — Initialization & AP ──────────────────────────────────────── *//
+    // TODO: Add survival probs computation
     int bs_init = 1;
     while (bs_init < D) bs_init <<= 1;
     const int    num_warps = bs_init / 32;
@@ -434,18 +436,21 @@ std::vector<int> decode_tensor_viterbi_cuda(
     //* ── PHASE 2 — Induction ─────────────────────────────────────────────────── *//
     run_induction(
         d_delta, d_AP,
-        d_emission_probs, d_emission_probs_linear, 
+        d_emission_probs, d_duration_probs_linear, 
         d_obs_seq,
         d_em,
         d_best_state_ji, d_best_d_ji,
         d_psi_state, d_psi_dur,
         T, N, D);
+    
+    //* ── Tail Adjustment ─────────────────────────────────────────────────────── *//
+    // TODO: Tail Adjustment kernel
 
     CUDA_CHECK(cudaMemcpy(delta.data(),     d_delta,     N * T * sizeof(double), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(psi_state.data(), d_psi_state, N * T * sizeof(int),    cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(psi_dur.data(),   d_psi_dur,   N * T * sizeof(int),    cudaMemcpyDeviceToHost));
 
-    hsmm_free_gpu(d_trans_mat, d_emission_probs, d_emission_probs_linear, d_start_probs, d_duration_probs, d_obs_seq);
+    hsmm_free_gpu(d_trans_mat, d_emission_probs, d_duration_probs_linear, d_start_probs, d_duration_probs, d_obs_seq);
     CUDA_CHECK(cudaFree(d_delta));
     CUDA_CHECK(cudaFree(d_AP));
     CUDA_CHECK(cudaFree(d_emissions));
@@ -468,7 +473,7 @@ std::vector<int> decode_tensor_viterbi_cuda(
 // ============================================================
 static void run_induction(
     double* d_delta, const double* d_AP,
-    const double* d_emission_probs, const double* emission_probs_linear,
+    const double* d_emission_probs, const double* duration_probs_linear,
     const int* d_obs_seq,
     double** d_em,
     double* d_best_state_ji, int* d_best_d_ji,

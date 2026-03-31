@@ -24,25 +24,25 @@ def decode_tensor_viterbi_cpp(
         n_states,
         trans_mat,
         emission_probs,
-        emission_probs_linear,
+        duration_probs_linear,
         start_probs,
         duration_probs,
         obs_seq
 ) -> np.ndarray:
     if not _NATIVE_AVAILABLE:
         raise RuntimeError("Native extension not built. Run: cmake -B build && cmake --build build")
-    return _decode_cpp(n_states, trans_mat, emission_probs, emission_probs_linear, start_probs, duration_probs, obs_seq)
+    return _decode_cpp(n_states, trans_mat, emission_probs, duration_probs_linear, start_probs, duration_probs, obs_seq)
 
 
 def decode_tensor_viterbi_cuda(
         n_states,
         trans_mat,
         emission_probs,
-        emission_probs_linear,
+        duration_probs_linear,
         start_probs,
         duration_probs,
         obs_seq
 ) -> np.ndarray:
     if not _NATIVE_AVAILABLE:
         raise RuntimeError("Native extension not built. Run: cmake -B build && cmake --build build")
-    return _decode_cuda(n_states, trans_mat, emission_probs, emission_probs_linear, start_probs, duration_probs, obs_seq)
+    return _decode_cuda(n_states, trans_mat, emission_probs, duration_probs_linear, start_probs, duration_probs, obs_seq)

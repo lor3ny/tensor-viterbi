@@ -96,8 +96,8 @@ if __name__ == "__main__":
     T = len(my_hsmm.obs_seq)
     D = my_hsmm.duration_probs.shape[0]
 
-    # Args for the native (C++/CUDA) functions: (n_states, trans_mat, emission_probs, start_probs, duration_probs, obs_seq)
-    _cpp_args = (N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.emission_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
+    # Args for the native (C++/CUDA) functions: (n_states, trans_mat, emission_probs,duration_probs_linear, start_probs, duration_probs, obs_seq)
+    _cpp_args = (N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
 
     print(f"\n{SEP}")
     print(f"  {BOLD}{CYAN}DATA SUMMARY{R}")

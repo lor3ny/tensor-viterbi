@@ -51,3 +51,9 @@ __global__ void kernel_persistent(
     int*                       psi_state,  // T×N
     int*                       psi_dur,    // T×N
     int N, int D, int T);
+
+// ── Tail Adjustment kernel ─────────────────────────────────────────────── //
+__global__ void kernel_tail_adjustment(
+    const double* __restrict__ survival_probs,
+    double* delta, int* psi_state, int* psi_dur,
+    int N, int D, int T);

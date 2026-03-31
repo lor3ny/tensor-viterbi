@@ -10,12 +10,12 @@ import json
 #! ----------------------------------------------------
 
 class HSMM:
-    def __init__(self, states, emissions, trans_mat, emission_prob, emission_prob_linear, start_probs, duration_probs):
+    def __init__(self, states, emissions, trans_mat, emission_prob, duration_probs_linear, start_probs, duration_probs):
             self.states = states
             self.emissions = emissions
             self.trans_mat = trans_mat
             self.emission_probs = emission_prob
-            self.emission_probs_linear = emission_prob_linear
+            self.duration_probs_linear = duration_probs
             self.start_probs = start_probs
             self.duration_probs = duration_probs
 
@@ -114,7 +114,7 @@ class HSMM:
             sleep_emissions, 
             np.log(sleep_trans_mat.T + smoothness), 
             np.log(sleep_emission_probs + smoothness), 
-            sleep_emission_probs,
+            sleep_duration_probs,
             np.log(sleep_start_probs + smoothness), 
             np.log(sleep_duration_probs.T + smoothness)
         )
