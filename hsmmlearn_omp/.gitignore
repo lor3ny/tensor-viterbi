@@ -1,6 +1,5 @@
 *.pyc
 *.so
-*.cpp
 
 *.egg-info/
 build/

@@ -48,6 +48,14 @@ build/*
 CMakeCache.*
 hsmmlearn/build/*
 hsmmlearn_omp/build/*
+*.pyc
+*.so
+*.egg-info/
+build/
+
+
+
+
 src/tensor-viterbi
 
 # Logs

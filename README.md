@@ -10,6 +10,7 @@ Tensor Hidden Semi-Markov Model (HSMM) Viterbi decoding in Python, C++, and CUDA
 | `decode_log_tensor_viterbi_cached` | ✅ Active | Vectorized log-space tensor implementation with emission caching |
 | `decode_tensor_viterbi_cpp` | ✅ Active | C++ tensor implementation (via pybind11) |
 | `decode_tensor_viterbi_cuda` | ✅ Active | GPU tensor implementation (via pybind11 + CUDA) |
+| `decode_tensor_viterbi_omp` | ✅ Active | OpenMP-parallelized C++ tensor implementation (via pybind11) |
 | `decode_log_tensor_viterbi_no_cache` | ⚠️ Deprecated | Log-space tensor without emission caching, slower than cached version |
 | `decode_tensor_viterbi` | ⚠️ Deprecated | Linear-space tensor, underflows after ~370 timesteps |
 
@@ -32,7 +33,8 @@ tensor-viterbi/
 │   └── viterbi/
 │       ├── tensor.py        # Python tensor implementations
 │       ├── vanilla.py       
-│       └── _native.pyi      # type stubs for C++/CUDA extension
+│       ├── native.py        # Python wrappers for C++/CUDA/OMP extensions
+│       └── _native.pyi      # type stubs for C++/CUDA/OMP extension
 ├── src/
 │   ├── bindings.cpp         
 │   └── src/                 # C++ / CUDA sources
@@ -40,7 +42,9 @@ tensor-viterbi/
 │       ├── kernels.cu / .cuh
 │       └── main.cpp
 ├── data/                    # JSON model files
-├── validation/              # hsmmlearn baseline
+├── validation/              # validation scripts against hsmmlearn
+├── hsmmlearn/               # bundled hsmmlearn (jvkersch) for validation
+├── hsmmlearn_omp/           # bundled hsmmlearn with OMP support for validation
 ├── run_viterbi.py           # CLI runner
 └── CMakeLists.txt
 ```
@@ -71,12 +75,11 @@ source .venv/bin/activate
 
 #### Validation Requirements
 
-Our implementation is validated against the hsmmlearn repository by jvkersch, if you want to use our validation scripts you need to clone the repo in the main folder. Just use the following command:
+Our implementation is validated against [hsmmlearn](https://github.com/jvkersch/hsmmlearn) by jvkersch. Both `hsmmlearn` and `hsmmlearn_omp` are bundled in this repository. To install them:
 
 ```bash
-git clone https://github.com/jvkersch/hsmmlearn.git
-cd hsmmlearn
-pip install .
+pip install ./hsmmlearn
+pip install ./hsmmlearn_omp
 ```
 
 #### Python only (no C++/CUDA)

@@ -6,10 +6,11 @@ from .viterbi import (
 )
 
 try:
-    from .viterbi.native import decode_tensor_viterbi_cpp, decode_tensor_viterbi_cuda
+    from .viterbi.native import decode_tensor_viterbi_cpp, decode_tensor_viterbi_cuda, decode_tensor_viterbi_omp
 except ImportError:
     decode_tensor_viterbi_cpp = None
     decode_tensor_viterbi_cuda = None
+    decode_tensor_viterbi_omp = None
 
 __all__ = [
     "HSMM",
@@ -18,4 +19,5 @@ __all__ = [
     "decode_vanilla_viterbi",
     "decode_tensor_viterbi_cpp",
     "decode_tensor_viterbi_cuda",
+    "decode_tensor_viterbi_omp",
 ]
