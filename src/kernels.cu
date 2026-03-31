@@ -210,27 +210,69 @@ __global__ void kernel_reduce_i(
     int*                       psi_dur,
     int N, int D, int T, int t)
 {
-    const int j = threadIdx.x;
+    const int j = blockIdx.x;
+    const int i = threadIdx.x;
+
     if (j >= N) return;
 
-    double best_val = psi_state_ji[j * N + 0];
-    int    best_d   = psi_dur_ji  [j * N + 0];
-    int    best_i   = 0;
+    extern __shared__ char shmem[];
+    double* sh_val = reinterpret_cast<double*>(shmem);
+    int*    sh_i   = reinterpret_cast<int*>(sh_val + blockDim.x);
+    int*    sh_d   = sh_i + blockDim.x;
 
-    for (int i = 1; i < N; ++i) {
-        double v = psi_state_ji[j * N + i];
-        if (v > best_val) {
-            best_val = v;
-            best_d   = psi_dur_ji[j * N + i];
-            best_i   = i;
+    if (i < N) {
+        sh_val[i] = psi_state_ji[j * N + i];
+        sh_i  [i] = i;
+        sh_d  [i] = psi_dur_ji[j * N + i];
+    } else {
+        sh_val[i] = -1e300;
+        sh_i  [i] = 0;
+        sh_d  [i] = 0;
+    }
+    __syncthreads();
+
+    // ── cross-warp ───────────────────────────────────────────────────────── //
+    for (int stride = blockDim.x >> 1; stride >= WARP_SIZE; stride >>= 1) {
+        if (i < stride) {
+            if (sh_val[i + stride] > sh_val[i]) {
+                sh_val[i] = sh_val[i + stride];
+                sh_i  [i] = sh_i  [i + stride];
+                sh_d  [i] = sh_d  [i + stride];
+            }
+        }
+        __syncthreads();
+    }
+
+    // ── intra-warp ───────────────────────────────────────────────────────── //
+    if (i < WARP_SIZE) {
+        double reg_val = sh_val[i];
+        int    reg_i   = sh_i[i];
+        int    reg_d   = sh_d[i];
+
+        for (int stride = min(WARP_SIZE >> 1, (int)(blockDim.x >> 1)); stride > 0; stride >>= 1) {
+            double other_val = WARP_SHFL_DOWN(reg_val, stride);
+            int    other_i   = WARP_SHFL_DOWN(reg_i,   stride);
+            int    other_d   = WARP_SHFL_DOWN(reg_d,   stride);
+            if (other_val > reg_val) {
+                reg_val = other_val;
+                reg_i   = other_i;
+                reg_d   = other_d;
+            }
+        }
+        if (i == 0) {
+            sh_val[0] = reg_val;
+            sh_i  [0] = reg_i;
+            sh_d  [0] = reg_d;
         }
     }
 
-    const bool update = (t >= D) || (best_val > delta[j*T + t]);
-    if (update) {
-        delta    [j*T + t] = best_val;
-        psi_state[j*T + t] = best_i;
-        psi_dur  [j*T + t] = best_d + 1;
+    if (i == 0) {
+        const bool update = (t >= D) || (sh_val[0] > delta[j*T + t]);
+        if (update) {
+            delta    [j*T + t] = sh_val[0];
+            psi_state[j*T + t] = sh_i[0];
+            psi_dur  [j*T + t] = sh_d[0] + 1;
+        }
     }
 }
 
@@ -435,24 +477,66 @@ __global__ void kernel_tail_reduce_i(
     int*                       psi_dur,
     int N, int D, int T, int t)
 {
-    const int j = threadIdx.x;
+    const int j = blockIdx.x;
+    const int i = threadIdx.x;
+
     if (j >= N) return;
 
-    double best_val = psi_state_ji[j * N + 0];
-    int    best_d   = psi_dur_ji  [j * N + 0];
-    int    best_i   = 0;
+    extern __shared__ char shmem[];
+    double* sh_val = reinterpret_cast<double*>(shmem);
+    int*    sh_i   = reinterpret_cast<int*>(sh_val + blockDim.x);
+    int*    sh_d   = sh_i + blockDim.x;
 
-    for (int i = 1; i < N; ++i) {
-        double v = psi_state_ji[j * N + i];
-        if (v > best_val) {
-            best_val = v;
-            best_d   = psi_dur_ji[j * N + i];
-            best_i   = i;
+    if (i < N) {
+        sh_val[i] = psi_state_ji[j * N + i];
+        sh_i  [i] = i;
+        sh_d  [i] = psi_dur_ji[j * N + i];
+    } else {
+        sh_val[i] = -1e300;
+        sh_i  [i] = 0;
+        sh_d  [i] = 0;
+    }
+    __syncthreads();
+
+    // ── cross-warp ───────────────────────────────────────────────────────── //
+    for (int stride = blockDim.x >> 1; stride >= WARP_SIZE; stride >>= 1) {
+        if (i < stride) {
+            if (sh_val[i + stride] > sh_val[i]) {
+                sh_val[i] = sh_val[i + stride];
+                sh_i  [i] = sh_i  [i + stride];
+                sh_d  [i] = sh_d  [i + stride];
+            }
+        }
+        __syncthreads();
+    }
+
+    // ── intra-warp ───────────────────────────────────────────────────────── //
+    if (i < WARP_SIZE) {
+        double reg_val = sh_val[i];
+        int    reg_i   = sh_i[i];
+        int    reg_d   = sh_d[i];
+
+        for (int stride = min(WARP_SIZE >> 1, (int)(blockDim.x >> 1)); stride > 0; stride >>= 1) {
+            double other_val = WARP_SHFL_DOWN(reg_val, stride);
+            int    other_i   = WARP_SHFL_DOWN(reg_i,   stride);
+            int    other_d   = WARP_SHFL_DOWN(reg_d,   stride);
+            if (other_val > reg_val) {
+                reg_val = other_val;
+                reg_i   = other_i;
+                reg_d   = other_d;
+            }
+        }
+        if (i == 0) {
+            sh_val[0] = reg_val;
+            sh_i  [0] = reg_i;
+            sh_d  [0] = reg_d;
         }
     }
 
-    delta    [j*T + t] = best_val;
-    psi_state[j*T + t] = best_i;
-    psi_dur  [j*T + t] = best_d + 1;
+    if (i == 0) {
+        delta    [j*T + t] = sh_val[0];
+        psi_state[j*T + t] = sh_i[0];
+        psi_dur  [j*T + t] = sh_d[0] + 1;
+    }
 }
 

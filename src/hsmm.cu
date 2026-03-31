@@ -108,8 +108,6 @@ static void tail_adjustment(
             }
         }
 
-        printf("[CPU] j=%d | best_i=%d best_d=%d best_val=%.6f\n", j, best_i, best_d, best_val);
-
         delta    [j * T + t] = best_val;
         psi_state[j * T + t] = best_i;
         psi_dur  [j * T + t] = best_d + 1;
@@ -619,7 +617,10 @@ std::vector<int> decode_tensor_viterbi_cuda(
         N, D, T);
     CUDA_CHECK(cudaGetLastError());
 
-    kernel_tail_reduce_i<<<1, N>>>(
+    int bs_N = 1;
+    while (bs_N < N) bs_N <<= 1;
+    const size_t sm_reduce = bs_N * (sizeof(double) + 2 * sizeof(int));
+    kernel_tail_reduce_i<<<N, bs_N, sm_reduce>>>(
         d_psi_state_ji, d_psi_dur_ji,
         d_delta, d_psi_state, d_psi_dur,
         N, D, T, T - 1);
@@ -686,6 +687,10 @@ static void run_induction(
             args, shmem);
         CUDA_CHECK(cudaGetLastError());
     } else {
+        int bs_N = 1;
+        while (bs_N < N) bs_N <<= 1;
+        const size_t sm_reduce = bs_N * (sizeof(double) + 2 * sizeof(int));
+
         for (int t = 1; t < T; ++t) {
             const int tau = std::min(t, D);
             const int nxt = 1 - cur;
@@ -700,7 +705,7 @@ static void run_induction(
                 d_psi_state_ji, d_psi_dur_ji, N, D, T, tau, t);
             CUDA_CHECK(cudaGetLastError());
 
-            kernel_reduce_i<<<1, N>>>(
+            kernel_reduce_i<<<N, bs_N, sm_reduce>>>(
                 d_psi_state_ji, d_psi_dur_ji,
                 d_delta, d_psi_state, d_psi_dur,
                 N, D, T, t);
