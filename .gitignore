@@ -46,7 +46,8 @@ build/*
 .venv/*
 *.cmake
 CMakeCache.*
-hsmmlearn/*
+hsmmlearn/build/*
+hsmmlearn_omp/build/*
 src/tensor-viterbi
 
 # Logs
