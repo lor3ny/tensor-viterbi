@@ -81,7 +81,7 @@ static void tail_adjustment(
     std::vector<int>&    psi_state,
     std::vector<int>&    psi_dur,
     const std::vector<double>& EMISSION_PROBS,
-    const std::vector<double>& PAST_DELTA,
+    const std::vector<double>& delta_t,
     const std::vector<double>& survival_probs,
     const std::vector<double>& trans_mat,
     int N, int D, int T)
@@ -98,7 +98,7 @@ static void tail_adjustment(
             const double ep = EMISSION_PROBS[d * N + j];
             for (int i = 0; i < N; ++i) {
                 const double ap_tail = trans_mat[j * N + i] + survival_probs[d * N + j];
-                const double val = ep + PAST_DELTA[d * N + i] + ap_tail;
+                const double val = ep + delta_t[(t - 1 - d) * N + i] + ap_tail;
                 if (val > best_val) {
                     best_val = val;
                     best_d   = d;
@@ -223,12 +223,11 @@ std::vector<int> decode_tensor_viterbi(
     std::vector<double> delta    (N * T, NEG_INF);
     std::vector<int>    psi_state(N * T, 0);
     std::vector<int>    psi_dur  (N * T, 1);
-    // Time-major mirror (t*N+n) — for cache-friendly PAST_DELTA gather
+    // Time-major layout (t*N+n) — used by BRICK UPDATE reads and condition guard
     std::vector<double> delta_t  (T * N, NEG_INF);
 
-    // AP[d*N*N + j*N + i] = trans_mat[j,i] + duration_probs[j,d]
-    // Matches Python: AP[d, j, i] = trans_mat[j, i] + duration_probs[d, j]
-    // Inner loop over i is contiguous → SIMD-friendly
+
+    //* Brick Compuring: AP = TRANS_MAT + DURATION_PROBS
     std::vector<double> AP(D * N * N);
     for (int d = 0; d < D; ++d)
         for (int j = 0; j < N; ++j)
@@ -237,15 +236,9 @@ std::vector<int> decode_tensor_viterbi(
 
     const std::vector<double> survival_probs = compute_survival_probs(N, D, duration_probs);
 
-    // EMISSION_PROBS[d*N+j]     = sum of (d+1) emissions ending at obs[t], for state j
-    // EMISSION_CACHE[d*N+j]     = sum of d emissions ending at obs[t-1]  (rolling)
-    //   EMISSION_CACHE[0,:] always stays 0
-    // PAST_DELTA[d*N+i]         = delta[t-1-d, i]
-    // RESULT_B[d*N*N + j*N + i] = EMISSION_PROBS[d,j] + PAST_DELTA[d,i] + AP[d,j,i]
-    //   pre-allocated to avoid heap allocation on every iteration (matches Python pattern)
+
     std::vector<double> EMISSION_PROBS(D * N, 0.0);
     std::vector<double> EMISSION_CACHE(D * N, 0.0);
-    std::vector<double> PAST_DELTA    (D * N, NEG_INF);
     std::vector<double> RESULT_B      (D * N * N);
 
     //* ── PHASE 1 — Initialization 0 <= t < D ──────────────────────────────── *//
@@ -261,7 +254,6 @@ std::vector<int> decode_tensor_viterbi(
     for (int d = 0; d < D; ++d) {
         for (int j = 0; j < N; ++j) {
             const double v = duration_probs[j * D + d] + start_probs[j] + EMISSION_PROBS[d * N + j];
-            delta  [j * T + d] = v;
             delta_t[d * N + j] = v;
             psi_dur[j * T + d] = d + 1;
         }
@@ -272,7 +264,7 @@ std::vector<int> decode_tensor_viterbi(
         const int tau      = std::min(t, D);
         const double* em_t = &emission_probs[obs_seq[t] * N];
 
-        // --- Update EMISSION_PROBS ---
+        //* EMISSION PROBS COMPUTATION
         if (t > D) {
             // Rolling cache: EMISSION_PROBS[d, j] = EMISSION_CACHE[d, j] + em_t[j]
             // Matches Python: np.add(EMISSION_CACHE, _probs_t, out=EMISSION_PROBS)
@@ -305,21 +297,10 @@ std::vector<int> decode_tensor_viterbi(
                             (D - 1) * N * sizeof(double));
         }
 
-        // --- Gather PAST_DELTA[d, i] = delta[t-1-d, i] ---
-        // Time-major mirror: each memcpy reads N contiguous doubles (no stride)
-        for (int d = 0; d < tau; ++d)
-            std::memcpy(&PAST_DELTA[d * N], &delta_t[(t - 1 - d) * N],
-                        N * sizeof(double));
-
-        // --- Phase A: fill RESULT_B tensor ---
-        // RESULT_B[d, j, i] = EMISSION_PROBS[d, j] + PAST_DELTA[d, i] + AP[d, j, i]
-        // Matches Python:
-        //   np.add(PAST_DELTA[:, np.newaxis, :], AP, out=DELTA_EMISSION)
-        //   np.add(EMISSION_PROBS[:, :, np.newaxis], DELTA_EMISSION, out=RESULT_B)
-        // Loop order d→j→i: writes to RESULT_B[d*N*N+j*N+i] and reads from AP[d*N*N+j*N+i]
-        // are fully contiguous in i (innermost axis) → auto-vectorisable
+        //* PAST DELTA IS EXTRACTED DURING UPDATE TO AVOID REDUNDANT MEMCPY
+        //* BRICK UPDATE: RESULT_B[d, j, i] = EMISSION_PROBS + PAST_DELTA + AP
         for (int d = 0; d < tau; ++d) {
-            const double* pd    = &PAST_DELTA[d * N];
+            const double* pd    = &delta_t[(t - 1 - d) * N];
             const double* ap_d  = &AP[d * N * N];
             double*       rb_d  = &RESULT_B[d * N * N];
             for (int j = 0; j < N; ++j) {
@@ -331,11 +312,7 @@ std::vector<int> decode_tensor_viterbi(
             }
         }
 
-        // --- Phase B: argmax over (d, i) for each j ---
-        // Matches Python:
-        //   planes   = RESULT_B.transpose(1, 0, 2)           # (N, tau, N)
-        //   flat_idx = np.argmax(planes.reshape(N, -1), axis=1)
-        //   d_arr, i_arr = np.unravel_index(flat_idx, (tau, N))
+        //* ARGMAX
         for (int j = 0; j < N; ++j) {
             double best_val = NEG_INF;
             int    best_d   = 0;
@@ -352,20 +329,18 @@ std::vector<int> decode_tensor_viterbi(
                 }
             }
 
-            const bool update = (t >= D) || (best_val > delta[j * T + t]);
+            const bool update = (t >= D) || (best_val > delta_t[t * N + j]);
             if (update) {
-                delta    [j * T + t] = best_val;
                 delta_t  [t * N + j] = best_val;
                 psi_state[j * T + t] = best_i;
                 psi_dur  [j * T + t] = best_d + 1;
             }
-            // t < D + no update: delta_t[t*N+j] already holds the Phase-1 value ✓
         }
     }
 
     //* ── TAIL ADJUSTMENT — t = T-1 ──────────────────────────────────────────── *//
     tail_adjustment(delta, psi_state, psi_dur,
-                    EMISSION_PROBS, PAST_DELTA, survival_probs,
+                    EMISSION_PROBS, delta_t, survival_probs,
                     trans_mat, N, D, T);
 
     return backtracking_termination(delta, psi_state, psi_dur, N, T);
