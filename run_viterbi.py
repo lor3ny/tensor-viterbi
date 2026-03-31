@@ -147,6 +147,7 @@ if __name__ == "__main__":
     elif args.mode == "measure":
         baseline_elapsed = None
         omp_baseline_elapsed = None
+        cpp_elapsed = None
         if args.baseline:
             print(f"{YEL}{BOLD}▶ HSMMLearn C++ (baseline){R}")
             baseline_elapsed = measure_baseline(data_path)
@@ -167,18 +168,22 @@ if __name__ == "__main__":
             _, cpp_elapsed = TIME_MEASURE(decode_tensor_viterbi_cpp, *_cpp_args)
             if baseline_elapsed is not None:
                 print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{baseline_elapsed / cpp_elapsed:.2f}x{R} vs HSMMLearn C++\n")
-
+                
         if args.omp:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi OMP{R}")
             _, omp_elapsed = TIME_MEASURE(decode_tensor_viterbi_omp, *_cpp_args)
             if omp_baseline_elapsed is not None:
-                print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{omp_baseline_elapsed / omp_elapsed:.2f}x{R} vs HSMMLearn C++\n")
+                print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{omp_baseline_elapsed / omp_elapsed:.2f}x{R} vs HSMMLearn OMP C++\n")
+                print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{cpp_elapsed / omp_elapsed:.2f}x{R} vs Tensor Viterbi C++\n")
+
 
         if args.cuda:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi CUDA{R}")
             _, cuda_elapsed = TIME_MEASURE(decode_tensor_viterbi_cuda, *_cpp_args)
             if baseline_elapsed is not None:
                 print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{baseline_elapsed / cuda_elapsed:.2f}x{R} vs HSMMLearn C++\n")
+                print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{cpp_elapsed / cuda_elapsed:.2f}x{R} vs Tensor Viterbi C++\n")
+
 
 
     elif args.mode == "benchmark":
