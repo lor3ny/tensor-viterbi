@@ -45,6 +45,7 @@ def load_system(system: str) -> pd.DataFrame:
         print(f"Warning: no CSV files found for system '{system}' ({pattern})", file=sys.stderr)
         return pd.DataFrame()
     df = pd.concat((pd.read_csv(f) for f in files), ignore_index=True)
+    df = df[df["iteration"] != 0]  # discard warmup
     return (
         df.groupby(["function", "n_states", "timesteps", "max_duration"], as_index=False)
         ["elapsed_s"].mean()
