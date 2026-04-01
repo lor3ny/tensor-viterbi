@@ -44,11 +44,11 @@ def TIME_BENCHMARK(func, *args, csv_path="benchmark.csv", iterations=100,
         result = func(*args, **kwargs)
         times.append(time.perf_counter() - start)
 
-    write_header = not os.path.exists(csv_path)
-    with open(csv_path, "a", newline="") as f:
+    stem, ext = os.path.splitext(csv_path)
+    func_csv = f"{stem}_{func.__name__}{ext}"
+    with open(func_csv, "w", newline="") as f:
         writer = csv.writer(f)
-        if write_header:
-            writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
+        writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
         for i, t in enumerate(times):
             writer.writerow([func.__name__, n_states, timesteps, max_duration, i, f"{t:.6f}"])
 
@@ -218,10 +218,11 @@ if __name__ == "__main__":
 
         if args.baseline:
             print(f"{YEL}{BOLD}▶ HSMMLearn C++ (baseline){R}")
-            benchmark_baseline(data_path, csv_path=_csv, iterations=5, n_states=N, timesteps=T, max_duration=D)
+            _csv_base = os.path.splitext(_csv)[0]
+            benchmark_baseline(data_path, csv_path=f"{_csv_base}_HSMMLearn_CPP.csv", iterations=5, n_states=N, timesteps=T, max_duration=D)
 
             print(f"{YEL}{BOLD}▶ HSMMLearn OMP (baseline){R}")
-            benchmark_baseline_omp(data_path, csv_path=_csv, iterations=5, n_states=N, timesteps=T, max_duration=D)
+            benchmark_baseline_omp(data_path, csv_path=f"{_csv_base}_HSMMLearn_OMP.csv", iterations=5, n_states=N, timesteps=T, max_duration=D)
 
             # print(f"{YEL}{BOLD}▶ HSMMLearn Python (baseline){R}")
             # benchmark_baseline_py(data_path, csv_path=_csv, iterations=5)

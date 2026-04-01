@@ -688,19 +688,13 @@ static void run_induction(
     int* d_psi_state, int* d_psi_dur,
     int T, int N, int D)
 {
-#ifdef ENABLE_PERSISTENT_KERNEL
-    int block_size = next_pow2(D);
-    const size_t shmem = block_size * (sizeof(double) + sizeof(int));
-    bool use_persistent = check_cooperative_launch(
-        (void*)kernel_persistent, block_size, shmem, N * N);
-#else
     bool use_persistent = false;
-#endif
 
     int cur = 0;
 
-#ifdef ENABLE_PERSISTENT_KERNEL
     if (use_persistent) {
+        int block_size = next_pow2(D);
+        const size_t shmem = block_size * (sizeof(double) + sizeof(int));
 
         void* args[] = {
             &d_obs_seq, &d_emission_probs, &d_delta, &d_AP,
@@ -709,6 +703,7 @@ static void run_induction(
             &d_psi_state, &d_psi_dur,
             &N, &D, &T
         };
+
         cudaLaunchCooperativeKernel(
             (void*)kernel_persistent,
             dim3(N, N), dim3(block_size),
@@ -716,9 +711,6 @@ static void run_induction(
         CUDA_CHECK(cudaGetLastError());
 
     } else {
-#else
-    if (use_persistent) {
-#endif
         int bs_N = next_pow2(N);
         const size_t sm_reduce = bs_N * (sizeof(double) + 2 * sizeof(int));
 
