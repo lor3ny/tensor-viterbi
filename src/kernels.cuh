@@ -2,6 +2,12 @@
 
 #include <cuda_runtime.h>
 
+#ifdef __HIP_PLATFORM_AMD__
+    #define WARP_SIZE 64
+#else
+    #define WARP_SIZE 32
+#endif
+
 // ── Initialization kernel ────────────────────────────────────────────────────────────── //
 
 __global__ void kernel_initialization(
@@ -19,7 +25,7 @@ __global__ void kernel_initialization(
     
 // ── Induction kernel ─────────────────────────────────────────────────────── //
 __global__ void kernel_induction(
-    const int*    __restrict__ obs_seq,
+    int                           obs_t,         // obs_seq[t] — valore diretto
     const double* __restrict__ emission_probs,
     const double* __restrict__ delta,
     const double* __restrict__ AP,

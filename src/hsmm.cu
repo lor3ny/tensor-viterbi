@@ -48,9 +48,9 @@ static bool check_cooperative_launch(const void* kernel, int block_size, size_t 
 static void run_induction(
     double* d_delta, const double* d_AP,
     const double* d_emission_probs, const double* duration_probs_linear,
-    const int* d_obs_seq,
+    const int* d_obs_seq, const int* h_obs_seq,
     double** d_em,
-    double* d_best_val_ji, int* d_psi_dur_ji,
+    double* d_psi_state_ji, int* d_psi_dur_ji,
     int* d_psi_state, int* d_psi_dur,
     int T, int N, int D);
 
@@ -597,8 +597,8 @@ std::vector<int> decode_tensor_viterbi_cuda(
     //* ── PHASE 2 — Induction ─────────────────────────────────────────────────── *//
     run_induction(
         d_delta, d_AP,
-        d_emission_probs, d_duration_probs_linear, 
-        d_obs_seq,
+        d_emission_probs, d_duration_probs_linear,
+        d_obs_seq, obs_seq.data(),
         d_em,
         d_psi_state_ji, d_psi_dur_ji,
         d_psi_state, d_psi_dur,
@@ -658,7 +658,7 @@ std::vector<int> decode_tensor_viterbi_cuda(
 static void run_induction(
     double* d_delta, const double* d_AP,
     const double* d_emission_probs, const double* duration_probs_linear,
-    const int* d_obs_seq,
+    const int* d_obs_seq, const int* h_obs_seq,
     double** d_em,
     double* d_psi_state_ji, int* d_psi_dur_ji,
     int* d_psi_state, int* d_psi_dur,
@@ -697,10 +697,13 @@ static void run_induction(
 
             int bs = 1;
             while (bs < tau) bs <<= 1;
-            const size_t sm = bs * (sizeof(double) + sizeof(int));
+            // smem solo per cross-warp (num_warps entry); zero se bs <= WARP_SIZE
+            const size_t sm = (bs > WARP_SIZE)
+                            ? (bs / WARP_SIZE) * (sizeof(double) + sizeof(int))
+                            : 0;
 
             kernel_induction<<<dim3(N, N), dim3(bs), sm>>>(
-                d_obs_seq, d_emission_probs, d_delta, d_AP,
+                h_obs_seq[t], d_emission_probs, d_delta, d_AP,
                 d_em[cur], d_em[nxt],
                 d_psi_state_ji, d_psi_dur_ji, N, D, T, tau, t);
             CUDA_CHECK(cudaGetLastError());

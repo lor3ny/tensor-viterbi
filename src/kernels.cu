@@ -6,12 +6,10 @@
 namespace cg = cooperative_groups;
 
 #ifdef __HIP_PLATFORM_AMD__
-    #define WARP_SIZE 64
     #define WARP_SHFL_UP(val, stride)   __shfl_up(val, stride)
     #define WARP_SHFL_DOWN(val, stride) __shfl_down(val, stride)
     #define FULL_MASK 0xffffffffffffffff
 #else
-    #define WARP_SIZE 32
     #define WARP_SHFL_UP(val, stride)   __shfl_up_sync(0xffffffff, val, stride)
     #define WARP_SHFL_DOWN(val, stride) __shfl_down_sync(0xffffffff, val, stride)
     #define FULL_MASK 0xffffffff
@@ -121,7 +119,7 @@ __global__ void kernel_initialization(
 
 
 __global__ void kernel_induction(
-    const int*    __restrict__ obs_seq,
+    int obs_t,
     const double* __restrict__ emission_probs,
     const double* __restrict__ delta,
     const double* __restrict__ AP,
@@ -136,68 +134,75 @@ __global__ void kernel_induction(
     const int d = threadIdx.x;
 
     if (i >= N || j >= N) return;
+
+    const int warp_id   = d / WARP_SIZE;
+    const int lane      = d % WARP_SIZE;
+    const int num_warps = (blockDim.x + WARP_SIZE - 1) / WARP_SIZE;
+
+    // smem: solo num_warps entry per la riduzione cross-warp.
+    // Quando num_warps == 1 (bs <= WARP_SIZE) non viene usata.
     extern __shared__ char shmem[];
     double* sh_val = reinterpret_cast<double*>(shmem);
-    int*    sh_d   = reinterpret_cast<int*>(sh_val + blockDim.x);
+    int*    sh_d   = reinterpret_cast<int*>(sh_val + num_warps);
+
+    //* Broadcast emission — tutti i thread leggono lo stesso indirizzo (L1 broadcast) *//
+    const double new_em = emission_probs[obs_t * N + j];
 
     //* Cached Emissions *//
     double em_val = -1e300;
     if (d < tau) {
-        const double new_em = emission_probs[obs_seq[t] * N + j];
         em_val = (d == 0) ? new_em : new_em + em_cur[j * D + d - 1];
         if (i == 0)
             em_nxt[j * D + d] = em_val;
     }
 
-    //* Brick *//
-    if (d < tau) {
-        sh_val[d] = em_val
-                  + delta[i*T + (t-1-d)]
-                  + AP[j*N*D + i*D + d];
-        sh_d[d] = d;
-    } else {
-        sh_val[d] = -1e300;
-        sh_d[d]   = 0;
+    //* Brick — in registers, niente smem *//
+    double val = (d < tau) ? (em_val + delta[i*T + (t-1-d)] + AP[j*N*D + i*D + d])
+                           : -1e300;
+    int    dd  = (d < tau) ? d : 0;
+
+    //* Intra-warp argmax (shuffle, zero syncthreads) *//
+    for (int s = min(WARP_SIZE >> 1, (int)(blockDim.x >> 1)); s > 0; s >>= 1) {
+        double ov = WARP_SHFL_DOWN(val, s);
+        int    od = WARP_SHFL_DOWN(dd,  s);
+        if (ov > val || (ov == val && od < dd)) {
+            val = ov;
+            dd  = od;
+        }
+    }
+
+    //* Fast path: blocco a warp singolo — risultato già in lane 0 *//
+    if (num_warps == 1) {
+        if (lane == 0) {
+            psi_state_ji[j * N + i] = val;
+            psi_dur_ji  [j * N + i] = dd;
+        }
+        return;
+    }
+
+    //* Cross-warp: lane 0 di ogni warp scrive in smem, poi warp 0 riduce *//
+    if (lane == 0) {
+        sh_val[warp_id] = val;
+        sh_d  [warp_id] = dd;
     }
     __syncthreads();
 
-    //* Argmax *//
-    // ── cross-warp ───────────────────────────────────────────────────────── //
-    for (int stride = blockDim.x >> 1; stride >= WARP_SIZE; stride >>= 1) {
-        if (d < stride) {
-            double other_val = sh_val[d + stride];
-            if (other_val > sh_val[d] ||
-               (other_val == sh_val[d] && sh_d[d + stride] < sh_d[d])) {
-                sh_val[d] = other_val;
-                sh_d[d]   = sh_d[d + stride];
+    if (warp_id == 0) {
+        val = (lane < num_warps) ? sh_val[lane] : -1e300;
+        dd  = (lane < num_warps) ? sh_d  [lane] : 0;
+
+        for (int s = WARP_SIZE >> 1; s > 0; s >>= 1) {
+            double ov = WARP_SHFL_DOWN(val, s);
+            int    od = WARP_SHFL_DOWN(dd,  s);
+            if (ov > val || (ov == val && od < dd)) {
+                val = ov;
+                dd  = od;
             }
         }
-        __syncthreads();
-    }
-
-    // ── intra-warp ───────────────────────────────────────────────────────── //
-    if (d < WARP_SIZE) {
-        double reg_val = sh_val[d];
-        int    reg_d   = sh_d[d];
-
-        for (int stride = min(WARP_SIZE >> 1, (int)(blockDim.x >> 1)); stride > 0; stride >>= 1) {
-            double other_val = WARP_SHFL_DOWN(reg_val, stride);
-            int    other_d   = WARP_SHFL_DOWN(reg_d,   stride);
-            if (other_val > reg_val ||
-               (other_val == reg_val && other_d < reg_d)) {
-                reg_val = other_val;
-                reg_d   = other_d;
-            }
+        if (lane == 0) {
+            psi_state_ji[j * N + i] = val;
+            psi_dur_ji  [j * N + i] = dd;
         }
-        if (d == 0) {
-            sh_val[0] = reg_val;
-            sh_d[0]   = reg_d;
-        }
-    }
-
-    if (d == 0) {
-        psi_state_ji[j * N + i] = sh_val[0];
-        psi_dur_ji  [j * N + i] = sh_d[0];
     }
 }
 
