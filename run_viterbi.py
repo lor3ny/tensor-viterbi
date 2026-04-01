@@ -66,7 +66,7 @@ if __name__ == "__main__":
     parser.add_argument("--omp", action="store_true", help="Enable OpenMP backend")
     parser.add_argument("--baseline", action="store_true", help="Enable baselines (HSMMLearn C++, Vanilla Viterbi)")
     parser.add_argument("--mode", "-m", choices=["validate", "measure", "benchmark"], required=True)
-    parser.add_argument("--system", "-sys", choices=["leonardo", "lumi", "alps"], required=False, default="leonardo", help="System name (for benchmark CSV naming)")
+    parser.add_argument("--system", "-sys", required=False, default="leonardo", help="System name (for benchmark CSV naming)")
     parser.add_argument("--data-path", "-dp", type=str, default="data/3states_20steps_4dur.json")
     args = parser.parse_args()
 
@@ -196,8 +196,8 @@ if __name__ == "__main__":
 
 
     elif args.mode == "benchmark":
-        os.makedirs(f"logs/{args.system}", exist_ok=True)
-        _csv = os.path.join(f"logs/{args.system}", f"{N}s_{D}d_{T}t.csv")
+        os.makedirs(f"results/{args.system}", exist_ok=True)
+        _csv = os.path.join(f"results/{args.system}", f"{N}s_{D}d_{T}t.csv")
         _bkw = dict(csv_path=_csv, iterations=10, n_states=N, timesteps=T, max_duration=D)
 
         if args.py:

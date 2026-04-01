@@ -1,5 +1,7 @@
 #include "hsmm.hpp"
+#ifndef NO_GPU
 #include "kernels.cuh"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -8,6 +10,7 @@
 #include <limits>
 #include <omp.h>
 
+#ifndef NO_GPU
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cooperative_groups.h>
@@ -21,8 +24,10 @@
             exit(EXIT_FAILURE);                                                 \
         }                                                                       \
     } while (0)
+#endif // NO_GPU
 
 
+#ifndef NO_GPU
 // ============================================================
 // File-scope helpers (not part of the public API)
 // ============================================================
@@ -53,6 +58,7 @@ static void run_induction(
     double* d_psi_state_ji, int* d_psi_dur_ji,
     int* d_psi_state, int* d_psi_dur,
     int T, int N, int D);
+#endif // NO_GPU
 
 
 static std::vector<double> compute_survival_probs(
@@ -148,6 +154,7 @@ static std::vector<int> backtracking_termination(
     return path;
 }
 
+#ifndef NO_GPU
 static void hsmm_to_gpu(
     int N, int O, int D, int T,
     const std::vector<double>& trans_mat,
@@ -200,6 +207,7 @@ static void hsmm_free_gpu(
     d_duration_probs = nullptr;
     d_obs_seq        = nullptr;
 }
+#endif // NO_GPU
 
 
 // ============================================================
@@ -532,6 +540,7 @@ std::vector<int> decode_tensor_viterbi_omp(
 }
 
 
+#ifndef NO_GPU
 std::vector<int> decode_tensor_viterbi_cuda(
     const int                  n_states,
     const std::vector<double>& trans_mat,
@@ -648,9 +657,11 @@ std::vector<int> decode_tensor_viterbi_cuda(
     return backtracking_termination(delta, psi_state, psi_dur, N, T);
 }
 
+#endif // NO_GPU
 } // namespace hsmm
 
 
+#ifndef NO_GPU
 // ============================================================
 // run_induction (defined here — after decode_tensor_viterbi_cuda
 // because it is used only by that function)
@@ -718,3 +729,4 @@ static void run_induction(
         }
     }
 }
+#endif // NO_GPU

@@ -39,6 +39,7 @@ std::vector<int> decode_tensor_viterbi_omp(
     const std::vector<int>&    obs_seq
 );
 
+#ifndef NO_GPU
 /**
  * Decode using GPU (CUDA) tensor Viterbi.
  * All matrix parameters must be in log space.
@@ -52,5 +53,6 @@ std::vector<int> decode_tensor_viterbi_cuda(
     const std::vector<double>& duration_probs,
     const std::vector<int>&    obs_seq
 );
+#endif // NO_GPU
 
 } // namespace hsmm

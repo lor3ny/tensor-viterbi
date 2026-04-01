@@ -1,58 +1,73 @@
 #!/bin/bash
+# Usage: ./compile.sh --system <system_name>
+# Available systems are defined in systems.conf
+# Builds either the CPU (OpenMP) or GPU (CUDA/ROCm) backend — never both.
 
-# Usage: ./compile.sh --system [lumi|leonardo] [--account ACCOUNT]
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "$PWD" != "$SCRIPT_DIR" ]]; then
+    echo "Error: must be run from the script's directory."
+    echo "  cd \"$SCRIPT_DIR\" && $0 $*"
+    exit 1
+fi
+source "$SCRIPT_DIR/systems.conf"
 
 SYSTEM=""
-ACCOUNT=""
-
 while [[ $# -gt 0 ]]; do
-    case $1 in
-        --system|-s)
-            SYSTEM="$2"
-            shift 2
-            ;;
-        --account|-a)
-            ACCOUNT="$2"
-            shift 2
-            ;;
-        *)
-            echo "Unknown argument: $1"
-            echo "Usage: $0 --system [lumi|leonardo] [--account ACCOUNT]"
-            exit 1
-            ;;
+    case "$1" in
+        --system|-s) SYSTEM="$2"; shift 2 ;;
+        *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
 
 if [[ -z "$SYSTEM" ]]; then
     echo "Error: --system argument is required."
-    echo "Usage: $0 --system [lumi|leonardo] [--account ACCOUNT]"
+    echo "Available systems: ${!SYS_TYPE[*]}"
     exit 1
 fi
 
-rm -rf build
+if [[ -z "${SYS_TYPE[$SYSTEM]+x}" ]]; then
+    echo "Error: Unknown system '$SYSTEM'."
+    echo "Available systems: ${!SYS_TYPE[*]}"
+    exit 1
+fi
 
-if [[ "$SYSTEM" == "lumi" ]]; then
-    [[ -z "$ACCOUNT" ]] && ACCOUNT="project_465002776"
+TYPE="${SYS_TYPE[$SYSTEM]}"
+PARTITION="${SYS_PARTITION[$SYSTEM]}"
+ACCOUNT="${SYS_ACCOUNT[$SYSTEM]}"
+MODULES_BUILD="${SYS_MODULES_BUILD[$SYSTEM]}"
+GPU_ARCH="${SYS_GPU_ARCH[$SYSTEM]}"
 
-    module load rocm
-    module load cray-python
+# Load build modules
+module purge
+IFS=':' read -ra _MODS <<< "$MODULES_BUILD"
+for _mod in "${_MODS[@]}"; do
+    module load "$_mod"
+done
 
-    srun --gres=gpu:1 -A "$ACCOUNT" -p standard-g cmake -B build -DGPU_PLATFORM=ROCM -DCMAKE_HIP_ARCHITECTURES=gfx90a
-    srun --gres=gpu:1 -A "$ACCOUNT" -p standard-g cmake --build build -j 8
+rm -rf "build/$SYSTEM"
 
-elif [[ "$SYSTEM" == "leonardo" ]]; then
-    if [[ -z "$ACCOUNT" ]]; then
-        echo "Error: --account is required for Leonardo (e.g. --account IscrXX_XXXXX)"
-        exit 1
+if [[ "$TYPE" == "gpu" ]]; then
+    SRUN_FLAGS=(--gres=gpu:1 -A "$ACCOUNT" -p "$PARTITION")
+
+    if module list 2>&1 | grep -qi rocm; then
+        CMAKE_FLAGS=(
+            -DBUILD_GPU=ON
+            -DGPU_PLATFORM=ROCM
+            -DCMAKE_HIP_ARCHITECTURES="$GPU_ARCH"
+            -DSYSTEM_NAME="$SYSTEM"
+        )
+    else
+        CMAKE_FLAGS=(
+            -DBUILD_GPU=ON
+            -DGPU_PLATFORM=CUDA
+            -DCMAKE_CUDA_ARCHITECTURES="$GPU_ARCH"
+            -DSYSTEM_NAME="$SYSTEM"
+        )
     fi
-
-    module load cuda
-    module load python
-
-    srun --gres=gpu:1 -A "$ACCOUNT" -p boost_usr_prod cmake -B build -DGPU_PLATFORM=CUDA
-    srun --gres=gpu:1 -A "$ACCOUNT" -p boost_usr_prod cmake --build build -j 8
-
 else
-    echo "Error: unknown system '$SYSTEM'. Valid options: lumi, leonardo."
-    exit 1
+    SRUN_FLAGS=(-A "$ACCOUNT" -p "$PARTITION")
+    CMAKE_FLAGS=(-DBUILD_GPU=OFF -DSYSTEM_NAME="$SYSTEM")
 fi
+
+srun "${SRUN_FLAGS[@]}" cmake -B "build/$SYSTEM" "${CMAKE_FLAGS[@]}"
+srun "${SRUN_FLAGS[@]}" cmake --build "build/$SYSTEM" -j 8
