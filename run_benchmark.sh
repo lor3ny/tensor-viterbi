@@ -13,20 +13,12 @@ for s in "${states[@]}"; do
             
             # Define a unique filename for this combination
             config_file="data/${s}states_${t}steps_${d}dur.json"
-            
-            # Create the JSON file
-            cat <<EOF > "$config_file"
-{
-  "states": $s,
-  "duration": $d,
-  "timesteps": $t
-}
-EOF
 
             # Submit the job to SLURM, passing the path as an argument
             echo "Submitting job for: State=$s, Duration=$d, Timesteps=$t"
             sbatch run.slrm "$config_file"
             
+            sleep 0.1
         done
     done
 done

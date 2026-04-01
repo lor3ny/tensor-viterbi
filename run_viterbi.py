@@ -3,6 +3,7 @@ import csv
 import os
 import time
 from datetime import datetime
+import random
 
 from tensor_viterbi import HSMM
 from tensor_viterbi.viterbi import (
@@ -65,6 +66,7 @@ if __name__ == "__main__":
     parser.add_argument("--omp", action="store_true", help="Enable OpenMP backend")
     parser.add_argument("--baseline", action="store_true", help="Enable baselines (HSMMLearn C++, Vanilla Viterbi)")
     parser.add_argument("--mode", "-m", choices=["validate", "measure", "benchmark"], required=True)
+    parser.add_argument("--system", "-sys", choices=["leonardo", "lumi", "alps"], required=False, default="leonardo", help="System name (for benchmark CSV naming)")
     parser.add_argument("--data-path", "-dp", type=str, default="data/3states_20steps_4dur.json")
     args = parser.parse_args()
 
@@ -194,9 +196,8 @@ if __name__ == "__main__":
 
 
     elif args.mode == "benchmark":
-        os.makedirs("data", exist_ok=True)
-        _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        _csv = os.path.join("data", f"viterbi_benchmark_{_ts}.csv")
+        os.makedirs(f"logs/{args.system}", exist_ok=True)
+        _csv = os.path.join(f"logs/{args.system}", f"{N}s_{D}d_{T}t.csv")
         _bkw = dict(csv_path=_csv, iterations=10, n_states=N, timesteps=T, max_duration=D)
 
         if args.py:
@@ -217,13 +218,13 @@ if __name__ == "__main__":
 
         if args.baseline:
             print(f"{YEL}{BOLD}▶ HSMMLearn C++ (baseline){R}")
-            benchmark_baseline(data_path, csv_path=_csv, iterations=10)
+            benchmark_baseline(data_path, csv_path=_csv, iterations=5, n_states=N, timesteps=T, max_duration=D)
 
             print(f"{YEL}{BOLD}▶ HSMMLearn OMP (baseline){R}")
-            benchmark_baseline_omp(data_path, csv_path=_csv, iterations=10)
+            benchmark_baseline_omp(data_path, csv_path=_csv, iterations=5, n_states=N, timesteps=T, max_duration=D)
 
-            print(f"{YEL}{BOLD}▶ HSMMLearn Python (baseline){R}")
-            benchmark_baseline_py(data_path, csv_path=_csv, iterations=10)
+            # print(f"{YEL}{BOLD}▶ HSMMLearn Python (baseline){R}")
+            # benchmark_baseline_py(data_path, csv_path=_csv, iterations=5)
 
-            print(f"{YEL}{BOLD}▶ Vanilla Viterbi (baseline){R}")
-            TIME_BENCHMARK(decode_vanilla_viterbi, my_hsmm, **_bkw)
+            # print(f"{YEL}{BOLD}▶ Vanilla Viterbi (baseline){R}")
+            # TIME_BENCHMARK(decode_vanilla_viterbi, my_hsmm, **_bkw)

@@ -87,7 +87,7 @@ def load_sleep_model_hsmmlearn(json_path: str = "hsmm_config.json"):
 
 #! HOOK
 #! ---------------------
-def benchmark_baseline(json_file: str, csv_path="benchmark.csv", iterations=100,):
+def benchmark_baseline(json_file: str, csv_path="benchmark.csv", iterations=100, n_states=0, timesteps=0, max_duration=0):
 
     model, obs_seq = load_sleep_model_hsmmlearn(json_file)
 
@@ -101,9 +101,9 @@ def benchmark_baseline(json_file: str, csv_path="benchmark.csv", iterations=100,
     with open(csv_path, "a", newline="") as f:
         writer = csv.writer(f)
         if write_header:
-            writer.writerow(["function", "iteration", "elapsed_s"])
+            writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
         for i, t in enumerate(times):
-            writer.writerow(["HSMMLearn_CPP", i, f"{t:.6f}"])
+            writer.writerow(["HSMMLearn_CPP", n_states, timesteps, max_duration, i, f"{t:.6f}"])
 
     avg, mn, mx = sum(times) / len(times), min(times), max(times)
     print(f"  {WHITE}HSMMLearn C++{R}")
