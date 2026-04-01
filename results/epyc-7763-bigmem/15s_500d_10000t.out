@@ -1,0 +1,39 @@
+CPU(s):                                  256
+Model name:                              AMD EPYC 7763 64-Core Processor
+Thread(s) per core:                      2
+Core(s) per socket:                      64
+NUMA node0 CPU(s):                       0-15,128-143
+NUMA node1 CPU(s):                       16-31,144-159
+NUMA node2 CPU(s):                       32-47,160-175
+NUMA node3 CPU(s):                       48-63,176-191
+NUMA node4 CPU(s):                       64-79,192-207
+NUMA node5 CPU(s):                       80-95,208-223
+NUMA node6 CPU(s):                       96-111,224-239
+NUMA node7 CPU(s):                       112-127,240-255
+MemTotal:       1056002488 kB
+
+────────────────────────────────────────────────────
+  DATA SUMMARY
+────────────────────────────────────────────────────
+  data path  /pfs/lustrep3/users/desensid/tensor-viterbi/data/15states_10000steps_500dur.json
+  states (N)  15  ['s0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13', 's14']
+  steps  (T)  10000
+  max dur(D)  500
+────────────────────────────────────────────────────
+
+▶ Tensor Viterbi C++
+  decode_tensor_viterbi_cpp
+  avg 0.8812 s   min 0.8782 s   max 0.8918 s
+
+▶ Tensor Viterbi OMP
+  decode_tensor_viterbi_omp
+  avg 1.5575 s   min 1.5105 s   max 1.6074 s
+
+▶ HSMMLearn C++ (baseline)
+  HSMMLearn C++
+  avg 10.1234 s   min 10.0834 s   max 10.2376 s
+
+▶ HSMMLearn OMP (baseline)
+  HSMMLearn OMP
+  avg 0.9520 s   min 0.9485 s   max 0.9562 s
+
