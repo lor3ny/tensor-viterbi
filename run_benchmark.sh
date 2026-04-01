@@ -13,6 +13,7 @@ source "$SCRIPT_DIR/systems.conf"
 # Parse arguments
 SYSTEM=""
 VITERBI_FLAGS=""
+SEQUENTIAL=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --system) SYSTEM="$2"; shift 2 ;;
@@ -20,6 +21,7 @@ while [[ $# -gt 0 ]]; do
             flag="${1#--}"
             VITERBI_FLAGS="${VITERBI_FLAGS:+$VITERBI_FLAGS:}$flag"
             shift ;;
+        --sequential) SEQUENTIAL=1; shift ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
@@ -112,6 +114,7 @@ RESULTS_DIR="$SCRIPT_DIR/results/$SYSTEM"
 mkdir -p "$RESULTS_DIR"
 
 # Loop through all combinations
+PREV_JOB_ID=""
 for s in "${states[@]}"; do
     for d in "${durations[@]}"; do
         for t in "${timesteps[@]}"; do
@@ -119,12 +122,23 @@ for s in "${states[@]}"; do
             stem="${s}s_${d}d_${t}t"
             config_file="data/${s}states_${t}steps_${d}dur.json"
             echo "Submitting job for: System=$SYSTEM, State=$s, Duration=$d, Timesteps=$t, Walltime=$walltime"
-            sbatch "${SBATCH_FLAGS[@]}" \
+
+            JOB_OUTPUT=$(sbatch "${SBATCH_FLAGS[@]}" \
                 --job-name="tv_${stem}" \
                 --time="$walltime" \
                 --output="$RESULTS_DIR/${stem}.out" \
                 --error="$RESULTS_DIR/${stem}.err" \
-                run.slrm "$config_file"
+                run.slrm "$config_file")
+            echo "$JOB_OUTPUT"
+
+            if [[ "$SEQUENTIAL" -eq 1 ]]; then
+                PREV_JOB_ID=$(echo "$JOB_OUTPUT" | awk '{print $NF}')
+                echo "Waiting for job $PREV_JOB_ID to complete..."
+                while squeue -j "$PREV_JOB_ID" -h &>/dev/null; do
+                    sleep 30
+                done
+                echo "Job $PREV_JOB_ID completed."
+            fi
             sleep 0.1
         done
     done
