@@ -17,105 +17,115 @@ namespace cg = cooperative_groups;
 
 
 __global__ void kernel_initialization(
-        const double* __restrict__ start_probs,
-        const double* __restrict__ duration_probs,         // N×D log-space
-        const double* __restrict__ duration_probs_linear,  // N×D linear-space
-        const double* __restrict__ emission_probs,
-        const int*    __restrict__ obs_seq,
-        double* delta, int* psi_dur,
-        const double* __restrict__ trans_mat,
-        double* AP,
-        double* AP_tail,
-        int N, int D, int T)
+    const double* __restrict__ start_probs,
+    const double* __restrict__ duration_probs,
+    const double* __restrict__ duration_probs_linear,
+    const double* __restrict__ emission_probs,
+    const int*    __restrict__ obs_seq,
+    double* delta, int* psi_dur,
+    const double* __restrict__ trans_mat,
+    double* AP, double* AP_tail,
+    int N, int D, int T)
 {
-    const int j       = blockIdx.x;
-    const int i       = blockIdx.y;
-    const int d       = threadIdx.x;
-
+    const int j = blockIdx.x;
+    const int i = blockIdx.y;
+    const int d = threadIdx.x;
     if (i >= N || j >= N) return;
 
     const int warp_id   = d / WARP_SIZE;
     const int lane      = d % WARP_SIZE;
     const int num_warps = blockDim.x / WARP_SIZE;
 
-    // shared layout: [ sh_surv: blockDim.x | sh_em: blockDim.x | sh_warp_sums: num_warps ]
-    // sh_warp_sums è riusata per entrambi i scan (survival e emissions)
+    // smem: [ sh_scan: blockDim.x | sh_warp_sums: num_warps ]
     extern __shared__ double sh[];
-    double* sh_surv      = sh;
-    double* sh_em        = sh + blockDim.x;
-    double* sh_warp_sums = sh + 2 * blockDim.x;
+    double* sh_scan      = sh;
+    double* sh_warp_sums = sh + blockDim.x;
 
-    //* ── Step 1: Survival probs — reverse prefix sum in linear space ───────── //
-    // thread d calcola S[D-1-d] = sum_{k=D-1-d}^{D-1} duration_probs_linear[j*D+k]
-    double surv_val = (d < D) ? duration_probs_linear[j*D + (D-1-d)] : 0.0;
+    // ── Step 1+2: survival prefix sum (chunked) + AP / AP_tail ────────────
+    {
+        double running_offset = 0.0;
 
+        for (int base = 0; base < D; base += blockDim.x) {
+            const int dg = d + base;
 
-    for (int stride = 1; stride < WARP_SIZE; stride <<= 1) {
-        double v = WARP_SHFL_UP(surv_val, stride);
-        if (lane >= stride) surv_val += v;
-    }
-    sh_surv[d] = surv_val;
-    if (lane == WARP_SIZE - 1)
-        sh_warp_sums[warp_id] = surv_val;
-    __syncthreads();  // sync 1
+            // ── intra-warp prefix sum ──
+            double v = (dg < D) ? duration_probs_linear[j*D + (D-1-dg)] : 0.0;
+            for (int stride = 1; stride < WARP_SIZE; stride <<= 1) {
+                double u = WARP_SHFL_UP(v, stride);
+                if (lane >= stride) v += u;
+            }
+            sh_scan[d] = v;
+            if (lane == WARP_SIZE-1) sh_warp_sums[warp_id] = v;
+            __syncthreads();
 
-    if (d < WARP_SIZE) {
-        double ws = (d < num_warps) ? sh_warp_sums[d] : 0.0;
-        for (int stride = 1; stride < WARP_SIZE; stride <<= 1) {
-            double v = WARP_SHFL_UP(ws, stride);
-            if (d >= stride) ws += v;
+            // ── cross-warp prefix sum ──
+            if (d < WARP_SIZE) {
+                double ws = (d < num_warps) ? sh_warp_sums[d] : 0.0;
+                for (int stride = 1; stride < WARP_SIZE; stride <<= 1) {
+                    double u = WARP_SHFL_UP(ws, stride);
+                    if (d >= stride) ws += u;
+                }
+                if (d < num_warps) sh_warp_sums[d] = ws;
+            }
+            __syncthreads();
+
+            // ── valore inclusivo globale alla posizione dg ──
+            v = (warp_id > 0 ? sh_scan[d] + sh_warp_sums[warp_id-1] : sh_scan[d])
+                + running_offset;
+
+            if (dg < D) {
+                AP     [j*N*D + i*D + dg]       = trans_mat[j*N + i] + duration_probs[j*D + dg];
+                AP_tail[j*N*D + i*D + (D-1-dg)] = trans_mat[j*N + i] + log(v);
+            }
+
+            // chunk total = sh_warp_sums[num_warps-1] (leggibile da tutti dopo __syncthreads)
+            running_offset += sh_warp_sums[num_warps-1];
+            __syncthreads();   // prima della prossima iterazione
         }
-        if (d < num_warps)
-            sh_warp_sums[d] = ws;
-    }
-    __syncthreads();  // sync 2
-
-    surv_val = (warp_id > 0)
-             ? sh_surv[d] + sh_warp_sums[warp_id - 1]
-             : sh_surv[d];
-
-
-    //* ── Step 2: AP, AP_tail, survival_probs global ────────────────────────── //
-    if (d < D) {
-        double log_surv = log(surv_val);
-        AP     [j*N*D + i*D + d] = trans_mat[j*N + i] + duration_probs[j*D + d];
-        AP_tail[j*N*D + i*D + (D-1-d)] = trans_mat[j*N + i] + log_surv;
     }
 
-    //* ── Step 3: Phase 1 — solo i==0 ──────────────────────────────────────── //
+    // ── Step 3: emission prefix sum (chunked) + delta / psi_dur ───────────
+    // i è costante a livello di blocco: tutti i thread del blocco tornano insieme
     if (i != 0) return;
 
-    // riusa sh_warp_sums per il prefix sum delle emissions
-    double val = (d < D) ? emission_probs[obs_seq[d] * N + j] : 0.0;
+    {
+        double running_offset = 0.0;
 
-    for (int stride = 1; stride < WARP_SIZE; stride <<= 1) {
-        double v = WARP_SHFL_UP(val, stride);
-        if (lane >= stride) val += v;
-    }
-    sh_em[d] = val;
-    if (lane == WARP_SIZE - 1)
-        sh_warp_sums[warp_id] = val;
-    __syncthreads();  // sync 3
+        for (int base = 0; base < D; base += blockDim.x) {
+            const int dg = d + base;
 
-    if (d < WARP_SIZE) {
-        double ws = (d < num_warps) ? sh_warp_sums[d] : 0.0;
-        for (int stride = 1; stride < WARP_SIZE; stride <<= 1) {
-            double v = WARP_SHFL_UP(ws, stride);
-            if (d >= stride) ws += v;
+            double v = (dg < D) ? emission_probs[obs_seq[dg] * N + j] : 0.0;
+            for (int stride = 1; stride < WARP_SIZE; stride <<= 1) {
+                double u = WARP_SHFL_UP(v, stride);
+                if (lane >= stride) v += u;
+            }
+            sh_scan[d] = v;
+            if (lane == WARP_SIZE-1) sh_warp_sums[warp_id] = v;
+            __syncthreads();
+
+            if (d < WARP_SIZE) {
+                double ws = (d < num_warps) ? sh_warp_sums[d] : 0.0;
+                for (int stride = 1; stride < WARP_SIZE; stride <<= 1) {
+                    double u = WARP_SHFL_UP(ws, stride);
+                    if (d >= stride) ws += u;
+                }
+                if (d < num_warps) sh_warp_sums[d] = ws;
+            }
+            __syncthreads();
+
+            v = (warp_id > 0 ? sh_scan[d] + sh_warp_sums[warp_id-1] : sh_scan[d])
+                + running_offset;
+
+            if (dg < D) {
+                delta  [j*T + dg] = duration_probs[j*D + dg] + start_probs[j] + v;
+                psi_dur[j*T + dg] = dg + 1;
+            }
+
+            running_offset += sh_warp_sums[num_warps-1];
+            __syncthreads();
         }
-        if (d < num_warps)
-            sh_warp_sums[d] = ws;
-    }
-    __syncthreads();  // sync 4
-
-    val = (warp_id > 0) ? sh_em[d] + sh_warp_sums[warp_id - 1] : sh_em[d];
-
-    if (d < D) {
-        delta  [j*T + d] = duration_probs[j*D + d] + start_probs[j] + val;
-        psi_dur[j*T + d] = d + 1;
     }
 }
-
 
 
 __global__ void kernel_induction(
@@ -148,18 +158,26 @@ __global__ void kernel_induction(
     //* Broadcast emission — tutti i thread leggono lo stesso indirizzo (L1 broadcast) *//
     const double new_em = emission_probs[obs_t * N + j];
 
-    //* Cached Emissions *//
-    double em_val = -1e300;
-    if (d < tau) {
-        em_val = (d == 0) ? new_em : new_em + em_cur[j * D + d - 1];
-        if (i == 0)
-            em_nxt[j * D + d] = em_val;
-    }
+    // ── Thread coarsening ──────────────────────────────────────────────────────
+    // Ogni thread copre dg = d, d+blockDim.x, d+2*blockDim.x, …
+    // Accumula argmax locale; dd è già l'indice globale (0..tau-1).
+    double val = -1e300;
+    int    dd  = 0;
 
-    //* Brick — in registers, niente smem *//
-    double val = (d < tau) ? (em_val + delta[i*T + (t-1-d)] + AP[j*N*D + i*D + d])
-                           : -1e300;
-    int    dd  = (d < tau) ? d : 0;
+    for (int base = 0; base < tau; base += blockDim.x) {
+        const int dg = threadIdx.x + base;
+        if (dg < tau) {
+            const double em_val_dg = (dg == 0) ? new_em
+                                                : new_em + em_cur[j * D + dg - 1];
+
+            // em_nxt: scritto una volta per dg, solo dal blocco i==0
+            if (i == 0)
+                em_nxt[j * D + dg] = em_val_dg;
+
+            const double v = em_val_dg + delta[i*T + (t-1-dg)] + AP[j*N*D + i*D + dg];
+            if (v > val || (v == val && dg < dd)) { val = v; dd = dg; }
+        }
+    }
 
     //* Intra-warp argmax (shuffle, zero syncthreads) *//
     for (int s = min(WARP_SIZE >> 1, (int)(blockDim.x >> 1)); s > 0; s >>= 1) {
@@ -414,63 +432,68 @@ __global__ void kernel_tail_adjustment(
     const int j = blockIdx.x;
     const int i = blockIdx.y;
     const int d = threadIdx.x;
-
     if (i >= N || j >= N) return;
+
+    const int warp_id   = d / WARP_SIZE;
+    const int lane      = d % WARP_SIZE;
+    const int num_warps = (blockDim.x + WARP_SIZE - 1) / WARP_SIZE;
+    const int tau       = min(T - 1, D);
 
     extern __shared__ char shmem[];
     double* sh_val = reinterpret_cast<double*>(shmem);
-    int*    sh_d   = reinterpret_cast<int*>(sh_val + blockDim.x);
+    int*    sh_d   = reinterpret_cast<int*>(sh_val + num_warps);
 
-    const int tau = min(T - 1, D);
+    // ── Thread coarsening: accumulo argmax locale in registro ─────────────
+    double val = -1e300;
+    int    dd  = 0;
 
-    // ── Brick ─────────────────────────────────────────────────────────────── //
-    if (d < tau) {
-        sh_val[d] = d_em_last[j * D + d]
-                  + delta[i * T + (T - 2 - d)]
-                  + AP_tail[j * N*D + i*D + d];
-        sh_d[d] = d;
-    } else {
-        sh_val[d] = -1e300;
-        sh_d[d]   = 0;
+    for (int base = 0; base < tau; base += blockDim.x) {
+        const int dg = threadIdx.x + base;
+        if (dg < tau) {
+            const double v = d_em_last[j * D + dg]
+                           + delta[i * T + (T - 2 - dg)]
+                           + AP_tail[j * N*D + i*D + dg];
+            if (v > val || (v == val && dg < dd)) { val = v; dd = dg; }
+        }
+    }
+
+    // ── Intra-warp argmax (shuffle) ───────────────────────────────────────
+    for (int s = WARP_SIZE >> 1; s > 0; s >>= 1) {
+        double ov = WARP_SHFL_DOWN(val, s);
+        int    od = WARP_SHFL_DOWN(dd,  s);
+        if (ov > val || (ov == val && od < dd)) { val = ov; dd = od; }
+    }
+
+    // ── Fast path: blocco a warp singolo ─────────────────────────────────
+    if (num_warps == 1) {
+        if (lane == 0) {
+            psi_state_ji[j * N + i] = val;
+            psi_dur_ji  [j * N + i] = dd;
+        }
+        return;
+    }
+
+    // ── Cross-warp: lane 0 scrive in smem, warp 0 riduce ─────────────────
+    if (lane == 0) {
+        sh_val[warp_id] = val;
+        sh_d  [warp_id] = dd;
     }
     __syncthreads();
 
-    // ── cross-warp ───────────────────────────────────────────────────────── //
-    for (int stride = blockDim.x >> 1; stride >= WARP_SIZE; stride >>= 1) {
-        if (d < stride) {
-            double other_val = sh_val[d + stride];
-            if (other_val > sh_val[d] ||
-               (other_val == sh_val[d] && sh_d[d + stride] < sh_d[d])) {
-                sh_val[d] = other_val;
-                sh_d[d]   = sh_d[d + stride];
-            }
-        }
-        __syncthreads();
-    }
+    if (warp_id == 0) {
+        val = (lane < num_warps) ? sh_val[lane] : -1e300;
+        dd  = (lane < num_warps) ? sh_d  [lane] : 0;
 
-    // ── intra-warp ───────────────────────────────────────────────────────── //
-    if (d < WARP_SIZE) {
-        double reg_val = sh_val[d];
-        int    reg_d   = sh_d[d];
-
-        for (int stride = min(WARP_SIZE >> 1, (int)(blockDim.x >> 1)); stride > 0; stride >>= 1) {
-            double other_val = WARP_SHFL_DOWN(reg_val, stride);
-            int    other_d   = WARP_SHFL_DOWN(reg_d,   stride);
-            if (other_val > reg_val ||
-               (other_val == reg_val && other_d < reg_d)) {
-                reg_val = other_val;
-                reg_d   = other_d;
-            }
+        for (int s = WARP_SIZE >> 1; s > 0; s >>= 1) {
+            double ov = WARP_SHFL_DOWN(val, s);
+            int    od = WARP_SHFL_DOWN(dd,  s);
+            if (ov > val || (ov == val && od < dd)) { val = ov; dd = od; }
         }
-        if (d == 0) {
-            sh_val[0] = reg_val;
-            sh_d[0]   = reg_d;
-        }
-    }
 
-    if (d == 0) {
-        psi_state_ji[j * N + i] = sh_val[0];
-        psi_dur_ji  [j * N + i] = sh_d[0];
+        if (lane == 0) {
+            psi_state_ji[j * N + i] = val;
+            psi_dur_ji  [j * N + i] = dd;
+        }
     }
 }
 

@@ -44,6 +44,17 @@ static bool check_cooperative_launch(const void* kernel, int block_size, size_t 
     return true;
 }
 
+inline int next_pow2(int x) {
+    if (x <= 1) return 1;
+    unsigned u = (unsigned)(x - 1);
+    u |= u >> 1;
+    u |= u >> 2;
+    u |= u >> 4;
+    u |= u >> 8;
+    u |= u >> 16;
+    return (int)(u + 1);
+}
+
 // forward declaration — defined after decode_tensor_viterbi_cuda
 static void run_induction(
     double* d_delta, const double* d_AP,
@@ -582,10 +593,9 @@ std::vector<int> decode_tensor_viterbi_cuda(
     CUDA_CHECK(cudaMalloc(&d_em[1], D * N * sizeof(double)));
 
     //* ── PHASE 1 — Initialization & AP ──────────────────────────────────────── *//
-    int bs_init = 1;
-    while (bs_init < D) bs_init <<= 1;
-    const int    num_warps = bs_init / 32;
-    const size_t sm_init = (2*bs_init + num_warps) * sizeof(double);
+    int bs_init = min(next_pow2(D), 1024);
+    const int    num_warps_init = bs_init / 32;
+    const size_t sm_init = (2*bs_init + num_warps_init) * sizeof(double);
     kernel_initialization<<<dim3(N, N), dim3(bs_init), sm_init>>>(
         d_start_probs, d_duration_probs,
         d_duration_probs_linear, d_emission_probs,
@@ -605,20 +615,23 @@ std::vector<int> decode_tensor_viterbi_cuda(
         T, N, D);
     
     //* ── Tail Adjustment ─────────────────────────────────────────────────────── *//
-    const int tau = std::min(T-1, D);
     const int cur_final = (T - 1) % 2;
-    int bs = 1;
-    while (bs < tau) bs <<= 1;
-    const size_t sm = bs * (sizeof(double) + sizeof(int));
-    kernel_tail_adjustment<<<dim3(N, N), dim3(bs), sm>>>(
+    
+    const int tau_tail = std::min(T-1, D);
+    int bs_tail = min(next_pow2(tau_tail), 1024);
+    const int  nw_tail  = (bs_tail + WARP_SIZE - 1) / WARP_SIZE;
+    const size_t sm_tail = (bs_tail > WARP_SIZE)
+                     ? nw_tail * (sizeof(double) + sizeof(int))
+                     : 0;
+
+    kernel_tail_adjustment<<<dim3(N, N), dim3(bs_tail), sm_tail>>>(
         d_AP_tail, d_em[cur_final],
         d_delta,
         d_psi_state_ji, d_psi_dur_ji,
         N, D, T);
     CUDA_CHECK(cudaGetLastError());
 
-    int bs_N = 1;
-    while (bs_N < N) bs_N <<= 1;
+    int bs_N = next_pow2(N);
     const size_t sm_reduce = bs_N * (sizeof(double) + 2 * sizeof(int));
     kernel_tail_reduce_i<<<N, bs_N, sm_reduce>>>(
         d_psi_state_ji, d_psi_dur_ji,
@@ -664,16 +677,17 @@ static void run_induction(
     int* d_psi_state, int* d_psi_dur,
     int T, int N, int D)
 {
-    int block_size = 1;
-    while (block_size < D) block_size <<= 1;
-    const size_t shmem = block_size * (sizeof(double) + sizeof(int));
+    // int block_size = next_pow2(D);
+    // const size_t shmem = block_size * (sizeof(double) + sizeof(int));
 
-    bool use_persistent = check_cooperative_launch(
-        (void*)kernel_persistent, block_size, shmem, N * N);
+    // bool use_persistent = check_cooperative_launch(
+    //     (void*)kernel_persistent, block_size, shmem, N * N);
+    bool use_persistent = false;
 
     int cur = 0;
 
     if (use_persistent) {
+
         void* args[] = {
             &d_obs_seq, &d_emission_probs, &d_delta, &d_AP,
             &d_em[0], &d_em[1],
@@ -681,22 +695,22 @@ static void run_induction(
             &d_psi_state, &d_psi_dur,
             &N, &D, &T
         };
+
         cudaLaunchCooperativeKernel(
             (void*)kernel_persistent,
             dim3(N, N), dim3(block_size),
             args, shmem);
         CUDA_CHECK(cudaGetLastError());
+
     } else {
-        int bs_N = 1;
-        while (bs_N < N) bs_N <<= 1;
+        int bs_N = next_pow2(N);
         const size_t sm_reduce = bs_N * (sizeof(double) + 2 * sizeof(int));
 
         for (int t = 1; t < T; ++t) {
             const int tau = std::min(t, D);
             const int nxt = 1 - cur;
 
-            int bs = 1;
-            while (bs < tau) bs <<= 1;
+            int bs = min(next_pow2(tau), 1024);
             // smem solo per cross-warp (num_warps entry); zero se bs <= WARP_SIZE
             const size_t sm = (bs > WARP_SIZE)
                             ? (bs / WARP_SIZE) * (sizeof(double) + sizeof(int))
