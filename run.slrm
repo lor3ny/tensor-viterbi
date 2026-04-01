@@ -26,7 +26,7 @@ cd /leonardo/home/userexternal/lpiarull/fast-viterbi
 # Use the variable in the python command
 # Added a check to ensure the file exists before running
 if [ -f "$CONFIG_PATH" ]; then
-    python run_viterbi.py --baseline -m benchmark -dp "$CONFIG_PATH"
+    python run_viterbi.py --baseline --system leonardo -m benchmark -dp "$CONFIG_PATH"
 else
     echo "Error: Configuration file $CONFIG_PATH not found."
     exit 1
