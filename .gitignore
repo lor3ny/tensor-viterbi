@@ -60,4 +60,4 @@ src/tensor-viterbi
 my_run.slurm
 
 # results
-results/
+#results/
