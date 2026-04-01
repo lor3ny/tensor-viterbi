@@ -2,6 +2,7 @@
 #SBATCH --job-name=tensor-viterbi
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
+#SBATCH --exclusive
 # --job-name, --output, --error, --partition, --account, --time, --cpus-per-task / --gres
 # are all injected by run_benchmark.sh via sbatch CLI arguments.
 # SYS_NAME, SYS_TYPE, SYS_MODULES are passed via --export.
