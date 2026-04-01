@@ -2,6 +2,7 @@ import argparse
 import csv
 import os
 import time
+from datetime import datetime
 
 from tensor_viterbi import HSMM
 from tensor_viterbi.viterbi import (
@@ -34,7 +35,8 @@ def TIME_MEASURE(func, *args, **kwargs):
     return result, elapsed
 
 
-def TIME_BENCHMARK(func, *args, csv_path="benchmark.csv", iterations=100, **kwargs):
+def TIME_BENCHMARK(func, *args, csv_path="benchmark.csv", iterations=100,
+                   n_states=None, timesteps=None, max_duration=None, **kwargs):
     times = []
     for _ in range(iterations):
         start = time.perf_counter()
@@ -45,9 +47,9 @@ def TIME_BENCHMARK(func, *args, csv_path="benchmark.csv", iterations=100, **kwar
     with open(csv_path, "a", newline="") as f:
         writer = csv.writer(f)
         if write_header:
-            writer.writerow(["function", "iteration", "elapsed_s"])
+            writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
         for i, t in enumerate(times):
-            writer.writerow([func.__name__, i, f"{t:.6f}"])
+            writer.writerow([func.__name__, n_states, timesteps, max_duration, i, f"{t:.6f}"])
 
     avg, mn, mx = sum(times) / len(times), min(times), max(times)
     print(f"  {WHITE}{func.__name__}{R}")
@@ -192,32 +194,36 @@ if __name__ == "__main__":
 
 
     elif args.mode == "benchmark":
+        os.makedirs("data", exist_ok=True)
+        _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        _csv = os.path.join("data", f"viterbi_benchmark_{_ts}.csv")
+        _bkw = dict(csv_path=_csv, iterations=10, n_states=N, timesteps=T, max_duration=D)
 
         if args.py:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi Python{R}")
-            TIME_BENCHMARK(decode_log_tensor_viterbi_cached, my_hsmm, csv_path="viterbi_benchmark.csv", iterations=10)
+            TIME_BENCHMARK(decode_log_tensor_viterbi_cached, my_hsmm, **_bkw)
 
         if args.cpp:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi C++{R}")
-            TIME_BENCHMARK(decode_tensor_viterbi_cpp, *_cpp_args, csv_path="viterbi_benchmark.csv", iterations=10)
+            TIME_BENCHMARK(decode_tensor_viterbi_cpp, *_cpp_args, **_bkw)
 
         if args.omp:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi OMP{R}")
-            TIME_BENCHMARK(decode_tensor_viterbi_omp, *_cpp_args, csv_path="viterbi_benchmark.csv", iterations=10)
+            TIME_BENCHMARK(decode_tensor_viterbi_omp, *_cpp_args, **_bkw)
 
         if args.cuda:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi CUDA{R}")
-            TIME_BENCHMARK(decode_tensor_viterbi_cuda, *_cpp_args, csv_path="viterbi_benchmark.csv", iterations=10)
+            TIME_BENCHMARK(decode_tensor_viterbi_cuda, *_cpp_args, **_bkw)
 
         if args.baseline:
             print(f"{YEL}{BOLD}▶ HSMMLearn C++ (baseline){R}")
-            benchmark_baseline(data_path, csv_path="viterbi_benchmark.csv", iterations=10)
+            benchmark_baseline(data_path, csv_path=_csv, iterations=10)
 
             print(f"{YEL}{BOLD}▶ HSMMLearn OMP (baseline){R}")
-            benchmark_baseline_omp(data_path, csv_path="viterbi_benchmark.csv", iterations=10)
+            benchmark_baseline_omp(data_path, csv_path=_csv, iterations=10)
 
             print(f"{YEL}{BOLD}▶ HSMMLearn Python (baseline){R}")
-            benchmark_baseline_py(data_path, csv_path="viterbi_benchmark.csv", iterations=10)
+            benchmark_baseline_py(data_path, csv_path=_csv, iterations=10)
 
             print(f"{YEL}{BOLD}▶ Vanilla Viterbi (baseline){R}")
-            TIME_BENCHMARK(decode_vanilla_viterbi, my_hsmm, csv_path="viterbi_benchmark.csv", iterations=10)
+            TIME_BENCHMARK(decode_vanilla_viterbi, my_hsmm, **_bkw)
