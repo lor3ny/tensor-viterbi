@@ -100,8 +100,11 @@ else()
 endif()
 
 # --- Pybind11 ---
-execute_process(COMMAND python3 -c "import sysconfig; print(sysconfig.get_path('include'))" OUTPUT_VARIABLE PYTHON_INC OUTPUT_STRIP_TRAILING_WHITESPACE)
-execute_process(COMMAND python3 -c "import pybind11; print(pybind11.get_include())" OUTPUT_VARIABLE PYBIND_INC OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT PYTHON_EXECUTABLE)
+    set(PYTHON_EXECUTABLE "python3")
+endif()
+execute_process(COMMAND ${PYTHON_EXECUTABLE} -c "import sysconfig; print(sysconfig.get_path('include'))" OUTPUT_VARIABLE PYTHON_INC OUTPUT_STRIP_TRAILING_WHITESPACE)
+execute_process(COMMAND ${PYTHON_EXECUTABLE} -c "import pybind11; print(pybind11.get_include())" OUTPUT_VARIABLE PYBIND_INC OUTPUT_STRIP_TRAILING_WHITESPACE)
 
 # --- Extension module ---
 add_library(_native SHARED src/bindings.cpp ${NATIVE_SOURCES})

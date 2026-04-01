@@ -93,13 +93,13 @@ else
 fi
 
 # Define parameter arrays
-#states=(10 15 25 50 75)
-#durations=(100 250 500 1000)
-#timesteps=(1000 10000 100000)
+states=(10 15 25 50 75)
+durations=(100 250 500 1000)
+timesteps=(1000 10000) # 100000)
 
-states=(10)
-durations=(100 250)
-timesteps=(1000)
+#states=(10)
+#durations=(100 250)
+#timesteps=(1000)
 
 echo "Compiling for system: $SYSTEM"
 "$SCRIPT_DIR/compile.sh" --system "$SYSTEM"

@@ -38,7 +38,7 @@ MODULES_BUILD="${SYS_MODULES_BUILD[$SYSTEM]}"
 GPU_ARCH="${SYS_GPU_ARCH[$SYSTEM]}"
 
 # Load build modules
-module purge
+#module purge
 IFS=':' read -ra _MODS <<< "$MODULES_BUILD"
 for _mod in "${_MODS[@]}"; do
     module load "$_mod"
@@ -69,5 +69,6 @@ else
     CMAKE_FLAGS=(-DBUILD_GPU=OFF -DSYSTEM_NAME="$SYSTEM")
 fi
 
-srun "${SRUN_FLAGS[@]}" cmake -B "build/$SYSTEM" "${CMAKE_FLAGS[@]}"
+PYTHON_EXE="$(command -v python3)"
+srun "${SRUN_FLAGS[@]}" cmake -B "build/$SYSTEM" -DPYTHON_EXECUTABLE="$PYTHON_EXE" "${CMAKE_FLAGS[@]}"
 srun "${SRUN_FLAGS[@]}" cmake --build "build/$SYSTEM" -j 8
