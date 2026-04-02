@@ -38,6 +38,29 @@ import pandas as pd
 RESULTS_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "results")
 OUT_ROOT     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bars")
 
+# Default toolchain per system prefix — used unless --all-toolchains is given.
+DEFAULT_TOOLCHAINS = {
+    "a100":      "cuda",
+    "mi250x":    "cray",
+    "epyc-7763": "cray",   # matches epyc-7763-bigmem etc.
+    "xeon8480":  "gnu",
+}
+
+def _filter_systems(all_systems, use_all):
+    """Keep only the default toolchain per system unless use_all is True."""
+    if use_all:
+        return all_systems
+    kept = []
+    for sys_tc in all_systems:
+        system, toolchain = sys_tc.split("/", 1)
+        default = next(
+            (tc for prefix, tc in DEFAULT_TOOLCHAINS.items() if system.startswith(prefix)),
+            None,
+        )
+        if default is None or toolchain == default:
+            kept.append(sys_tc)
+    return kept
+
 FUNCTION_ORDER = [
     "HSMMLearn_CPP",
     "HSMMLearn_OMP",
@@ -100,13 +123,15 @@ def draw_group_bracket(ax, x_left, x_right, label, y_frac=-0.18, tick_h=0.03):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--states",     "-s", type=int, required=True)
-    parser.add_argument("--ref-system", default=None,
+    parser.add_argument("--states",         "-s", type=int, required=True)
+    parser.add_argument("--ref-system",     default=None,
                         help="System/toolchain to use as HSMMLearn C++ reference for GPU bars.")
+    parser.add_argument("--all-toolchains", action="store_true",
+                        help="Show all toolchains; by default only the default toolchain per system is shown.")
     args = parser.parse_args()
     N = args.states
 
-    all_systems = discover_systems()
+    all_systems = _filter_systems(discover_systems(), args.all_toolchains)
     if not all_systems:
         print("Error: no metrics results found.", file=sys.stderr)
         sys.exit(1)

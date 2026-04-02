@@ -38,6 +38,20 @@ if [[ -z "${SYS_TYPE[$SYSTEM]+x}" ]]; then
     exit 1
 fi
 
+# --toolchain all: re-exec for every toolchain defined for this system
+if [[ "$TOOLCHAIN" == "all" ]]; then
+    _toolchains=$(for k in "${!SYS_MODULES_BUILD[@]}"; do [[ "$k" == "$SYSTEM/"* ]] && echo "${k#*/}"; done | sort)
+    if [[ -z "$_toolchains" ]]; then
+        echo "Error: No toolchains defined for system '$SYSTEM'."
+        exit 1
+    fi
+    for _tc in $_toolchains; do
+        echo "=== Compiling $SYSTEM / $_tc ==="
+        "$0" --system "$SYSTEM" --toolchain "$_tc"
+    done
+    exit $?
+fi
+
 if [[ -z "${SYS_MODULES_BUILD[$SYSTEM/$TOOLCHAIN]+x}" ]]; then
     echo "Error: Toolchain '$TOOLCHAIN' is not defined for system '$SYSTEM'."
     _known=$(for k in "${!SYS_MODULES_BUILD[@]}"; do [[ "$k" == "$SYSTEM/"* ]] && echo "  ${k#*/}"; done | sort)
