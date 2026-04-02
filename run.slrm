@@ -47,7 +47,7 @@ if [[ -f "$CONFIG_PATH" ]]; then
             [[ -n "$_f" ]] && PYTHON_FLAGS="$PYTHON_FLAGS --$_f"
         done
     fi
-    python run_viterbi.py $PYTHON_FLAGS --system "$SYS_NAME" -m benchmark -dp "$SCRIPT_DIR/$CONFIG_PATH"
+    python run_viterbi.py $PYTHON_FLAGS --system "$SYS_NAME" -m benchmark -dp "$SCRIPT_DIR/$CONFIG_PATH" --iterations "${BENCHMARK_ITERATIONS:-10}"
 else
     echo "Error: Configuration file $CONFIG_PATH not found."
     exit 1

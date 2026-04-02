@@ -72,6 +72,15 @@ class HSMM:
 
         print("\n======================")
 
+
+    def to_log_space(self):
+        smoothness = 1e-30
+
+        self.trans_mat = np.log(self.trans_mat + smoothness)
+        self.emission_probs = np.log(self.emission_probs + smoothness)
+        self.start_probs = np.log(self.start_probs + smoothness)
+        self.duration_probs = np.log(self.duration_probs + smoothness)
+
     @staticmethod
     def load_model(json_path: str = "hsmm_config.json") -> "HSMM":
 
@@ -112,11 +121,11 @@ class HSMM:
         hsmm_sleep = HSMM(
             sleep_states, 
             sleep_emissions, 
-            np.log(sleep_trans_mat.T + smoothness), 
-            np.log(sleep_emission_probs + smoothness), 
-            sleep_duration_probs.T + smoothness,
-            np.log(sleep_start_probs + smoothness), 
-            np.log(sleep_duration_probs.T + smoothness)
+            sleep_trans_mat.T, 
+            sleep_emission_probs,
+            sleep_duration_probs.T,
+            sleep_start_probs,
+            sleep_duration_probs.T
         )
         hsmm_sleep.set_obs_sequence(sleep_obs_seq)
 

@@ -23,7 +23,7 @@ Loading python/3.11.7
 ────────────────────────────────────────────────────
   DATA SUMMARY
 ────────────────────────────────────────────────────
-  data path  /leonardo_scratch/large/userexternal/ddesensi/tensor-viterbi/data/50states_1000steps_100dur.json
+  data path  /leonardo/home/userexternal/lpiarull/fast-viterbi/data/50states_1000steps_100dur.json
   states (N)  50  ['s0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13', 's14', 's15', 's16', 's17', 's18', 's19', 's20', 's21', 's22', 's23', 's24', 's25', 's26', 's27', 's28', 's29', 's30', 's31', 's32', 's33', 's34', 's35', 's36', 's37', 's38', 's39', 's40', 's41', 's42', 's43', 's44', 's45', 's46', 's47', 's48', 's49']
   steps  (T)  1000
   max dur(D)  100
@@ -31,17 +31,17 @@ Loading python/3.11.7
 
 ▶ Tensor Viterbi C++
   decode_tensor_viterbi_cpp
-  avg 0.2806 s   min 0.2803 s   max 0.2835 s
+  avg 0.2812 s   min 0.2802 s   max 0.2833 s
 
 ▶ Tensor Viterbi OMP
   decode_tensor_viterbi_omp
-  avg 0.6992 s   min 0.5618 s   max 1.1385 s
+  avg 0.3880 s   min 0.1496 s   max 0.8635 s
 
 ▶ HSMMLearn C++ (baseline)
   HSMMLearn C++
-  avg 3.2359 s   min 3.2265 s   max 3.2662 s
+  avg 3.2072 s   min 3.1932 s   max 3.2337 s
 
 ▶ HSMMLearn OMP (baseline)
   HSMMLearn OMP
-  avg 0.2810 s   min 0.2577 s   max 0.3550 s
+  avg 0.1016 s   min 0.0998 s   max 0.1051 s
 

@@ -1,0 +1,22 @@
+#!/bin/bash
+#SBATCH --job-name=tensor-viterbi
+#SBATCH --output=results/tensor_viterbi_%j.out
+#SBATCH --error=results/tensor_viterbi_%j.err
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --time=00:30:00
+#SBATCH --account=IscrC_FOCAL
+#SBATCH --qos=boost_qos_dbg
+#SBATCH --partition=boost_usr_prod
+#SBATCH --gres=gpu:1
+
+
+module load python
+module load cuda
+
+source /leonardo/home/userexternal/lpiarull/fast-viterbi/.venv/bin/activate
+
+cd /leonardo/home/userexternal/lpiarull/fast-viterbi
+
+python run_viterbi.py --baseline --cuda --cpp --omp -m measure -dp data/50states_1000steps_100dur.json

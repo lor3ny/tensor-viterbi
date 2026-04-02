@@ -1,5 +1,5 @@
 #!/bin/bash
-# Usage: ./run_benchmark.sh --system <system_name>
+# Usage: ./run_benchmark.sh --system <system_name> [--iterations N] [--py|--cpp|--omp|--cuda|--baseline] [--sequential]
 # Available systems are defined in systems.conf
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,6 +14,7 @@ source "$SCRIPT_DIR/systems.conf"
 SYSTEM=""
 VITERBI_FLAGS=""
 SEQUENTIAL=0
+ITERATIONS=6
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --system) SYSTEM="$2"; shift 2 ;;
@@ -22,6 +23,7 @@ while [[ $# -gt 0 ]]; do
             VITERBI_FLAGS="${VITERBI_FLAGS:+$VITERBI_FLAGS:}$flag"
             shift ;;
         --sequential) SEQUENTIAL=1; shift ;;
+        --iterations) ITERATIONS="$2"; shift 2 ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
@@ -86,7 +88,7 @@ get_walltime() {
 SBATCH_FLAGS=(
     "--partition=$PARTITION"
     "--account=$ACCOUNT"
-    "--export=ALL,SYS_NAME=$SYSTEM,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,VITERBI_FLAGS=$VITERBI_FLAGS"
+    "--export=ALL,SYS_NAME=$SYSTEM,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,VITERBI_FLAGS=$VITERBI_FLAGS,BENCHMARK_ITERATIONS=$ITERATIONS"
 )
 if [[ "$TYPE" == "gpu" ]]; then
     SBATCH_FLAGS+=("--gres=gpu:1")
@@ -95,9 +97,13 @@ else
 fi
 
 # Define parameter arrays
-states=(10 15 25 50 75)
-durations=(100 250 500 1000)
-timesteps=(1000 10000) # 100000)
+# states=(10 15 25 50 75)
+# durations=(100 250 500 1000)
+# timesteps=(1000 10000) # 100000)
+
+states=(50)
+durations=(100)
+timesteps=(1000)
 
 #states=(10)
 #durations=(100 250)
