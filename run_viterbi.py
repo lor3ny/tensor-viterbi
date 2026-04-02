@@ -35,26 +35,6 @@ def TIME_MEASURE(func, *args, **kwargs):
     return result, elapsed
 
 
-def TIME_BENCHMARK(func, *args, csv_path="benchmark.csv", iterations=100,
-                   n_states=None, timesteps=None, max_duration=None, **kwargs):
-    times = []
-    for _ in range(iterations):
-        start = time.perf_counter()
-        result = func(*args, **kwargs)
-        times.append(time.perf_counter() - start)
-
-    stem, ext = os.path.splitext(csv_path)
-    func_csv = f"{stem}_{func.__name__}{ext}"
-    with open(func_csv, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
-        for i, t in enumerate(times):
-            writer.writerow([func.__name__, n_states, timesteps, max_duration, i, f"{t:.6f}"])
-
-    avg, mn, mx = sum(times) / len(times), min(times), max(times)
-    print(f"  {WHITE}{func.__name__}{R}")
-    print(f"  avg {BOLD}{GREEN}{avg:.4f} s{R}   min {GREEN}{mn:.4f} s{R}   max {GREEN}{mx:.4f} s{R}\n")
-
 
 def compute_accuracy(true_states, predicted_states):
     true_states = np.array(true_states)
@@ -225,43 +205,83 @@ if __name__ == "__main__":
     elif args.mode == "benchmark":
         os.makedirs(f"results/{args.system}", exist_ok=True)
         _csv = os.path.join(f"results/{args.system}", f"{N}s_{D}d_{T}t.csv")
-        _bkw = dict(csv_path=_csv, iterations=args.iterations, n_states=N, timesteps=T, max_duration=D)
+        _stem, _ext = os.path.splitext(_csv)
 
         if args.py:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi Python{R}")
-            my_hsmm = HSMM.load_model(data_path)
-            def _py_cached():
+            _fname = decode_log_tensor_viterbi_cached.__name__
+            _times = []
+            for _ in range(args.iterations):
+                my_hsmm = HSMM.load_model(data_path)
+                start = time.perf_counter()
                 my_hsmm.to_log_space()
-                return decode_log_tensor_viterbi_cached(my_hsmm)
-            _py_cached.__name__ = decode_log_tensor_viterbi_cached.__name__
-            TIME_BENCHMARK(_py_cached, **_bkw)
+                decode_log_tensor_viterbi_cached(my_hsmm)
+                _times.append(time.perf_counter() - start)
+            with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
+                for i, t in enumerate(_times):
+                    writer.writerow([_fname, N, T, D, i, f"{t:.6f}"])
+            avg, mn, mx = sum(_times) / len(_times), min(_times), max(_times)
+            print(f"  {WHITE}{_fname}{R}")
+            print(f"  avg {BOLD}{GREEN}{avg:.4f} s{R}   min {GREEN}{mn:.4f} s{R}   max {GREEN}{mx:.4f} s{R}\n")
 
         if args.cpp:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi C++{R}")
-            my_hsmm = HSMM.load_model(data_path)
-            def _cpp():
+            _fname = decode_tensor_viterbi_cpp.__name__
+            _times = []
+            for _ in range(args.iterations):
+                my_hsmm = HSMM.load_model(data_path)
+                start = time.perf_counter()
                 my_hsmm.to_log_space()
-                return decode_tensor_viterbi_cpp(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
-            _cpp.__name__ = decode_tensor_viterbi_cpp.__name__
-            TIME_BENCHMARK(_cpp, **_bkw)
+                decode_tensor_viterbi_cpp(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
+                _times.append(time.perf_counter() - start)
+            with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
+                for i, t in enumerate(_times):
+                    writer.writerow([_fname, N, T, D, i, f"{t:.6f}"])
+            avg, mn, mx = sum(_times) / len(_times), min(_times), max(_times)
+            print(f"  {WHITE}{_fname}{R}")
+            print(f"  avg {BOLD}{GREEN}{avg:.4f} s{R}   min {GREEN}{mn:.4f} s{R}   max {GREEN}{mx:.4f} s{R}\n")
 
         if args.omp:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi OMP{R}")
-            my_hsmm = HSMM.load_model(data_path)
-            def _omp():
+            _fname = decode_tensor_viterbi_omp.__name__
+            _times = []
+            for _ in range(args.iterations):
+                my_hsmm = HSMM.load_model(data_path)
+                start = time.perf_counter()
                 my_hsmm.to_log_space()
-                return decode_tensor_viterbi_omp(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
-            _omp.__name__ = decode_tensor_viterbi_omp.__name__
-            TIME_BENCHMARK(_omp, **_bkw)
+                decode_tensor_viterbi_omp(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
+                _times.append(time.perf_counter() - start)
+            with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
+                for i, t in enumerate(_times):
+                    writer.writerow([_fname, N, T, D, i, f"{t:.6f}"])
+            avg, mn, mx = sum(_times) / len(_times), min(_times), max(_times)
+            print(f"  {WHITE}{_fname}{R}")
+            print(f"  avg {BOLD}{GREEN}{avg:.4f} s{R}   min {GREEN}{mn:.4f} s{R}   max {GREEN}{mx:.4f} s{R}\n")
 
         if args.cuda:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi CUDA{R}")
-            my_hsmm = HSMM.load_model(data_path)
-            def _cuda():
+            _fname = decode_tensor_viterbi_cuda.__name__
+            _times = []
+            for _ in range(args.iterations):
+                my_hsmm = HSMM.load_model(data_path)
+                start = time.perf_counter()
                 my_hsmm.to_log_space()
-                return decode_tensor_viterbi_cuda(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
-            _cuda.__name__ = decode_tensor_viterbi_cuda.__name__
-            TIME_BENCHMARK(_cuda, **_bkw)
+                decode_tensor_viterbi_cuda(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
+                _times.append(time.perf_counter() - start)
+            with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
+                for i, t in enumerate(_times):
+                    writer.writerow([_fname, N, T, D, i, f"{t:.6f}"])
+            avg, mn, mx = sum(_times) / len(_times), min(_times), max(_times)
+            print(f"  {WHITE}{_fname}{R}")
+            print(f"  avg {BOLD}{GREEN}{avg:.4f} s{R}   min {GREEN}{mn:.4f} s{R}   max {GREEN}{mx:.4f} s{R}\n")
 
         if args.baseline:
             print(f"{YEL}{BOLD}▶ HSMMLearn C++ (baseline){R}")
