@@ -48,7 +48,9 @@ if __name__ == "__main__":
     parser.add_argument("--cuda", action="store_true", help="Enable CUDA backend")
     parser.add_argument("--cpp", action="store_true", help="Enable C++ backend")
     parser.add_argument("--omp", action="store_true", help="Enable OpenMP backend")
-    parser.add_argument("--baseline", action="store_true", help="Enable baselines (HSMMLearn C++, Vanilla Viterbi)")
+    parser.add_argument("--baseline",     action="store_true", help="Enable all baselines (HSMMLearn C++ + OMP)")
+    parser.add_argument("--baseline-cpp", action="store_true", help="Enable HSMMLearn C++ baseline only")
+    parser.add_argument("--baseline-omp", action="store_true", help="Enable HSMMLearn OMP baseline only")
     parser.add_argument("--mode", "-m", choices=["validate", "measure", "benchmark"], required=True)
     parser.add_argument("--system", "-sys", required=False, default="leonardo", help="System name (for benchmark CSV naming)")
     parser.add_argument("--iterations", "-it", type=int, default=10, help="Number of benchmark iterations")
@@ -72,17 +74,21 @@ if __name__ == "__main__":
         from tensor_viterbi.viterbi import (
             decode_tensor_viterbi_omp,
         )
-    if args.baseline:
+    _run_baseline_cpp = args.baseline or args.baseline_cpp
+    _run_baseline_omp = args.baseline or args.baseline_omp
+    if _run_baseline_cpp:
         from validation.hsmmlearn_viterbi import (
             validate,
             measure_baseline,
             benchmark_baseline
         )
+    if _run_baseline_omp:
         from validation.hsmmlearn_omp_viterbi import (
             validate as validate_omp,
             measure_baseline as measure_baseline_omp,
             benchmark_baseline as benchmark_baseline_omp,
         )
+    if _run_baseline_cpp or _run_baseline_omp:
         from validation.hsmmlearn_py_viterbi import (
             validate_py,
             measure_baseline_py,
@@ -139,10 +145,11 @@ if __name__ == "__main__":
         baseline_elapsed = None
         omp_baseline_elapsed = None
         cpp_elapsed = None
-        if args.baseline:
+        if _run_baseline_cpp:
             print(f"{YEL}{BOLD}▶ HSMMLearn C++ (baseline){R}")
             baseline_elapsed = measure_baseline(data_path)
 
+        if _run_baseline_omp:
             print(f"{YEL}{BOLD}▶ HSMMLearn OMP (baseline){R}")
             omp_baseline_elapsed = measure_baseline_omp(data_path)
 
@@ -283,12 +290,14 @@ if __name__ == "__main__":
             print(f"  {WHITE}{_fname}{R}")
             print(f"  avg {BOLD}{GREEN}{avg:.4f} s{R}   min {GREEN}{mn:.4f} s{R}   max {GREEN}{mx:.4f} s{R}\n")
 
-        if args.baseline:
+        if _run_baseline_cpp:
             print(f"{YEL}{BOLD}▶ HSMMLearn C++ (baseline){R}")
             _csv_base = os.path.splitext(_csv)[0]
             benchmark_baseline(data_path, csv_path=f"{_csv_base}_HSMMLearn_CPP.csv", iterations=args.iterations, n_states=N, timesteps=T, max_duration=D)
 
+        if _run_baseline_omp:
             print(f"{YEL}{BOLD}▶ HSMMLearn OMP (baseline){R}")
+            _csv_base = os.path.splitext(_csv)[0]
             benchmark_baseline_omp(data_path, csv_path=f"{_csv_base}_HSMMLearn_OMP.csv", iterations=args.iterations, n_states=N, timesteps=T, max_duration=D)
 
             # print(f"{YEL}{BOLD}▶ HSMMLearn Python (baseline){R}")

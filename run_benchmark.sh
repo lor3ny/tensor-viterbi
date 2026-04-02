@@ -20,7 +20,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --system)    SYSTEM="$2";    shift 2 ;;
         --toolchain) TOOLCHAIN="$2"; shift 2 ;;
-        --py|--cpp|--omp|--cuda|--baseline)
+        --py|--cpp|--omp|--cuda|--baseline|--baseline-cpp|--baseline-omp)
             flag="${1#--}"
             VITERBI_FLAGS="${VITERBI_FLAGS:+$VITERBI_FLAGS:}$flag"
             shift ;;
@@ -93,17 +93,42 @@ get_walltime() {
     fi
 }
 
-# Build system-specific sbatch flags (no --time, --output, --error: computed per job)
+# Build system-specific sbatch flags (no --time, --output, --error, --export: computed per job)
 SBATCH_FLAGS=(
     "--partition=$PARTITION"
     "--account=$ACCOUNT"
-    "--export=ALL,SYS_NAME=$SYSTEM,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,VITERBI_FLAGS=$VITERBI_FLAGS"
 )
 if [[ "$TYPE" == "gpu" ]]; then
     SBATCH_FLAGS+=("--gres=gpu:1")
 else
     SBATCH_FLAGS+=("--cpus-per-task=$CPUS")
 fi
+
+# submit_job <stem> <viterbi_flags> <iterations> <walltime> <config_file>
+#   stem         : used for job name, .out/.err paths (may include a suffix like _baseline_cpp)
+#   viterbi_flags: colon-separated list (e.g. "baseline-cpp" or "omp:cpp")
+#   iterations   : number of benchmark iterations
+submit_job() {
+    local job_stem="$1" vflags="$2" iters="$3" walltime="$4" config_file="$5"
+    local export_str="ALL,SYS_NAME=$SYS_NAME,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,VITERBI_FLAGS=$vflags,BENCHMARK_ITERATIONS=$iters"
+    local JOB_OUTPUT
+    echo "  -> flags=[$vflags] iterations=$iters"
+    JOB_OUTPUT=$(sbatch "${SBATCH_FLAGS[@]}" \
+        "--export=$export_str" \
+        --job-name="tv_${job_stem}" \
+        --time="$walltime" \
+        --output="$RESULTS_DIR/${job_stem}.out" \
+        --error="$RESULTS_DIR/${job_stem}.err" \
+        run.slrm "$config_file")
+    echo "$JOB_OUTPUT"
+    if [[ "$SEQUENTIAL" -eq 1 ]]; then
+        PREV_JOB_ID=$(echo "$JOB_OUTPUT" | awk '{print $NF}')
+        echo "Waiting for job $PREV_JOB_ID to complete..."
+        while squeue -j "$PREV_JOB_ID" -h &>/dev/null; do sleep 30; done
+        echo "Job $PREV_JOB_ID completed."
+    fi
+    sleep 0.1
+}
 
 # Define parameter arrays
 # states=(10 15 25 50 75)
@@ -138,23 +163,39 @@ for s in "${states[@]}"; do
             config_file="data/${s}states_${t}steps_${d}dur.json"
             echo "Submitting job for: System=$SYSTEM, State=$s, Duration=$d, Timesteps=$t, Walltime=$walltime"
 
-            JOB_OUTPUT=$(sbatch "${SBATCH_FLAGS[@]}" \
-                --job-name="tv_${stem}" \
-                --time="$walltime" \
-                --output="$RESULTS_DIR/${stem}.out" \
-                --error="$RESULTS_DIR/${stem}.err" \
-                run.slrm "$config_file")
-            echo "$JOB_OUTPUT"
-
-            if [[ "$SEQUENTIAL" -eq 1 ]]; then
-                PREV_JOB_ID=$(echo "$JOB_OUTPUT" | awk '{print $NF}')
-                echo "Waiting for job $PREV_JOB_ID to complete..."
-                while squeue -j "$PREV_JOB_ID" -h &>/dev/null; do
-                    sleep 30
-                done
-                echo "Job $PREV_JOB_ID completed."
+            if [[ "$TYPE" == "cpu" && $t -eq 100000 ]]; then
+                # At T=100000, HSMMLearn C++ needs fewer iterations (very slow).
+                # Split into two jobs: baseline-cpp (2 iter) + everything else (ITERATIONS).
+                # Determine whether baseline-cpp is part of the current run.
+                _runs_bcpp=0
+                _rest_flags=()
+                if [[ -z "$VITERBI_FLAGS" ]]; then
+                    # No flags = run all: split baseline-cpp out; rest runs baseline-omp + cpp + omp
+                    _runs_bcpp=1
+                    _rest_flags=("baseline-omp" "cpp" "omp")
+                else
+                    IFS=':' read -ra _vf <<< "$VITERBI_FLAGS"
+                    for _f in "${_vf[@]}"; do
+                        if [[ "$_f" == "baseline" ]]; then
+                            _runs_bcpp=1
+                            _rest_flags+=("baseline-omp")   # baseline = cpp+omp; keep omp in rest
+                        elif [[ "$_f" == "baseline-cpp" ]]; then
+                            _runs_bcpp=1
+                        else
+                            _rest_flags+=("$_f")
+                        fi
+                    done
+                fi
+                if [[ $_runs_bcpp -eq 1 ]]; then
+                    submit_job "${stem}_baseline_cpp" "baseline-cpp" "2" "$walltime" "$config_file"
+                fi
+                if [[ ${#_rest_flags[@]} -gt 0 ]]; then
+                    _rest=$(IFS=':'; echo "${_rest_flags[*]}")
+                    submit_job "$stem" "$_rest" "$ITERATIONS" "$walltime" "$config_file"
+                fi
+            else
+                submit_job "$stem" "$VITERBI_FLAGS" "$ITERATIONS" "$walltime" "$config_file"
             fi
-            sleep 0.1
         done
     done
 done
