@@ -38,6 +38,20 @@ if [[ -z "${SYS_TYPE[$SYSTEM]+x}" ]]; then
     exit 1
 fi
 
+# --toolchain all: re-exec for every toolchain defined for this system
+if [[ "$TOOLCHAIN" == "all" ]]; then
+    _toolchains=$(for k in "${!SYS_MODULES_BUILD[@]}"; do [[ "$k" == "$SYSTEM/"* ]] && echo "${k#*/}"; done | sort)
+    if [[ -z "$_toolchains" ]]; then
+        echo "Error: No toolchains defined for system '$SYSTEM'."
+        exit 1
+    fi
+    for _tc in $_toolchains; do
+        echo "=== Compiling $SYSTEM / $_tc ==="
+        "$0" --system "$SYSTEM" --toolchain "$_tc"
+    done
+    exit $?
+fi
+
 if [[ -z "${SYS_MODULES_BUILD[$SYSTEM/$TOOLCHAIN]+x}" ]]; then
     echo "Error: Toolchain '$TOOLCHAIN' is not defined for system '$SYSTEM'."
     _known=$(for k in "${!SYS_MODULES_BUILD[@]}"; do [[ "$k" == "$SYSTEM/"* ]] && echo "  ${k#*/}"; done | sort)
@@ -78,14 +92,16 @@ fi
 
 if [[ ! -f "$VENV_DIR/bin/python3" ]]; then
     echo "Creating venv at $VENV_DIR ..."
-    python3 -m venv "$VENV_DIR"
-    "$VENV_DIR/bin/pip" install --upgrade pip
-    if [[ "$TYPE" == "cpu" ]]; then
-        "$VENV_DIR/bin/pip" install -r "$SCRIPT_DIR/requirements.txt"
+    if [[ "$TYPE" == "gpu" ]]; then
+        # Inherit system-wide site-packages so numpy and pybind11 installed
+        # by the system Python module are visible without a separate pip install.
+        python3 -m venv --system-site-packages "$VENV_DIR"
     else
-        "$VENV_DIR/bin/pip" install numpy pybind11
+        python3 -m venv "$VENV_DIR"
+        "$VENV_DIR/bin/pip" install --upgrade pip
+        "$VENV_DIR/bin/pip" install -r "$SCRIPT_DIR/requirements.txt"
+        _VENV_CREATED=1
     fi
-    _VENV_CREATED=1
 fi
 PYTHON_EXE="$VENV_DIR/bin/python3"
 

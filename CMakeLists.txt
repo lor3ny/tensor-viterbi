@@ -117,9 +117,23 @@ set_target_properties(_native PROPERTIES
 )
 
 target_compile_options(_native PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-O3 -march=native -mtune=native -Wall -Wextra -Wno-unused-parameter -ffast-math>
+    # CXX Logic (Host Code)
+    $<$<COMPILE_LANGUAGE:CXX>:
+        $<$<CXX_COMPILER_ID:NVHPC>:-O3 -Ofast -tp=native -Wall>
+        $<$<NOT:$<CXX_COMPILER_ID:NVHPC>>:-O3 -march=native -mtune=native -ffast-math -Wall -Wextra -Wno-unused-parameter>
+    >
+
+    # HIP Logic
     $<$<COMPILE_LANGUAGE:HIP>:-O3 -ffast-math -Wall -Wextra -Wno-unused-parameter -fopenmp>
-    $<$<COMPILE_LANGUAGE:CUDA>:-O3 -ffast-math -Xptxas=-O3 -Xcompiler=-Wall,-Wextra,-Wno-unused-parameter,-fopenmp>
+
+    # CUDA Logic (Device Code)
+    $<$<COMPILE_LANGUAGE:CUDA>:
+        -O3 
+        # Note: CUDA (nvcc) accepts -use_fast_math instead of -ffast-math
+        -use_fast_math 
+        -Xptxas=-O3 
+        -Xcompiler=-Wall,-Wextra,-Wno-unused-parameter,-fopenmp
+    >
 )
 
 if(BUILD_GPU AND GPU_PLATFORM STREQUAL "ROCM")

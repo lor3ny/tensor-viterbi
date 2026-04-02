@@ -47,6 +47,28 @@ if [[ -z "${SYS_TYPE[$SYSTEM]+x}" ]]; then
     exit 1
 fi
 
+# --toolchain all: re-exec for every toolchain defined for this system
+if [[ "$TOOLCHAIN" == "all" ]]; then
+    _toolchains=$(for k in "${!SYS_MODULES[@]}"; do [[ "$k" == "$SYSTEM/"* ]] && echo "${k#*/}"; done | sort)
+    if [[ -z "$_toolchains" ]]; then
+        echo "Error: No toolchains defined for system '$SYSTEM'."
+        exit 1
+    fi
+    # Rebuild original args without --toolchain
+    _orig_args=()
+    _skip=0
+    for _a in "$@"; do
+        if [[ $_skip -eq 1 ]]; then _skip=0; continue; fi
+        if [[ "$_a" == "--toolchain" ]]; then _skip=1; continue; fi
+        _orig_args+=("$_a")
+    done
+    for _tc in $_toolchains; do
+        echo "=== Submitting $SYSTEM / $_tc ==="
+        "$0" "${_orig_args[@]}" --toolchain "$_tc"
+    done
+    exit $?
+fi
+
 if [[ -z "${SYS_MODULES[$SYSTEM/$TOOLCHAIN]+x}" ]]; then
     echo "Error: Toolchain '$TOOLCHAIN' is not defined for system '$SYSTEM'."
     _known=$(for k in "${!SYS_MODULES[@]}"; do [[ "$k" == "$SYSTEM/"* ]] && echo "  ${k#*/}"; done | sort)
@@ -56,8 +78,14 @@ fi
 
 TYPE="${SYS_TYPE[$SYSTEM]}"
 PARTITION="${SYS_PARTITION[$SYSTEM]}"
+QOS="${SYS_QOS[$SYSTEM]:-}"
 ACCOUNT="${SYS_ACCOUNT[$SYSTEM]}"
 CPUS="${SYS_CPUS[$SYSTEM]}"
+
+# Default for CPU: run all four variants if no flags were specified
+if [[ "$TYPE" == "cpu" && -z "$VITERBI_FLAGS" ]]; then
+    VITERBI_FLAGS="cpp:omp:baseline-cpp:baseline-omp"
+fi
 
 MODULES="${SYS_MODULES[$SYSTEM/$TOOLCHAIN]}"
 METRICS_BACKEND="${SYS_METRICS_BACKEND[$SYSTEM/$TOOLCHAIN]:-}"
@@ -103,9 +131,10 @@ get_walltime() {
 
 # Build system-specific sbatch flags (no --time, --output, --error, --export: computed per job)
 SBATCH_FLAGS=(
-    "--partition=$PARTITION"
     "--account=$ACCOUNT"
 )
+[[ -n "$PARTITION" ]] && SBATCH_FLAGS+=("--partition=$PARTITION")
+[[ -n "$QOS" ]] && SBATCH_FLAGS+=("--qos=$QOS")
 if [[ "$TYPE" == "gpu" ]]; then
     SBATCH_FLAGS+=("--gres=gpu:1")
 else
@@ -145,7 +174,7 @@ submit_job() {
 
 states=(10 15 25 50 75)
 durations=(100 250 500 1000)
-timesteps=(1000)
+timesteps=(100000)
 
 #states=(10)
 #durations=(100 250)
