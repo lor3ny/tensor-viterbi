@@ -13,34 +13,30 @@ import pathlib as _pathlib
 
 _HERE = _pathlib.Path(__file__).parent.resolve()
 _SYSTEM = _os.environ.get("SYS_NAME", "")
-if _SYSTEM:
-    _so_dir = str(_HERE / _SYSTEM)
-    if _so_dir not in _sys.path:
-        _sys.path.insert(0, _so_dir)
+if not _SYSTEM:
+    raise RuntimeError(
+        "[native] SYS_NAME is not set.\n"
+        "Pass --system <system/toolchain> to run_viterbi.py, "
+        "or set SYS_NAME in the environment."
+    )
+
+_so_dir = str(_HERE / _SYSTEM)
+if _so_dir not in _sys.path:
+    _sys.path.insert(0, _so_dir)
 
 try:
-    if _SYSTEM:
-        import importlib as _importlib
-        _native = _importlib.import_module("_native")
-        _decode_cpp  = _native.decode_tensor_viterbi_cpp
-        _decode_cuda = getattr(_native, "decode_tensor_viterbi_cuda", None)
-        _decode_omp  = getattr(_native, "decode_tensor_viterbi_omp",  None)
-    else:
-        from ._native import (
-            decode_tensor_viterbi_cpp  as _decode_cpp,
-        )
-        try:
-            from ._native import decode_tensor_viterbi_cuda as _decode_cuda
-        except ImportError:
-            _decode_cuda = None
-        try:
-            from ._native import decode_tensor_viterbi_omp as _decode_omp
-        except ImportError:
-            _decode_omp = None
+    import importlib as _importlib
+    _native = _importlib.import_module("_native")
+    _decode_cpp  = _native.decode_tensor_viterbi_cpp
+    _decode_cuda = getattr(_native, "decode_tensor_viterbi_cuda", None)
+    _decode_omp  = getattr(_native, "decode_tensor_viterbi_omp",  None)
     _NATIVE_AVAILABLE = True
 except ImportError as e:
-    print(f"[native] ImportError: {e}")
-    _NATIVE_AVAILABLE = False
+    raise RuntimeError(
+        f"[native] Could not load _native extension from '{_so_dir}'.\n"
+        f"Run: compile.sh --system <system> --toolchain <toolchain>\n"
+        f"Original error: {e}"
+    ) from e
 
 
 

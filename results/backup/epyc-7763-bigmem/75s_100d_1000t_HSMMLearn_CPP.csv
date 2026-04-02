@@ -1,6 +1,0 @@
-function,n_states,timesteps,max_duration,iteration,elapsed_s
-HSMMLearn_CPP,75,1000,100,0,4.215699
-HSMMLearn_CPP,75,1000,100,1,4.217118
-HSMMLearn_CPP,75,1000,100,2,4.266502
-HSMMLearn_CPP,75,1000,100,3,4.272650
-HSMMLearn_CPP,75,1000,100,4,4.283335

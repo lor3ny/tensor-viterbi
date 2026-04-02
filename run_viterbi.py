@@ -4,7 +4,16 @@ import os
 import time
 import numpy as np
 
+# Propagate --system to SYS_NAME before tensor_viterbi.viterbi is imported.
+# native.py reads SYS_NAME at module-load time to locate the correct _native.so.
+import sys as _sys_pre
+_sys_i = next((i for i, a in enumerate(_sys_pre.argv[:-1]) if a in ("--system", "-sys")), None)
+if _sys_i is not None:
+    os.environ["SYS_NAME"] = _sys_pre.argv[_sys_i + 1]
+del _sys_pre, _sys_i
+
 from tensor_viterbi import HSMM
+from tensor_viterbi.metrics import get_collector
 from tensor_viterbi.viterbi import (
     decode_vanilla_viterbi,
     decode_log_tensor_viterbi_cached,
@@ -210,6 +219,8 @@ if __name__ == "__main__":
 
 
     elif args.mode == "benchmark":
+        _metrics_backend = os.environ.get("SYS_METRICS_BACKEND", "").strip()
+        _collector = get_collector(_metrics_backend or None)
         os.makedirs(f"results/{args.system}", exist_ok=True)
         _csv = os.path.join(f"results/{args.system}", f"{N}s_{D}d_{T}t.csv")
         _stem, _ext = os.path.splitext(_csv)
@@ -218,17 +229,26 @@ if __name__ == "__main__":
             print(f"{YEL}{BOLD}▶ Tensor Viterbi Python{R}")
             _fname = decode_log_tensor_viterbi_cached.__name__
             _times = []
+            _collector.start()
             for _ in range(args.iterations):
                 my_hsmm = HSMM.load_model(data_path)
-                start = time.perf_counter()
                 my_hsmm.to_log_space()
+                start = time.perf_counter()
+                start = time.perf_counter()
                 decode_log_tensor_viterbi_cached(my_hsmm)
                 _times.append(time.perf_counter() - start)
+            _metrics = _collector.stop()
             with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
                 for i, t in enumerate(_times):
                     writer.writerow([_fname, N, T, D, i, f"{t:.6f}"])
+            if _collector.column_names():
+                _mfile = f"{_stem}_{_fname}_metrics{_ext}"
+                with open(_mfile, "w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["function", "n_states", "timesteps", "max_duration", "total_iterations", *_collector.column_names()])
+                    writer.writerow([_fname, N, T, D, args.iterations, *[_metrics.get(k, "") for k in _collector.column_names()]])
             avg, mn, mx = sum(_times) / len(_times), min(_times), max(_times)
             print(f"  {WHITE}{_fname}{R}")
             print(f"  avg {BOLD}{GREEN}{avg:.4f} s{R}   min {GREEN}{mn:.4f} s{R}   max {GREEN}{mx:.4f} s{R}\n")
@@ -237,17 +257,26 @@ if __name__ == "__main__":
             print(f"{YEL}{BOLD}▶ Tensor Viterbi C++{R}")
             _fname = decode_tensor_viterbi_cpp.__name__
             _times = []
+            _collector.start()
             for _ in range(args.iterations):
                 my_hsmm = HSMM.load_model(data_path)
-                start = time.perf_counter()
                 my_hsmm.to_log_space()
+                start = time.perf_counter()
+                start = time.perf_counter()
                 decode_tensor_viterbi_cpp(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
                 _times.append(time.perf_counter() - start)
+            _metrics = _collector.stop()
             with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
                 for i, t in enumerate(_times):
                     writer.writerow([_fname, N, T, D, i, f"{t:.6f}"])
+            if _collector.column_names():
+                _mfile = f"{_stem}_{_fname}_metrics{_ext}"
+                with open(_mfile, "w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["function", "n_states", "timesteps", "max_duration", "total_iterations", *_collector.column_names()])
+                    writer.writerow([_fname, N, T, D, args.iterations, *[_metrics.get(k, "") for k in _collector.column_names()]])
             avg, mn, mx = sum(_times) / len(_times), min(_times), max(_times)
             print(f"  {WHITE}{_fname}{R}")
             print(f"  avg {BOLD}{GREEN}{avg:.4f} s{R}   min {GREEN}{mn:.4f} s{R}   max {GREEN}{mx:.4f} s{R}\n")
@@ -256,17 +285,26 @@ if __name__ == "__main__":
             print(f"{YEL}{BOLD}▶ Tensor Viterbi OMP{R}")
             _fname = decode_tensor_viterbi_omp.__name__
             _times = []
+            _collector.start()
             for _ in range(args.iterations):
                 my_hsmm = HSMM.load_model(data_path)
-                start = time.perf_counter()
                 my_hsmm.to_log_space()
+                start = time.perf_counter()
+                start = time.perf_counter()
                 decode_tensor_viterbi_omp(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
                 _times.append(time.perf_counter() - start)
+            _metrics = _collector.stop()
             with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
                 for i, t in enumerate(_times):
                     writer.writerow([_fname, N, T, D, i, f"{t:.6f}"])
+            if _collector.column_names():
+                _mfile = f"{_stem}_{_fname}_metrics{_ext}"
+                with open(_mfile, "w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["function", "n_states", "timesteps", "max_duration", "total_iterations", *_collector.column_names()])
+                    writer.writerow([_fname, N, T, D, args.iterations, *[_metrics.get(k, "") for k in _collector.column_names()]])
             avg, mn, mx = sum(_times) / len(_times), min(_times), max(_times)
             print(f"  {WHITE}{_fname}{R}")
             print(f"  avg {BOLD}{GREEN}{avg:.4f} s{R}   min {GREEN}{mn:.4f} s{R}   max {GREEN}{mx:.4f} s{R}\n")
@@ -275,17 +313,26 @@ if __name__ == "__main__":
             print(f"{YEL}{BOLD}▶ Tensor Viterbi CUDA{R}")
             _fname = decode_tensor_viterbi_cuda.__name__
             _times = []
+            _collector.start()
             for _ in range(args.iterations):
                 my_hsmm = HSMM.load_model(data_path)
-                start = time.perf_counter()
                 my_hsmm.to_log_space()
+                start = time.perf_counter()
+                start = time.perf_counter()
                 decode_tensor_viterbi_cuda(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
                 _times.append(time.perf_counter() - start)
+            _metrics = _collector.stop()
             with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
                 for i, t in enumerate(_times):
                     writer.writerow([_fname, N, T, D, i, f"{t:.6f}"])
+            if _collector.column_names():
+                _mfile = f"{_stem}_{_fname}_metrics{_ext}"
+                with open(_mfile, "w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["function", "n_states", "timesteps", "max_duration", "total_iterations", *_collector.column_names()])
+                    writer.writerow([_fname, N, T, D, args.iterations, *[_metrics.get(k, "") for k in _collector.column_names()]])
             avg, mn, mx = sum(_times) / len(_times), min(_times), max(_times)
             print(f"  {WHITE}{_fname}{R}")
             print(f"  avg {BOLD}{GREEN}{avg:.4f} s{R}   min {GREEN}{mn:.4f} s{R}   max {GREEN}{mx:.4f} s{R}\n")
@@ -293,12 +340,30 @@ if __name__ == "__main__":
         if _run_baseline_cpp:
             print(f"{YEL}{BOLD}▶ HSMMLearn C++ (baseline){R}")
             _csv_base = os.path.splitext(_csv)[0]
+            _fname = "HSMMLearn_CPP"
+            _collector.start()
             benchmark_baseline(data_path, csv_path=f"{_csv_base}_HSMMLearn_CPP.csv", iterations=args.iterations, n_states=N, timesteps=T, max_duration=D)
+            _metrics = _collector.stop()
+            if _collector.column_names():
+                _mfile = f"{_csv_base}_HSMMLearn_CPP_metrics{_ext}"
+                with open(_mfile, "w", newline="") as _mf:
+                    _mw = csv.writer(_mf)
+                    _mw.writerow(["function", "n_states", "timesteps", "max_duration", "total_iterations", *_collector.column_names()])
+                    _mw.writerow([_fname, N, T, D, args.iterations, *[_metrics.get(k, "") for k in _collector.column_names()]])
 
         if _run_baseline_omp:
             print(f"{YEL}{BOLD}▶ HSMMLearn OMP (baseline){R}")
             _csv_base = os.path.splitext(_csv)[0]
+            _fname = "HSMMLearn_OMP"
+            _collector.start()
             benchmark_baseline_omp(data_path, csv_path=f"{_csv_base}_HSMMLearn_OMP.csv", iterations=args.iterations, n_states=N, timesteps=T, max_duration=D)
+            _metrics = _collector.stop()
+            if _collector.column_names():
+                _mfile = f"{_csv_base}_HSMMLearn_OMP_metrics{_ext}"
+                with open(_mfile, "w", newline="") as _mf:
+                    _mw = csv.writer(_mf)
+                    _mw.writerow(["function", "n_states", "timesteps", "max_duration", "total_iterations", *_collector.column_names()])
+                    _mw.writerow([_fname, N, T, D, args.iterations, *[_metrics.get(k, "") for k in _collector.column_names()]])
 
             # print(f"{YEL}{BOLD}▶ HSMMLearn Python (baseline){R}")
             # benchmark_baseline_py(data_path, csv_path=_csv, iterations=args.iterations)

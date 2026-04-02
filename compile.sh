@@ -49,17 +49,31 @@ CMAKE_SYSTEM_NAME="$SYSTEM/$TOOLCHAIN"
 
 # Load build modules
 #module purge
-PYTHON_EXE="$(command -v python3)"  # capture venv python BEFORE module load overrides PATH
 IFS=':' read -ra _MODS <<< "$MODULES_BUILD"
 for _mod in "${_MODS[@]}"; do
     module load "$_mod"
 done
 
-rm -rf "$BUILD_DIR"
+# Create a per-toolchain venv.
+# CPU venvs also include hsmmlearn built with the matching compiler.
+# GPU venvs only need numpy (run_viterbi.py has no other runtime deps).
+# _VENV_CREATED=1 triggers the hsmmlearn build on first setup (CPU only).
+_VENV_CREATED=0
+VENV_DIR="$SCRIPT_DIR/.venv/$SYSTEM/$TOOLCHAIN"
+if [[ ! -f "$VENV_DIR/bin/python3" ]]; then
+    echo "Creating venv at $VENV_DIR ..."
+    python3 -m venv "$VENV_DIR"
+    "$VENV_DIR/bin/pip" install --upgrade pip
+    if [[ "$TYPE" == "cpu" ]]; then
+        "$VENV_DIR/bin/pip" install -r "$SCRIPT_DIR/requirements.txt"
+    else
+        "$VENV_DIR/bin/pip" install numpy pybind11
+    fi
+    _VENV_CREATED=1
+fi
+PYTHON_EXE="$VENV_DIR/bin/python3"
 
 if [[ "$TYPE" == "gpu" ]]; then
-    SRUN_FLAGS=(--gres=gpu:1 -A "$ACCOUNT" -p "$PARTITION")
-
     if module list 2>&1 | grep -qi rocm; then
         CMAKE_FLAGS=(
             -DBUILD_GPU=ON
@@ -76,9 +90,29 @@ if [[ "$TYPE" == "gpu" ]]; then
         )
     fi
 else
-    SRUN_FLAGS=(-A "$ACCOUNT" -p "$PARTITION")
     CMAKE_FLAGS=(-DBUILD_GPU=OFF -DSYSTEM_NAME="$CMAKE_SYSTEM_NAME")
 fi
 
-srun "${SRUN_FLAGS[@]}" cmake -B "$BUILD_DIR" -DPYTHON_EXECUTABLE="$PYTHON_EXE" "${CMAKE_FLAGS[@]}"
-srun "${SRUN_FLAGS[@]}" cmake --build "$BUILD_DIR" -j 8
+# Build the native extension (always rebuilds; remove build dir is not needed).
+rm -rf "$BUILD_DIR"
+cmake -B "$BUILD_DIR" -DPYTHON_EXECUTABLE="$PYTHON_EXE" "${CMAKE_FLAGS[@]}"
+cmake --build "$BUILD_DIR" -j 8
+
+# Build hsmmlearn packages with the active toolchain so the OMP runtime
+# (libgomp vs libcraymp vs libiomp5) matches _native.so, and vectorization is
+# on equal footing between baseline and tensor implementations.
+# GPU systems do not run these baselines, so skip them there.
+# Only build when the venv was just created; remove the venv dir to force a rebuild.
+if [[ "$TYPE" == "cpu" && $_VENV_CREATED -eq 1 ]]; then
+    case "$TOOLCHAIN" in
+        cray) _CC=cc;    _CXX=CC     ;;
+        intel)  _CC=icx;   _CXX=icpx   ;;
+        llvm)   _CC=clang; _CXX=clang++ ;;
+        *)      _CC=gcc;   _CXX=g++    ;;
+    esac
+    echo "Building hsmmlearn packages with CC=$_CC CXX=$_CXX ..."
+    # wheel must be present so setuptools can build the legacy hsmmlearn_omp package
+    "$VENV_DIR/bin/pip" install --quiet wheel
+    CC="$_CC" CXX="$_CXX" "$PYTHON_EXE" -m pip install --no-build-isolation "$SCRIPT_DIR/hsmmlearn"
+    CC="$_CC" CXX="$_CXX" "$PYTHON_EXE" -m pip install --no-build-isolation "$SCRIPT_DIR/hsmmlearn_omp"
+fi

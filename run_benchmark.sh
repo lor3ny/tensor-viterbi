@@ -53,6 +53,7 @@ ACCOUNT="${SYS_ACCOUNT[$SYSTEM]}"
 CPUS="${SYS_CPUS[$SYSTEM]}"
 
 MODULES="${SYS_MODULES[$SYSTEM/$TOOLCHAIN]}"
+METRICS_BACKEND="${SYS_METRICS_BACKEND[$SYSTEM/$TOOLCHAIN]:-}"
 SYS_NAME="$SYSTEM/$TOOLCHAIN"
 
 # Returns the wall-clock time limit for a given (states, duration, timesteps) combination.
@@ -110,7 +111,7 @@ fi
 #   iterations   : number of benchmark iterations
 submit_job() {
     local job_stem="$1" vflags="$2" iters="$3" walltime="$4" config_file="$5"
-    local export_str="ALL,SYS_NAME=$SYS_NAME,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,VITERBI_FLAGS=$vflags,BENCHMARK_ITERATIONS=$iters"
+    local export_str="ALL,SYS_NAME=$SYS_NAME,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,SYS_METRICS_BACKEND=$METRICS_BACKEND,VITERBI_FLAGS=$vflags,BENCHMARK_ITERATIONS=$iters"
     local JOB_OUTPUT
     echo "  -> flags=[$vflags] iterations=$iters"
     JOB_OUTPUT=$(sbatch "${SBATCH_FLAGS[@]}" \
@@ -135,18 +136,25 @@ submit_job() {
 # durations=(100 250 500 1000)
 # timesteps=(1000 10000) # 100000)
 
-states=(50)
-durations=(100)
+states=(10 15 25 50 75)
+durations=(100 250 500 1000)
 timesteps=(1000)
 
 #states=(10)
 #durations=(100 250)
 #timesteps=(1000)
 
-echo "Compiling for system: $SYSTEM"
-"$SCRIPT_DIR/compile.sh" --system "$SYSTEM"${TOOLCHAIN:+ --toolchain "$TOOLCHAIN"}
-if [[ $? -ne 0 ]]; then
-    echo "Error: compilation failed for $SYSTEM. Aborting."
+# Pre-flight: verify that compile.sh has already been run for this system/toolchain.
+VENV_DIR="$SCRIPT_DIR/.venv/$SYS_NAME"
+SO_FILE="$SCRIPT_DIR/tensor_viterbi/viterbi/$SYS_NAME/_native.so"
+if [[ ! -f "$VENV_DIR/bin/python3" ]]; then
+    echo "Error: no virtual environment found at $VENV_DIR."
+    echo "  Run: ./compile.sh --system $SYSTEM --toolchain $TOOLCHAIN"
+    exit 1
+fi
+if [[ ! -f "$SO_FILE" ]]; then
+    echo "Error: native extension not found at $SO_FILE."
+    echo "  Run: ./compile.sh --system $SYSTEM --toolchain $TOOLCHAIN"
     exit 1
 fi
 

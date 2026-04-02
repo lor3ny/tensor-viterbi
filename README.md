@@ -2,6 +2,30 @@
 
 Tensor Hidden Semi-Markov Model (HSMM) Viterbi decoding in Python, C++, and CUDA.
 
+## Quick Start
+
+```bash
+# Clone the repository
+git clone https://github.com/lor3ny/tensor-viterbi.git
+cd tensor-viterbi
+
+# Build for your system and toolchain.
+# compile.sh creates a per-toolchain virtual environment under .venv/<system>/<toolchain>/,
+# installs all Python dependencies and the hsmmlearn baselines compiled with the active
+# toolchain, and places the native extension at
+# tensor_viterbi/viterbi/<system>/<toolchain>/_native.so.
+./compile.sh --system <system> --toolchain <toolchain>
+# e.g. ./compile.sh --system epyc-7763 --toolchain cray
+#      ./compile.sh --system xeon8480  --toolchain intel
+
+# Submit a SLURM benchmark sweep for the configured parameter grid
+./run_benchmark.sh --system <system> --toolchain <toolchain>
+# e.g. ./run_benchmark.sh --system epyc-7763 --toolchain cray --omp --cpp --baseline
+```
+
+Both scripts must be run from the repository root. Available systems and their supported
+toolchains are defined in `systems.conf`.
+
 ## Provided Functions
 
 | Function | Status | Description |
@@ -44,14 +68,20 @@ tensor-viterbi/
 ├── data/                        # JSON model files
 ├── results/                     # benchmark outputs (gitignored)
 │   └── <system>/
-│       ├── <Ns>s_<D>d_<T>t.csv
-│       ├── <Ns>s_<D>d_<T>t.out
-│       └── <Ns>s_<D>d_<T>t.err
+│       └── <toolchain>/
+│           ├── <Ns>s_<D>d_<T>t.csv
+│           ├── <Ns>s_<D>d_<T>t.out
+│           └── <Ns>s_<D>d_<T>t.err
 ├── build/                       # CMake build dirs (gitignored)
 │   └── <system>/
+│       └── <toolchain>/
 ├── validation/                  # validation scripts against hsmmlearn
+├── .venv/                       # per-toolchain virtual environments (gitignored)
+│   └── <system>/
+│       └── <toolchain>/         # created and populated by compile.sh
 ├── hsmmlearn/                   # bundled hsmmlearn (jvkersch) for validation
 ├── hsmmlearn_omp/               # bundled hsmmlearn with OMP support for validation
+├── requirements.txt             # pinned Python deps (excluding hsmmlearn, installed per-toolchain)
 ├── systems.conf                 # HPC system descriptors (SLURM partitions, modules, GPU arch)
 ├── run_benchmark.sh             # compile + submit SLURM benchmark sweep
 ├── run_viterbi.py               # CLI runner (validate / measure / benchmark)
@@ -76,59 +106,32 @@ tensor-viterbi/
 
 ### Installation
 
-The library is designed to run on HPC clusters. Since some systems require manual module loading while others require specific path configurations for CUDA and GCC, we recommend a two-step setup: first, load the necessary modules (specifically Python, GCC, and CUDA); then, use a virtual environment to manage your pip packages.
+The library is designed to run on HPC clusters. **`compile.sh` handles the complete setup** for a given system/toolchain pair: it loads the required modules, creates an isolated virtual environment at `.venv/<system>/<toolchain>/`, installs all Python dependencies, recompiles the `hsmmlearn` baselines with the active compiler, and builds the native extension.
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+./compile.sh --system <system> --toolchain <toolchain>
 ```
 
-#### Validation Requirements
-
-Our implementation is validated against [hsmmlearn](https://github.com/jvkersch/hsmmlearn) by jvkersch. Both `hsmmlearn` and `hsmmlearn_omp` are bundled in this repository. To install them:
-
-```bash
-pip install ./hsmmlearn
-pip install ./hsmmlearn_omp
-```
+Both `--system` and `--toolchain` are required. Available values are defined in `systems.conf` under `SYS_MODULES_BUILD[<system>/<toolchain>]` keys.
 
 #### Python only (no C++/CUDA)
 
-```bash
-pip install numpy
-```
-
-The native extension is optional and gracefully skipped if not built:
+The native extension is optional. Without building it, only the pure-Python backend is available:
 
 ```python
 from tensor_viterbi import HSMM, decode_log_tensor_viterbi_cached
 ```
 
-#### With C++/CUDA extension (CMake)
+#### With C++/CUDA extension (CMake — manual build)
 
-
-**1. Install pybind11**
-
-```bash
-pip install pybind11
-```
-
-**2. Build with CMake (manual)**
+If you need to invoke CMake directly (e.g. for local development without SLURM):
 
 ```bash
-cmake -B build/<system> -DSYSTEM_NAME=<system> [-DBUILD_GPU=ON/OFF] [-DGPU_PLATFORM=CUDA|ROCM]
-cmake --build build/<system> -j 8
+cmake -B build/<system>/<toolchain> -DSYSTEM_NAME=<system>/<toolchain> [-DBUILD_GPU=ON/OFF] [-DGPU_PLATFORM=CUDA|ROCM]
+cmake --build build/<system>/<toolchain> -j 8
 ```
 
-The `.so` is placed at `tensor_viterbi/viterbi/<system>/_native.so`. Set `SYS_NAME=<system>` in your environment before running so `native.py` loads the correct binary.
-
-**2. Build with `compile.sh` (recommended on HPC)**
-
-```bash
-./compile.sh --system <system_name>
-```
-
-Loads the correct modules from `systems.conf`, runs CMake via `srun`, and places the `.so` at `tensor_viterbi/viterbi/<system>/_native.so`. Must be run from the repository root.
+The `.so` is placed at `tensor_viterbi/viterbi/<system>/<toolchain>/_native.so`. Pass `--system <system>/<toolchain>` to `run_viterbi.py` (or set `SYS_NAME=<system>/<toolchain>`) so `native.py` loads the correct binary.
 
 
 
@@ -174,30 +177,35 @@ python run_viterbi.py -m benchmark --cpp --omp --baseline --system epyc-7763 -dp
 `run_benchmark.sh` compiles the native extension and submits a grid of SLURM batch jobs — one per `(states, duration, timesteps)` combination. Must be run from the repository root.
 
 ```bash
-./run_benchmark.sh --system <system_name> [backend flags]
+./run_benchmark.sh --system <system> --toolchain <toolchain> [backend flags]
 ```
 
 **Arguments**
 
 | Argument | Required | Description |
 |---|---|---|
-| `--system <name>` | Yes | System key as defined in `systems.conf` (e.g. `epyc-7763`, `mi250x`, `a100`) |
+| `--system <name>` | Yes | System key as defined in `systems.conf` (e.g. `epyc-7763`, `mi250x`) |
+| `--toolchain <name>` | Yes | Toolchain key (e.g. `cray`, `intel`, `gcc`) |
 | `--cpp` | No | Benchmark the C++ backend |
 | `--omp` | No | Benchmark the OpenMP backend |
 | `--py` | No | Benchmark the Python backend |
 | `--cuda` | No | Benchmark the CUDA/ROCm backend |
 | `--baseline` | No | Include HSMMLearn C++ and OMP baselines |
+| `--baseline-cpp` | No | Include only the HSMMLearn C++ baseline |
+| `--baseline-omp` | No | Include only the HSMMLearn OMP baseline |
+| `--iterations <N>` | No | Number of benchmark iterations per job (default: 6) |
+| `--sequential` | No | Wait for each SLURM job to finish before submitting the next |
 
 > **GPU systems automatically run `--cuda`** regardless of flags. Backend flags are only meaningful for CPU systems.
 
 **What it does**
 
-1. **Compiles** the native extension for the target system via `compile.sh --system <name>`, placing the `.so` at `tensor_viterbi/viterbi/<system>/_native.so`.
+1. **Compiles** via `compile.sh --system <name> --toolchain <name>`, creating `.venv/<system>/<toolchain>/` and placing the `.so` at `tensor_viterbi/viterbi/<system>/<toolchain>/_native.so`.
 2. **Submits SLURM jobs** — one per parameter combination in the `states × durations × timesteps` grid (edit the arrays at the bottom of the script to control the sweep).
-3. **Per-job wall-time** is set automatically based on problem size (scales from 1h up to 16h for the largest combinations).
-4. **Outputs** are written to `results/<system>/`:
+3. **Per-job wall-time** is set automatically based on problem size (scales from 1h up to 16h for the largest combinations). At T=100,000 on CPU, the HSMMLearn C++ baseline is split into a separate job with fewer iterations to avoid timeouts.
+4. **Outputs** are written to `results/<system>/<toolchain>/`:
    - `<Ns>s_<D>d_<T>t.out` / `.err` — SLURM stdout/stderr
-   - `<Ns>s_<D>d_<T>t.csv` — benchmark timings (function, n_states, timesteps, max_duration, iteration, elapsed_s)
+   - `<Ns>s_<D>d_<T>t_<function>.csv` — benchmark timings (function, n_states, timesteps, max_duration, iteration, elapsed_s)
 
 **Examples**
 

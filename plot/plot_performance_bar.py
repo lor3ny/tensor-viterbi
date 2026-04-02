@@ -144,12 +144,15 @@ def main():
         fi = FUNCTION_ORDER.index(func) if func in FUNCTION_ORDER else len(FUNCTION_ORDER)
         return (si, fi)
 
-    ordered_combos = sorted(combo_set, key=combo_key)
+    ordered_combos = sorted(
+        (c for c in combo_set if c[0] != "HSMMLearn_CPP"),
+        key=combo_key,
+    )
     n_combos = len(ordered_combos)
 
     # Colors: tab10 cycles for up to 10 combos, tab20 for more
     cmap_name = "tab10" if n_combos <= 10 else "tab20"
-    cmap  = plt.colormaps[cmap_name]
+    cmap  = plt.get_cmap(cmap_name)
     n_map = 10 if cmap_name == "tab10" else 20
     colors = {combo: cmap(i / n_map) for i, combo in enumerate(ordered_combos)}
 

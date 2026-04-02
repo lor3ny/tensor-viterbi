@@ -1,0 +1,20 @@
+The following modules were not unloaded:
+  (Use "module --force purge" to unload all):
+
+  1) ModuleLabel/label   2) lumi-tools/24.05   3) init-lumi/0.2
+
+The following sticky modules could not be reloaded:
+
+  1) lumi-tools
+Lmod has detected the following error: The following module(s) are unknown:
+"PrgEnv-AMD"
+
+Please check the spelling or version number. Also try "module spider ..."
+It is also possible your cache file is out-of-date; it may help to try:
+  $ module --ignore_cache load "PrgEnv-AMD"
+
+Also make sure that all modulefiles written in TCL start with the string
+#%Module
+
+
+
