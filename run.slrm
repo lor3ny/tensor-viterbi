@@ -24,7 +24,6 @@ elif [[ "$SYS_TYPE" == "gpu" ]]; then
     fi
 fi
 
-module purge
 IFS=':' read -ra _MODS <<< "$SYS_MODULES"
 for _mod in "${_MODS[@]}"; do
     module load "$_mod"
