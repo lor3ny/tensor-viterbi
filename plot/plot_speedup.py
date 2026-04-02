@@ -13,7 +13,8 @@ For each unique T value found in the data this script produces one PNG per
 comparison type:
   <out_dir>/<cpu>/<T>t_cpp_speedup.png               — HSMMLearn_CPP / decode_tensor_viterbi_cpp
   <out_dir>/<cpu>/<T>t_omp_speedup.png               — HSMMLearn_OMP / decode_tensor_viterbi_omp
-  <out_dir>/<gpu>/<T>t_cuda_speedup_vs_<cpu>.png     — HSMMLearn_OMP (cpu) / decode_tensor_viterbi_cuda (gpu)
+  <out_dir>/<gpu>/<T>t_cuda_vs_baseline_omp_<cpu>.png   — HSMMLearn_OMP (cpu) / decode_tensor_viterbi_cuda (gpu)
+  <out_dir>/<gpu>/<T>t_cuda_vs_tensor_omp_<cpu>.png     — decode_tensor_viterbi_omp (cpu) / decode_tensor_viterbi_cuda (gpu)
 
 Speedup > 1 means the tensor version is faster than the baseline.
 """
@@ -35,6 +36,11 @@ import pandas as pd
 
 RESULTS_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "results")
 OUT_ROOT     = os.path.dirname(os.path.abspath(__file__))  # plot/
+
+
+def _slug(name: str) -> str:
+    """Sanitize a system name (which may include a toolchain path) for use in file names."""
+    return name.replace("/", "-")
 
 
 def load_system(system: str) -> pd.DataFrame:
@@ -185,11 +191,21 @@ def main():
                 omp_base_mat = pivot(cpu_sub, "HSMMLearn_OMP",              states, durs)
                 with np.errstate(invalid="ignore", divide="ignore"):
                     speedup = np.where(cuda_mat > 0, omp_base_mat / cuda_mat, np.nan)
-                out_path = os.path.join(out_gpu, f"{T}t_cuda_speedup_vs_{cpu_sys}.png")
+                out_path = os.path.join(out_gpu, f"{T}t_cuda_vs_baseline_omp_{_slug(cpu_sys)}.png")
                 save_heatmap(speedup, states, durs, T, out_path,
                              f"Speedup: Tensor CUDA vs HSMMLearn OMP\n"
                              f"(GPU: {args.gpu_system} / CPU baseline: {cpu_sys})",
                              "HSMMLearn_OMP (CPU) / Tensor CUDA (GPU)  (×)")
+
+                # Tensor CUDA vs Tensor OMP
+                tensor_omp_mat = pivot(cpu_sub, "decode_tensor_viterbi_omp", states, durs)
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    speedup_vs_omp = np.where(cuda_mat > 0, tensor_omp_mat / cuda_mat, np.nan)
+                out_path = os.path.join(out_gpu, f"{T}t_cuda_vs_tensor_omp_{_slug(cpu_sys)}.png")
+                save_heatmap(speedup_vs_omp, states, durs, T, out_path,
+                             f"Speedup: Tensor CUDA vs Tensor OMP\n"
+                             f"(GPU: {args.gpu_system} / CPU: {cpu_sys})",
+                             "Tensor OMP (CPU) / Tensor CUDA (GPU)  (×)")
 
 
 if __name__ == "__main__":

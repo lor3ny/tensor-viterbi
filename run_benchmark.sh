@@ -12,12 +12,14 @@ source "$SCRIPT_DIR/systems.conf"
 
 # Parse arguments
 SYSTEM=""
+TOOLCHAIN=""
 VITERBI_FLAGS=""
 SEQUENTIAL=0
 ITERATIONS=6
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --system) SYSTEM="$2"; shift 2 ;;
+        --system)    SYSTEM="$2";    shift 2 ;;
+        --toolchain) TOOLCHAIN="$2"; shift 2 ;;
         --py|--cpp|--omp|--cuda|--baseline)
             flag="${1#--}"
             VITERBI_FLAGS="${VITERBI_FLAGS:+$VITERBI_FLAGS:}$flag"
@@ -34,6 +36,11 @@ if [[ -z "$SYSTEM" ]]; then
     exit 1
 fi
 
+if [[ -z "$TOOLCHAIN" ]]; then
+    echo "Error: --toolchain argument is required."
+    exit 1
+fi
+
 if [[ -z "${SYS_TYPE[$SYSTEM]+x}" ]]; then
     echo "Error: Unknown system '$SYSTEM'."
     echo "Available systems: ${!SYS_TYPE[*]}"
@@ -44,7 +51,9 @@ TYPE="${SYS_TYPE[$SYSTEM]}"
 PARTITION="${SYS_PARTITION[$SYSTEM]}"
 ACCOUNT="${SYS_ACCOUNT[$SYSTEM]}"
 CPUS="${SYS_CPUS[$SYSTEM]}"
-MODULES="${SYS_MODULES[$SYSTEM]}"
+
+MODULES="${SYS_MODULES[$SYSTEM/$TOOLCHAIN]}"
+SYS_NAME="$SYSTEM/$TOOLCHAIN"
 
 # Returns the wall-clock time limit for a given (states, duration, timesteps) combination.
 # Rules are for the baseline; conservative enough to cover all backends.
@@ -88,7 +97,11 @@ get_walltime() {
 SBATCH_FLAGS=(
     "--partition=$PARTITION"
     "--account=$ACCOUNT"
+<<<<<<< Updated upstream
     "--export=ALL,SYS_NAME=$SYSTEM,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,VITERBI_FLAGS=$VITERBI_FLAGS,BENCHMARK_ITERATIONS=$ITERATIONS"
+=======
+    "--export=ALL,SYS_NAME=$SYS_NAME,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,VITERBI_FLAGS=$VITERBI_FLAGS"
+>>>>>>> Stashed changes
 )
 if [[ "$TYPE" == "gpu" ]]; then
     SBATCH_FLAGS+=("--gres=gpu:1")
@@ -110,13 +123,13 @@ timesteps=(1000)
 #timesteps=(1000)
 
 echo "Compiling for system: $SYSTEM"
-"$SCRIPT_DIR/compile.sh" --system "$SYSTEM"
+"$SCRIPT_DIR/compile.sh" --system "$SYSTEM"${TOOLCHAIN:+ --toolchain "$TOOLCHAIN"}
 if [[ $? -ne 0 ]]; then
     echo "Error: compilation failed for $SYSTEM. Aborting."
     exit 1
 fi
 
-RESULTS_DIR="$SCRIPT_DIR/results/$SYSTEM"
+RESULTS_DIR="$SCRIPT_DIR/results/$SYS_NAME"
 mkdir -p "$RESULTS_DIR"
 
 # Loop through all combinations
