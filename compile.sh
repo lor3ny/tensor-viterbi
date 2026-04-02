@@ -60,6 +60,15 @@ done
 # _VENV_CREATED=1 triggers the hsmmlearn build on first setup (CPU only).
 _VENV_CREATED=0
 VENV_DIR="$SCRIPT_DIR/.venv/$SYSTEM/$TOOLCHAIN"
+# Require Python >= 3.10 (numpy 2.x, pybind11 3.x)
+_py_ver=$(python3 -c "import sys; print(sys.version_info.major * 100 + sys.version_info.minor)" 2>/dev/null || echo 0)
+if (( _py_ver < 310 )); then
+    _py_str=$(python3 --version 2>&1)
+    echo "ERROR: Python >= 3.10 required, but found: $_py_str"
+    echo "       Load a newer Python module for $SYSTEM/$TOOLCHAIN in systems.conf"
+    exit 1
+fi
+
 if [[ ! -f "$VENV_DIR/bin/python3" ]]; then
     echo "Creating venv at $VENV_DIR ..."
     python3 -m venv "$VENV_DIR"
