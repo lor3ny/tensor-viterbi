@@ -92,14 +92,16 @@ fi
 
 if [[ ! -f "$VENV_DIR/bin/python3" ]]; then
     echo "Creating venv at $VENV_DIR ..."
-    python3 -m venv "$VENV_DIR"
-    "$VENV_DIR/bin/pip" install --upgrade pip
-    if [[ "$TYPE" == "cpu" ]]; then
-        "$VENV_DIR/bin/pip" install -r "$SCRIPT_DIR/requirements.txt"
+    if [[ "$TYPE" == "gpu" ]]; then
+        # Inherit system-wide site-packages so numpy and pybind11 installed
+        # by the system Python module are visible without a separate pip install.
+        python3 -m venv --system-site-packages "$VENV_DIR"
     else
-        "$VENV_DIR/bin/pip" install numpy pybind11
+        python3 -m venv "$VENV_DIR"
+        "$VENV_DIR/bin/pip" install --upgrade pip
+        "$VENV_DIR/bin/pip" install -r "$SCRIPT_DIR/requirements.txt"
+        _VENV_CREATED=1
     fi
-    _VENV_CREATED=1
 fi
 PYTHON_EXE="$VENV_DIR/bin/python3"
 
