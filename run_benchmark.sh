@@ -78,6 +78,7 @@ fi
 
 TYPE="${SYS_TYPE[$SYSTEM]}"
 PARTITION="${SYS_PARTITION[$SYSTEM]}"
+QOS="${SYS_QOS[$SYSTEM]:-}"
 ACCOUNT="${SYS_ACCOUNT[$SYSTEM]}"
 CPUS="${SYS_CPUS[$SYSTEM]}"
 
@@ -130,9 +131,10 @@ get_walltime() {
 
 # Build system-specific sbatch flags (no --time, --output, --error, --export: computed per job)
 SBATCH_FLAGS=(
-    "--partition=$PARTITION"
     "--account=$ACCOUNT"
 )
+[[ -n "$PARTITION" ]] && SBATCH_FLAGS+=("--partition=$PARTITION")
+[[ -n "$QOS" ]] && SBATCH_FLAGS+=("--qos=$QOS")
 if [[ "$TYPE" == "gpu" ]]; then
     SBATCH_FLAGS+=("--gres=gpu:1")
 else
