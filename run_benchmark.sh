@@ -97,11 +97,7 @@ get_walltime() {
 SBATCH_FLAGS=(
     "--partition=$PARTITION"
     "--account=$ACCOUNT"
-<<<<<<< Updated upstream
-    "--export=ALL,SYS_NAME=$SYSTEM,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,VITERBI_FLAGS=$VITERBI_FLAGS,BENCHMARK_ITERATIONS=$ITERATIONS"
-=======
-    "--export=ALL,SYS_NAME=$SYS_NAME,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,VITERBI_FLAGS=$VITERBI_FLAGS"
->>>>>>> Stashed changes
+    "--export=ALL,SYS_NAME=$SYSTEM,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,VITERBI_FLAGS=$VITERBI_FLAGS"
 )
 if [[ "$TYPE" == "gpu" ]]; then
     SBATCH_FLAGS+=("--gres=gpu:1")
