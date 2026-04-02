@@ -38,6 +38,13 @@ if [[ -z "${SYS_TYPE[$SYSTEM]+x}" ]]; then
     exit 1
 fi
 
+if [[ -z "${SYS_MODULES_BUILD[$SYSTEM/$TOOLCHAIN]+x}" ]]; then
+    echo "Error: Toolchain '$TOOLCHAIN' is not defined for system '$SYSTEM'."
+    _known=$(for k in "${!SYS_MODULES_BUILD[@]}"; do [[ "$k" == "$SYSTEM/"* ]] && echo "  ${k#*/}"; done | sort)
+    echo "Known toolchains for $SYSTEM:${_known:- (none)}"
+    exit 1
+fi
+
 TYPE="${SYS_TYPE[$SYSTEM]}"
 PARTITION="${SYS_PARTITION[$SYSTEM]}"
 ACCOUNT="${SYS_ACCOUNT[$SYSTEM]}"
