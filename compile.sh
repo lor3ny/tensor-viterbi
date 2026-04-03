@@ -118,7 +118,7 @@ fi
 PYTHON_EXE="$VENV_DIR/bin/python3"
 
 if [[ "$TYPE" == "gpu" ]]; then
-    if module list 2>&1 | grep -qi rocm; then
+    if [[ "$GPU_ARCH" == gfx* ]]; then
         CMAKE_FLAGS=(
             -DBUILD_GPU=ON
             -DGPU_PLATFORM=ROCM
