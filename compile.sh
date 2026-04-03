@@ -151,8 +151,9 @@ if [[ "$TYPE" == "cpu" && $_VENV_CREATED -eq 1 ]]; then
         *)      _CC=gcc;   _CXX=g++    ;;
     esac
     echo "Building hsmmlearn packages with CC=$_CC CXX=$_CXX ..."
-    # wheel must be present so setuptools can build the legacy hsmmlearn_omp package
-    "$VENV_DIR/bin/pip" install --quiet wheel
+    # wheel and setuptools must be present for --no-build-isolation builds
+    # (setuptools is not bundled in Python 3.12+ venvs by default)
+    "$VENV_DIR/bin/pip" install --quiet wheel setuptools
     CC="$_CC" CXX="$_CXX" "$PYTHON_EXE" -m pip install --no-build-isolation "$SCRIPT_DIR/hsmmlearn"
     CC="$_CC" CXX="$_CXX" "$PYTHON_EXE" -m pip install --no-build-isolation "$SCRIPT_DIR/hsmmlearn_omp"
 fi
