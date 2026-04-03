@@ -9,6 +9,7 @@ if [[ "$PWD" != "$SCRIPT_DIR" ]]; then
     exit 1
 fi
 source "$SCRIPT_DIR/systems.conf"
+_ORIG_ARGS=("$@")
 
 # Parse arguments
 SYSTEM=""
@@ -93,6 +94,13 @@ MODULES="${SYS_MODULES[$SYSTEM/$TOOLCHAIN]}"
 METRICS_BACKEND="${SYS_METRICS_BACKEND[$SYSTEM/$TOOLCHAIN]:-}"
 UENV="${SYS_UENV[$SYSTEM/$TOOLCHAIN]:-}"
 SYS_NAME="$SYSTEM/$TOOLCHAIN"
+
+# If a uenv is required and we are not already inside it, re-exec under it.
+# This ensures the venv symlinks and module commands resolve correctly.
+if [[ -n "$UENV" && -z "${_UENV_ACTIVE:-}" ]]; then
+    exec uenv run --view=modules "$UENV" -- \
+        env _UENV_ACTIVE=1 bash "$0" "${_ORIG_ARGS[@]}"
+fi
 
 # Returns the wall-clock time limit for a given (states, duration, timesteps) combination.
 # Rules are for the baseline; conservative enough to cover all backends.
