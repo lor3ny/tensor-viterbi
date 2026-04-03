@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""print_status.py — Benchmark experiment coverage at a glance.
+
+Rows: system/toolchain pairs known from systems.conf
+Cols: T (number of timesteps): 1 k, 10 k, 100 k, 1 M
+Cell: FULL | <found>/<expected> | NONE
+"""
+
+import os
+import re
+import sys
+from pathlib import Path
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+
+RESULTS_ROOT  = "results"
+SYSTEMS_CONF  = "systems.conf"
+
+STATES    = [10, 15, 25, 50, 75]
+DURATIONS = [100, 250, 500, 1000]
+T_VALUES  = [1_000, 10_000, 100_000, 1_000_000]
+
+CPU_FUNCTIONS = [
+    "HSMMLearn_CPP",
+    "HSMMLearn_OMP",
+    "decode_tensor_viterbi_cpp",
+    "decode_tensor_viterbi_omp",
+]
+GPU_FUNCTIONS = ["decode_tensor_viterbi_cuda"]
+
+# GPU generation order (older → newer)
+GPU_GENERATION = {
+    "a100":         0,   # A100  SM80  ~2020
+    "mi250x":       1,   # MI250X gfx90a ~2021
+    "h100":         2,   # H100  SM90  ~2022
+    "gh200-hopper": 3,   # H100  SM90 (GH200) ~2023
+    "mi300x":       4,   # MI300X gfx942 ~2023
+}
+
+# ── ANSI colours ──────────────────────────────────────────────────────────────
+
+_NO_COLOR = not sys.stdout.isatty() or os.environ.get("NO_COLOR")
+
+def _c(code, text):
+    return text if _NO_COLOR else f"\033[{code}m{text}\033[0m"
+
+GREEN  = lambda t: _c("92", t)
+YELLOW = lambda t: _c("93", t)
+RED    = lambda t: _c("91", t)
+BOLD   = lambda t: _c("1",  t)
+
+# ── Layout constants ──────────────────────────────────────────────────────────
+
+ROW_W  = 26   # visible width of row label
+CELL_W = 11   # visible width of each cell ("T=1,000,000" = 11 chars)
+LINE_W = ROW_W + (CELL_W + 2) * len(T_VALUES)
+
+# ── Parse systems.conf ────────────────────────────────────────────────────────
+
+def parse_systems_conf(path):
+    """Return (sys_type dict, set of 'sys/tc' strings) from systems.conf."""
+    # Strip commented lines so disabled system entries are ignored
+    raw = Path(path).read_text()
+    text = "\n".join(ln for ln in raw.splitlines() if not ln.lstrip().startswith("#"))
+
+    # SYS_TYPE[<sys>]="cpu"|"gpu"
+    sys_type = {
+        m.group(1): m.group(2)
+        for m in re.finditer(r'SYS_TYPE\[([\w-]+)\]\s*=\s*"(\w+)"', text)
+    }
+
+    # SYS_MODULES[<sys>/<tc>]  — SYS_MODULES_BUILD has _BUILD so won't match
+    sys_tc = {
+        f"{m.group(1)}/{m.group(2)}"
+        for m in re.finditer(r'SYS_MODULES\[([\w-]+)/([\w-]+)\]', text)
+    }
+
+    return sys_type, sys_tc
+
+# ── Row ordering ──────────────────────────────────────────────────────────────
+
+def row_key(sys_tc, sys_type):
+    sys = sys_tc.split("/")[0]
+    is_gpu = sys_type.get(sys, "cpu") == "gpu"
+    gen = GPU_GENERATION.get(sys, 99) if is_gpu else 0
+    return (1 if is_gpu else 0, gen, sys_tc)
+
+# ── Coverage counting ─────────────────────────────────────────────────────────
+
+def count_csvs(sys_tc, T, functions):
+    """Return (found, expected) CSV file counts."""
+    root = Path(RESULTS_ROOT) / sys_tc
+    expected = len(STATES) * len(DURATIONS) * len(functions)
+    found = sum(
+        (root / f"{s}s_{d}d_{T}t_{fn}.csv").exists()
+        for s in STATES
+        for d in DURATIONS
+        for fn in functions
+    )
+    return found, expected
+
+# ── Cell formatting ───────────────────────────────────────────────────────────
+
+def fmt_cell(found, expected):
+    if found == 0:
+        text, colorize = "NONE", RED
+    elif found >= expected:
+        text, colorize = "FULL", GREEN
+    else:
+        text, colorize = f"{found}/{expected}", YELLOW
+    return colorize(text.rjust(CELL_W))
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main():
+    # Always run relative to the repo root (where systems.conf lives)
+    os.chdir(Path(__file__).parent)
+
+    sys_type, conf_sys_tc = parse_systems_conf(SYSTEMS_CONF)
+
+    # Include any result dirs not declared in systems.conf (shouldn't happen, but safe)
+    result_sys_tc = {
+        f"{d.parent.name}/{d.name}"
+        for d in Path(RESULTS_ROOT).glob("*/*") if d.is_dir()
+    }
+    all_sys_tc = sorted(
+        conf_sys_tc | result_sys_tc,
+        key=lambda s: row_key(s, sys_type),
+    )
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    sep = "─" * LINE_W
+    t_headers = [f"T={t:,}".rjust(CELL_W) for t in T_VALUES]
+    header = f"{'System / Toolchain':<{ROW_W}}" + "".join(f"  {h}" for h in t_headers)
+
+    print(sep)
+    print(BOLD(header))
+    print(sep)
+
+    # ── Rows ──────────────────────────────────────────────────────────────────
+    prev_sys = None
+    for sys_tc in all_sys_tc:
+        sys = sys_tc.split("/")[0]
+        is_gpu = sys_type.get(sys, "cpu") == "gpu"
+        functions = GPU_FUNCTIONS if is_gpu else CPU_FUNCTIONS
+
+        # Blank line between different physical systems for readability
+        if prev_sys is not None and sys != prev_sys:
+            print()
+        prev_sys = sys
+
+        cells = [fmt_cell(*count_csvs(sys_tc, T, functions)) for T in T_VALUES]
+
+        print(f"{sys_tc:<{ROW_W}}", end="")
+        for c in cells:
+            print(f"  {c}", end="")
+        print()
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    print(sep)
+    cpu_exp = len(STATES) * len(DURATIONS) * len(CPU_FUNCTIONS)
+    gpu_exp = len(STATES) * len(DURATIONS) * len(GPU_FUNCTIONS)
+    print(
+        f"\nExpected per T:  "
+        f"CPU = {cpu_exp} CSVs "
+        f"({len(STATES)} states × {len(DURATIONS)} durations × {len(CPU_FUNCTIONS)} functions)   "
+        f"GPU = {gpu_exp} CSVs ({len(GPU_FUNCTIONS)} function)\n"
+        f"{GREEN('FULL')}  all expected files present   "
+        f"{YELLOW('n/N')}  partial   "
+        f"{RED('NONE')}  nothing yet"
+    )
+
+
+if __name__ == "__main__":
+    main()

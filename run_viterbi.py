@@ -135,7 +135,10 @@ if __name__ == "__main__":
         if args.py:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi (Cached){R}")
             tc_predicted_states = decode_log_tensor_viterbi_cached(my_hsmm)
-            validate("Tensor (Cached) vs Baseline", tc_predicted_states, data_path)
+            if _run_baseline_cpp:
+                validate("Tensor (Cached) vs Baseline", tc_predicted_states, data_path)
+            else:
+                print(f"  {DIM}(pass --baseline to compare against HSMMLearn reference){R}")
 
         # v_predicted_states = decode_vanilla_viterbi(my_hsmm)
         # validate("Vanilla vs Baseline", v_predicted_states, data_path)
@@ -143,13 +146,20 @@ if __name__ == "__main__":
         if args.cpp:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi C++{R}")
             cpp_predicted_states = decode_tensor_viterbi_cpp(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
-            validate("C++ vs Baseline", cpp_predicted_states, data_path)
+            if _run_baseline_cpp:
+                validate("C++ vs Baseline", cpp_predicted_states, data_path)
+            else:
+                print(f"  {DIM}(pass --baseline to compare against HSMMLearn reference){R}")
 
         if args.omp:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi OMP{R}")
             omp_predicted_states = decode_tensor_viterbi_omp(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
-            validate("OMP vs Baseline", omp_predicted_states, data_path)
-            validate_omp("OMP vs Baseline (HSMMLearn OMP)", omp_predicted_states, data_path)
+            if _run_baseline_cpp:
+                validate("OMP vs Baseline", omp_predicted_states, data_path)
+            if _run_baseline_omp:
+                validate_omp("OMP vs Baseline (HSMMLearn OMP)", omp_predicted_states, data_path)
+            if not _run_baseline_cpp and not _run_baseline_omp:
+                print(f"  {DIM}(pass --baseline to compare against HSMMLearn reference){R}")
 
         if args.omp_opt:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi OMP_OPT{R}")
@@ -160,7 +170,10 @@ if __name__ == "__main__":
         if args.cuda:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi CUDA{R}")
             cuda_predicted_states = decode_tensor_viterbi_cuda(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
-            validate("CUDA vs Baseline", cuda_predicted_states, data_path)
+            if _run_baseline_cpp:
+                validate("CUDA vs Baseline", cuda_predicted_states, data_path)
+            else:
+                print(f"  {DIM}(pass --baseline to compare against HSMMLearn reference){R}")
 
 
     elif args.mode == "measure":

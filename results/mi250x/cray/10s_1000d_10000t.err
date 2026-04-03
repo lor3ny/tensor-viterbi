@@ -1,8 +1,3 @@
-The following modules were not unloaded:
-  (Use "module --force purge" to unload all):
 
-  1) ModuleLabel/label   2) lumi-tools/24.05   3) init-lumi/0.2
+Lmod is automatically replacing "craype-x86-rome" with "craype-x86-trento".
 
-The following sticky modules could not be reloaded:
-
-  1) lumi-tools
