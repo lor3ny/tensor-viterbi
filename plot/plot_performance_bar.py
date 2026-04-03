@@ -36,6 +36,7 @@ OUT_ROOT     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bars")
 # Default toolchain per system prefix — used unless --all-toolchains is given.
 DEFAULT_TOOLCHAINS = {
     "a100":      "cuda",
+    "h100":      "cuda",
     "mi250x":    "cray",
     "epyc-7763": "cray",   # matches epyc-7763-bigmem etc.
     "xeon8480":  "gnu",

@@ -6,7 +6,7 @@
 # are all injected by run_benchmark.sh via sbatch CLI arguments.
 # SYS_NAME, SYS_TYPE, SYS_MODULES are passed via --export.
 
-SCRIPT_DIR="$SLURM_SUBMIT_DIR"
+SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 CONFIG_PATH=$1
 
 # Hardware diagnostics
@@ -31,6 +31,8 @@ done
 
 if [[ -n "$SLURM_CPUS_PER_TASK" ]]; then
     export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+elif [[ -n "$SYS_CPUS" ]]; then
+    export OMP_NUM_THREADS=$SYS_CPUS
 fi
 
 source "$SCRIPT_DIR/.venv/$SYS_NAME/bin/activate"

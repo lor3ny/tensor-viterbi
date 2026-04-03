@@ -15,6 +15,7 @@ SYSTEM=""
 TOOLCHAIN=""
 VITERBI_FLAGS=""
 SEQUENTIAL=0
+LOCAL=0
 ITERATIONS=6
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -24,6 +25,7 @@ while [[ $# -gt 0 ]]; do
             flag="${1#--}"
             VITERBI_FLAGS="${VITERBI_FLAGS:+$VITERBI_FLAGS:}$flag"
             shift ;;
+        --local)      LOCAL=1;      shift ;;
         --sequential) SEQUENTIAL=1; shift ;;
         --iterations) ITERATIONS="$2"; shift 2 ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
@@ -147,9 +149,17 @@ fi
 #   iterations   : number of benchmark iterations
 submit_job() {
     local job_stem="$1" vflags="$2" iters="$3" walltime="$4" config_file="$5"
-    local export_str="ALL,SYS_NAME=$SYS_NAME,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,SYS_METRICS_BACKEND=$METRICS_BACKEND,VITERBI_FLAGS=$vflags,BENCHMARK_ITERATIONS=$iters"
     local JOB_OUTPUT
     echo "  -> flags=[$vflags] iterations=$iters"
+    if [[ "$LOCAL" -eq 1 ]]; then
+        SYS_NAME="$SYS_NAME" SYS_TYPE="$TYPE" SYS_MODULES="$MODULES" \
+        SYS_METRICS_BACKEND="$METRICS_BACKEND" SYS_CPUS="$CPUS" \
+        VITERBI_FLAGS="$vflags" BENCHMARK_ITERATIONS="$iters" \
+        bash "$SCRIPT_DIR/run.slrm" "$config_file" \
+            > "$RESULTS_DIR/${job_stem}.out" 2> "$RESULTS_DIR/${job_stem}.err"
+        return
+    fi
+    local export_str="ALL,SYS_NAME=$SYS_NAME,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,SYS_METRICS_BACKEND=$METRICS_BACKEND,VITERBI_FLAGS=$vflags,BENCHMARK_ITERATIONS=$iters"
     JOB_OUTPUT=$(sbatch "${SBATCH_FLAGS[@]}" \
         "--export=$export_str" \
         --job-name="tv_${job_stem}" \
