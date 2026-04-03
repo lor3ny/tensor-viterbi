@@ -57,6 +57,7 @@ if __name__ == "__main__":
     parser.add_argument("--cuda", action="store_true", help="Enable CUDA backend")
     parser.add_argument("--cpp", action="store_true", help="Enable C++ backend")
     parser.add_argument("--omp", action="store_true", help="Enable OpenMP backend")
+    parser.add_argument("--omp-opt", action="store_true", help="Enable OpenMP optimized backend")
     parser.add_argument("--baseline",     action="store_true", help="Enable all baselines (HSMMLearn C++ + OMP)")
     parser.add_argument("--baseline-cpp", action="store_true", help="Enable HSMMLearn C++ baseline only")
     parser.add_argument("--baseline-omp", action="store_true", help="Enable HSMMLearn OMP baseline only")
@@ -83,6 +84,12 @@ if __name__ == "__main__":
         from tensor_viterbi.viterbi import (
             decode_tensor_viterbi_omp,
         )
+
+    if args.omp_opt:
+        from tensor_viterbi.viterbi import (
+            decode_tensor_viterbi_omp_opt,
+        )
+
     _run_baseline_cpp = args.baseline or args.baseline_cpp
     _run_baseline_omp = args.baseline or args.baseline_omp
     if _run_baseline_cpp:
@@ -144,6 +151,12 @@ if __name__ == "__main__":
             validate("OMP vs Baseline", omp_predicted_states, data_path)
             validate_omp("OMP vs Baseline (HSMMLearn OMP)", omp_predicted_states, data_path)
 
+        if args.omp_opt:
+            print(f"{YEL}{BOLD}▶ Tensor Viterbi OMP_OPT{R}")
+            omp_opt_predicted_states = decode_tensor_viterbi_omp_opt(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq) 
+            validate("OMP_OPT vs Baseline", omp_opt_predicted_states, data_path)
+            validate_omp("OMP_OPT vs Baseline (HSMMLearn OMP)", omp_opt_predicted_states, data_path)
+
         if args.cuda:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi CUDA{R}")
             cuda_predicted_states = decode_tensor_viterbi_cuda(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
@@ -203,6 +216,19 @@ if __name__ == "__main__":
                 print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{omp_baseline_elapsed / omp_elapsed:.2f}x{R} vs HSMMLearn OMP C++\n")
                 print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{cpp_elapsed / omp_elapsed:.2f}x{R} vs Tensor Viterbi C++\n")
 
+        if args.omp_opt:
+            print(f"{YEL}{BOLD}▶ Tensor Viterbi OMP_OPT{R}")
+            my_hsmm = HSMM.load_model(data_path)
+            def _omp_opt():
+                my_hsmm.to_log_space()
+                return decode_tensor_viterbi_omp_opt(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
+            _omp_opt.__name__ = decode_tensor_viterbi_omp_opt.__name__
+            _, omp_opt_elapsed = TIME_MEASURE(_omp_opt)
+            validate("Validate", _, data_path)
+            if omp_baseline_elapsed is not None:
+                print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{omp_baseline_elapsed / omp_opt_elapsed:.2f}x{R} vs HSMMLearn OMP C++\n")
+                print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{cpp_elapsed / omp_opt_elapsed:.2f}x{R} vs Tensor Viterbi C++\n")
+
         if args.cuda:
             print(f"{YEL}{BOLD}▶ Tensor Viterbi CUDA{R}")
             my_hsmm = HSMM.load_model(data_path)
@@ -234,7 +260,6 @@ if __name__ == "__main__":
                 my_hsmm = HSMM.load_model(data_path)
                 my_hsmm.to_log_space()
                 start = time.perf_counter()
-                start = time.perf_counter()
                 decode_log_tensor_viterbi_cached(my_hsmm)
                 _times.append(time.perf_counter() - start)
             _metrics = _collector.stop()
@@ -261,7 +286,6 @@ if __name__ == "__main__":
             for _ in range(args.iterations):
                 my_hsmm = HSMM.load_model(data_path)
                 my_hsmm.to_log_space()
-                start = time.perf_counter()
                 start = time.perf_counter()
                 decode_tensor_viterbi_cpp(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
                 _times.append(time.perf_counter() - start)
@@ -290,8 +314,34 @@ if __name__ == "__main__":
                 my_hsmm = HSMM.load_model(data_path)
                 my_hsmm.to_log_space()
                 start = time.perf_counter()
+                res = decode_tensor_viterbi_omp(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
+                _times.append(time.perf_counter() - start)
+            _metrics = _collector.stop()
+            with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
+                for i, t in enumerate(_times):
+                    writer.writerow([_fname, N, T, D, i, f"{t:.6f}"])
+            if _collector.column_names():
+                _mfile = f"{_stem}_{_fname}_metrics{_ext}"
+                with open(_mfile, "w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["function", "n_states", "timesteps", "max_duration", "total_iterations", *_collector.column_names()])
+                    writer.writerow([_fname, N, T, D, args.iterations, *[_metrics.get(k, "") for k in _collector.column_names()]])
+            avg, mn, mx = sum(_times) / len(_times), min(_times), max(_times)
+            print(f"  {WHITE}{_fname}{R}")
+            print(f"  avg {BOLD}{GREEN}{avg:.4f} s{R}   min {GREEN}{mn:.4f} s{R}   max {GREEN}{mx:.4f} s{R}\n")
+
+        if args.omp_opt:
+            print(f"{YEL}{BOLD}▶ Tensor Viterbi OMP_OPT{R}")
+            _fname = decode_tensor_viterbi_omp_opt.__name__
+            _times = []
+            _collector.start()
+            for _ in range(args.iterations):
+                my_hsmm = HSMM.load_model(data_path)
+                my_hsmm.to_log_space()
                 start = time.perf_counter()
-                decode_tensor_viterbi_omp(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
+                res = decode_tensor_viterbi_omp_opt(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
                 _times.append(time.perf_counter() - start)
             _metrics = _collector.stop()
             with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
@@ -317,7 +367,6 @@ if __name__ == "__main__":
             for _ in range(args.iterations):
                 my_hsmm = HSMM.load_model(data_path)
                 my_hsmm.to_log_space()
-                start = time.perf_counter()
                 start = time.perf_counter()
                 decode_tensor_viterbi_cuda(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
                 _times.append(time.perf_counter() - start)

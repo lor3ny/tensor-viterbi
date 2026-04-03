@@ -361,6 +361,213 @@ std::vector<int> decode_tensor_viterbi(
 }
 
 
+std::vector<int> decode_tensor_viterbi_omp_opt(
+    const int                  n_states,
+    const std::vector<double>& trans_mat,
+    const std::vector<double>& emission_probs,
+    const std::vector<double>& duration_probs_linear,
+    const std::vector<double>& start_probs,
+    const std::vector<double>& duration_probs,
+    const std::vector<int>&    obs_seq)
+{
+    const int N = n_states;
+    const int T = static_cast<int>(obs_seq.size());
+    const int D = static_cast<int>(duration_probs.size()) / N;
+    const double NEG_INF = -std::numeric_limits<double>::infinity();
+
+    std::vector<double> delta    (N * T, NEG_INF);
+    std::vector<int>    psi_state(N * T, 0);
+    std::vector<int>    psi_dur  (N * T, 1);
+    std::vector<double> delta_t  (T * N, NEG_INF);
+
+    //* ── Survival Probs ─────────────────────────────────────────────────────── *//
+    // The d loop carries a running sum per state j, but j iterations are
+    // independent of each other — parallelize over j only.
+    std::vector<double> survival_probs(D * N, NEG_INF);
+
+    //* ── AP = TRANS_MAT + DURATION_PROBS ───────────────────────────────────── *//
+    // Layout [j, d, i]: AP[j*D*N + d*N + i]. For fixed j the full D*N*8 = 100 KB
+    // block is contiguous, fitting in L2 across the d loop of the argmax.
+    // j, d, i are fully independent — collapse all three loops.
+    // Declared here (shared) so Phase 2 and tail adjustment can access them.
+    std::vector<double> AP(N * D * N);
+    std::vector<double> EMISSION_PROBS(D * N, 0.0);
+    std::vector<double> EMISSION_CACHE(D * N, 0.0);
+
+    //* ── Two-phase argmax scratch (N × D, shared across t iterations) ─────── *//
+    std::vector<double> tmp_val(N * D, NEG_INF);
+    std::vector<int>    tmp_i  (N * D, 0);
+
+    //* ── Single persistent thread team for all phases ──────────────────────── *//
+    // One spawn/join for the whole function. omp for barriers enforce data-flow.
+    #pragma omp parallel default(shared)
+    {
+        // ── Survival probs (j independent, d sequential per j) ────────────── //
+        #pragma omp for schedule(static)
+        for (int j = 0; j < N; ++j) {
+            double cum = NEG_INF;
+            for (int d = D - 1; d >= 0; --d) {
+                const double lp = duration_probs[j * D + d];
+                const double m  = std::max(cum, lp);
+                cum = (m == NEG_INF) ? lp : m + std::log(std::exp(cum - m) + std::exp(lp - m));
+                survival_probs[d * N + j] = cum;
+            }
+        }
+
+        // ── AP (j, d, i fully independent — collapse all three) ──────────── //
+        #pragma omp for schedule(static) collapse(3)
+        for (int j = 0; j < N; ++j)
+            for (int d = 0; d < D; ++d)
+                for (int i = 0; i < N; ++i)
+                    AP[j * D * N + d * N + i] = trans_mat[j * N + i] + duration_probs[j * D + d];
+
+        //* ── PHASE 1 — Initialization 0 <= t < D ──────────────────────────── *//
+        // Prefix sum per j: independent across j, sequential across d.
+        // Eliminates D-1 barriers vs the old d-outer / j-inner structure.
+        #pragma omp for schedule(static)
+        for (int j = 0; j < N; ++j) {
+            double acc = 0.0;
+            for (int d = 0; d < D; ++d) {
+                acc += emission_probs[obs_seq[d] * N + j];
+                EMISSION_PROBS[d * N + j] = acc;
+            }
+        }
+        // d and j fully independent — collapse both loops.
+        #pragma omp for schedule(static) collapse(2)
+        for (int d = 0; d < D; ++d)
+            for (int j = 0; j < N; ++j) {
+                delta_t[d * N + j] = duration_probs[j * D + d] + start_probs[j] + EMISSION_PROBS[d * N + j];
+                psi_dur[j * T + d] = d + 1;
+            }
+
+        //* ── PHASE 2 — Induction t >= 1 ──────────────────────────────────── *//
+        // t is sequential. omp for barriers inside each step enforce data-flow.
+        for (int t = 1; t < T; ++t) {
+
+            // tau and em_t depend only on t (loop-private) and read-only data —
+            // every thread computes the same value independently, no barrier needed.
+            const int     tau  = std::min(t, D);
+            const double* em_t = &emission_probs[obs_seq[t] * N];
+
+            // ── Emission probs ─────────────────────────────────────────────── //
+            if (t > D) {
+                // Rolling update: EP[d,j] = cache[d,j] + em_t[j]
+                // collapse(2): D*N chunks instead of D
+                #pragma omp for schedule(static) collapse(2)
+                for (int d = 0; d < D; ++d)
+                    for (int j = 0; j < N; ++j)
+                        EMISSION_PROBS[d * N + j] = EMISSION_CACHE[d * N + j] + em_t[j];
+                // Cache shift: parallel copy — no omp single bottleneck
+                #pragma omp for schedule(static)
+                for (int k = 0; k < (D - 1) * N; ++k)
+                    EMISSION_CACHE[N + k] = EMISSION_PROBS[k];
+            } else {
+                // Build from scratch: prefix sum per j — one barrier, N chunks,
+                // eliminates the old tau-1 barriers from the d-outer loop.
+                #pragma omp for schedule(static)
+                for (int j = 0; j < N; ++j) {
+                    EMISSION_PROBS[j] = em_t[j];
+                    for (int d = 1; d < tau; ++d)
+                        EMISSION_PROBS[d * N + j] = EMISSION_PROBS[(d - 1) * N + j]
+                                                   + emission_probs[obs_seq[t - d] * N + j];
+                }
+                // Initialise rolling cache once t == D (parallel copy)
+                if (t == D) {
+                    #pragma omp for schedule(static)
+                    for (int k = 0; k < (D - 1) * N; ++k)
+                        EMISSION_CACHE[N + k] = EMISSION_PROBS[k];
+                }
+            }
+
+            // ── Argmax Phase A: parallel over (j, d) — N*D chunks ─────────── //
+            // AP layout [j,d,i]: contiguous D*N block per j stays in L2.
+            // Each (j,d) pair independently finds best i and stores to tmp.
+            #pragma omp for schedule(static) collapse(2)
+            for (int j = 0; j < N; ++j) {
+                for (int d = 0; d < tau; ++d) {
+                    const double  ep    = EMISSION_PROBS[d * N + j];
+                    const double* ap_dj = &AP[j * D * N + d * N];
+                    const double* pd    = &delta_t[(t - 1 - d) * N];
+                    double best_val = NEG_INF;
+                    int    best_i   = 0;
+                    for (int i = 0; i < N; ++i) {
+                        const double val = ep + pd[i] + ap_dj[i];
+                        if (val > best_val) { best_val = val; best_i = i; }
+                    }
+                    tmp_val[j * D + d] = best_val;
+                    tmp_i  [j * D + d] = best_i;
+                }
+            }
+            // ── Argmax Phase B: reduce over d per j ───────────────────────── //
+            // Implicit barrier after Phase A ensures tmp is fully written.
+            #pragma omp for schedule(static)
+            for (int j = 0; j < N; ++j) {
+                double best_val = NEG_INF;
+                int    best_d   = 0;
+                int    best_i   = 0;
+                for (int d = 0; d < tau; ++d) {
+                    if (tmp_val[j * D + d] > best_val) {
+                        best_val = tmp_val[j * D + d];
+                        best_d   = d;
+                        best_i   = tmp_i[j * D + d];
+                    }
+                }
+                const bool update = (t >= D) || (best_val > delta_t[t * N + j]);
+                if (update) {
+                    delta_t  [t * N + j] = best_val;
+                    psi_state[j * T + t] = best_i;
+                    psi_dur  [j * T + t] = best_d + 1;
+                }
+            }
+        } // for t
+
+        //* ── TAIL ADJUSTMENT — t = T-1 ─────────────────────────────────────── *//
+        {
+            const int t   = T - 1;
+            const int tau = std::min(T - 1, D);
+
+            // Phase A: parallel over (j, d)
+            #pragma omp for schedule(static) collapse(2)
+            for (int j = 0; j < N; ++j) {
+                for (int d = 0; d < tau; ++d) {
+                    const double  ep   = EMISSION_PROBS[d * N + j] + survival_probs[d * N + j];
+                    const double* tm_j = &trans_mat[j * N];
+                    const double* pd   = &delta_t[(t - 1 - d) * N];
+                    double best_val = NEG_INF;
+                    int    best_i   = 0;
+                    for (int i = 0; i < N; ++i) {
+                        const double val = ep + pd[i] + tm_j[i];
+                        if (val > best_val) { best_val = val; best_i = i; }
+                    }
+                    tmp_val[j * D + d] = best_val;
+                    tmp_i  [j * D + d] = best_i;
+                }
+            }
+
+            // Phase B: reduce over d per j
+            #pragma omp for schedule(static)
+            for (int j = 0; j < N; ++j) {
+                double best_val = NEG_INF;
+                int    best_d   = 0;
+                int    best_i   = 0;
+                for (int d = 0; d < tau; ++d) {
+                    if (tmp_val[j * D + d] > best_val) {
+                        best_val = tmp_val[j * D + d];
+                        best_d   = d;
+                        best_i   = tmp_i[j * D + d];
+                    }
+                }
+                delta    [j * T + t] = best_val;
+                psi_state[j * T + t] = best_i;
+                psi_dur  [j * T + t] = best_d + 1;
+            }
+        }
+    } // omp parallel
+
+    return backtracking_termination(delta, psi_state, psi_dur, N, T);
+}
+
+
 std::vector<int> decode_tensor_viterbi_omp(
     const int                  n_states,
     const std::vector<double>& trans_mat,

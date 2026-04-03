@@ -19,4 +19,4 @@ source /leonardo/home/userexternal/lpiarull/fast-viterbi/.venv/bin/activate
 
 cd /leonardo/home/userexternal/lpiarull/fast-viterbi
 
-python run_viterbi.py --baseline --cuda --cpp --omp -m measure -dp data/50states_1000steps_100dur.json
+python run_viterbi.py --system xeon8480/gnu --omp -m measure -dp data/50states_10000steps_1000dur.json

@@ -5,7 +5,7 @@ from .tensor import (
 )
 
 from .vanilla import decode_vanilla_viterbi
-from .native import decode_tensor_viterbi_cpp, decode_tensor_viterbi_cuda, decode_tensor_viterbi_omp
+from .native import decode_tensor_viterbi_cpp, decode_tensor_viterbi_cuda, decode_tensor_viterbi_omp, decode_tensor_viterbi_omp_opt
 
 __all__ = [
     "decode_log_tensor_viterbi_no_cache",
@@ -14,4 +14,5 @@ __all__ = [
     "decode_tensor_viterbi_cpp",
     "decode_tensor_viterbi_cuda",
     "decode_tensor_viterbi_omp",
+    "decode_tensor_viterbi_omp_opt",
 ]

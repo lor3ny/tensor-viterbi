@@ -39,6 +39,16 @@ std::vector<int> decode_tensor_viterbi_omp(
     const std::vector<int>&    obs_seq
 );
 
+std::vector<int> decode_tensor_viterbi_omp_opt(
+    int                        n_states,
+    const std::vector<double>& trans_mat,
+    const std::vector<double>& emission_probs,
+    const std::vector<double>& duration_probs_linear,
+    const std::vector<double>& start_probs,
+    const std::vector<double>& duration_probs,
+    const std::vector<int>&    obs_seq
+);
+
 #ifndef NO_GPU
 /**
  * Decode using GPU (CUDA) tensor Viterbi.

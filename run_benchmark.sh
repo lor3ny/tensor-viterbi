@@ -1,5 +1,5 @@
 #!/bin/bash
-# Usage: ./run_benchmark.sh --system <system_name> [--iterations N] [--py|--cpp|--omp|--cuda|--baseline] [--sequential]
+# Usage: ./run_benchmark.sh --system <system_name> [--iterations N] [--py|--cpp|--omp|--omp-opt|--cuda|--baseline] [--sequential]
 # Available systems are defined in systems.conf
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,7 +22,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --system)    SYSTEM="$2";    shift 2 ;;
         --toolchain) TOOLCHAIN="$2"; shift 2 ;;
-        --py|--cpp|--omp|--cuda|--baseline|--baseline-cpp|--baseline-omp)
+        --py|--cpp|--omp|--omp-opt|--cuda|--baseline|--baseline-cpp|--baseline-omp)
             flag="${1#--}"
             VITERBI_FLAGS="${VITERBI_FLAGS:+$VITERBI_FLAGS:}$flag"
             shift ;;
@@ -85,9 +85,9 @@ QOS="${SYS_QOS[$SYSTEM]:-}"
 ACCOUNT="${SYS_ACCOUNT[$SYSTEM]}"
 CPUS="${SYS_CPUS[$SYSTEM]}"
 
-# Default for CPU: run all four variants if no flags were specified
+# Default for CPU: run all variants if no flags were specified
 if [[ "$TYPE" == "cpu" && -z "$VITERBI_FLAGS" ]]; then
-    VITERBI_FLAGS="cpp:omp:baseline-cpp:baseline-omp"
+    VITERBI_FLAGS="cpp:omp:omp-opt:baseline-cpp:baseline-omp"
 fi
 
 MODULES="${SYS_MODULES[$SYSTEM/$TOOLCHAIN]}"
@@ -111,33 +111,60 @@ get_walltime() {
         if [[ $s -eq 75 && $d -eq 1000 && $t -eq 10000 ]]; then
             echo "02:00:00"
         else
+            echo "00:30:00"
+        fi
+        return
+    fi
+
+    if [[ $t -ge 100000 ]]; then
+        if [[ $s -le 15 ]]; then
+            echo "01:00:00"
+        elif [[ $s -eq 25 ]]; then
+            if   [[ $d -le 250 ]]; then echo "01:00:00"
+            else                        echo "02:00:00"
+            fi
+        elif [[ $s -eq 50 ]]; then
+            if   [[ $d -eq 100  ]]; then echo "01:00:00"
+            elif [[ $d -eq 250  ]]; then echo "02:00:00"
+            elif [[ $d -eq 500  ]]; then echo "04:00:00"
+            else                         echo "08:00:00"
+            fi
+        elif [[ $s -eq 75 ]]; then
+            if   [[ $d -eq 100  ]]; then echo "02:00:00"
+            elif [[ $d -eq 250  ]]; then echo "04:00:00"
+            elif [[ $d -eq 500  ]]; then echo "08:00:00"
+            else                         echo "16:00:00"
+            fi
+        else
             echo "01:00:00"
         fi
         return
     fi
 
-    # 100k timesteps
-    if [[ $s -le 15 ]]; then
-        echo "01:00:00"
-    elif [[ $s -eq 25 ]]; then
-        if   [[ $d -le 250 ]]; then echo "01:00:00"
-        else                        echo "02:00:00"
-        fi
-    elif [[ $s -eq 50 ]]; then
-        if   [[ $d -eq 100  ]]; then echo "01:00:00"
-        elif [[ $d -eq 250  ]]; then echo "02:00:00"
-        elif [[ $d -eq 500  ]]; then echo "04:00:00"
-        else                         echo "08:00:00"
-        fi
-    elif [[ $s -eq 75 ]]; then
-        if   [[ $d -eq 100  ]]; then echo "02:00:00"
-        elif [[ $d -eq 250  ]]; then echo "04:00:00"
-        elif [[ $d -eq 500  ]]; then echo "08:00:00"
-        else                         echo "16:00:00"
-        fi
-    else
-        echo "01:00:00"
-    fi
+    # if [[ $t -eq 1000000 ]]; then
+    #     if [[ $s -le 15 ]]; then
+    #         echo "02:00:00"
+    #     elif [[ $s -eq 25 ]]; then
+    #         if   [[ $d -le 250 ]]; then echo "02:00:00"
+    #         else                        echo "06:00:00"
+    #         fi
+    #     elif [[ $s -eq 50 ]]; then
+    #         if   [[ $d -eq 100  ]]; then echo "2:00:00"
+    #         elif [[ $d -eq 250  ]]; then echo "4:00:00"
+    #         elif [[ $d -eq 500  ]]; then echo "8:00:00"
+    #         else                         echo "14:00:00"
+    #         fi
+    #     elif [[ $s -eq 75 ]]; then
+    #         if   [[ $d -eq 100  ]]; then echo "2:00:00"
+    #         elif [[ $d -eq 250  ]]; then echo "5:00:00"
+    #         elif [[ $d -eq 500  ]]; then echo "10:00:00"
+    #         else                         echo "18:00:00"
+    #         fi
+    #     else
+    #         echo "02:00:00"
+    #     fi
+    #     return
+    # fi
 }
 
 # Build system-specific sbatch flags (no --time, --output, --error, --export: computed per job)
@@ -191,13 +218,13 @@ submit_job() {
 # durations=(100 250 500 1000)
 # timesteps=(1000 10000) # 100000)
 
-states=(10 15 25 50 75)
-durations=(100 250 500 1000)
-timesteps=(100000)
+# states=(10 15 25 50 75)
+# durations=(100 250 500 1000)
+# timesteps=(1000000)
 
-#states=(10)
-#durations=(100 250)
-#timesteps=(1000)
+states=(50)
+durations=(1000)
+timesteps=(10000)
 
 # Pre-flight: verify that compile.sh has already been run for this system/toolchain.
 VENV_DIR="$SCRIPT_DIR/.venv/$SYS_NAME"

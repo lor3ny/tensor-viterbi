@@ -30,6 +30,7 @@ try:
     _decode_cpp  = _native.decode_tensor_viterbi_cpp
     _decode_cuda = getattr(_native, "decode_tensor_viterbi_cuda", None)
     _decode_omp  = getattr(_native, "decode_tensor_viterbi_omp",  None)
+    _decode_omp_opt  = getattr(_native, "decode_tensor_viterbi_omp_opt",  None)
     _NATIVE_AVAILABLE = True
 except ImportError as e:
     raise RuntimeError(
@@ -85,3 +86,19 @@ def decode_tensor_viterbi_omp(
     if _decode_omp is None:
         raise RuntimeError("OMP backend not available in this build")
     return _decode_omp(n_states, trans_mat, emission_probs, duration_probs_linear, start_probs, duration_probs, obs_seq)
+
+
+def decode_tensor_viterbi_omp_opt(
+        n_states,
+        trans_mat,
+        emission_probs,
+        duration_probs_linear,
+        start_probs,
+        duration_probs,
+        obs_seq
+) -> np.ndarray:
+    if not _NATIVE_AVAILABLE:
+        raise RuntimeError("Native extension not built. Run: cmake -B build && cmake --build build")
+    if _decode_omp is None:
+        raise RuntimeError("OMP backend not available in this build")
+    return _decode_omp_opt(n_states, trans_mat, emission_probs, duration_probs_linear, start_probs, duration_probs, obs_seq)

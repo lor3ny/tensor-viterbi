@@ -11,9 +11,9 @@ using arr_i = py::array_t<int,    py::array::c_style | py::array::forcecast>;
 
 
 #ifndef NO_GPU
-enum class Backend { CPP, OMP, CUDA };
+enum class Backend { CPP, OMP, OMP_OPT,CUDA };
 #else
-enum class Backend { CPP, OMP };
+enum class Backend { CPP, OMP, OMP_OPT};
 #endif
 
 static py::array_t<int> _run(
@@ -63,6 +63,7 @@ static py::array_t<int> _run(
         case Backend::CUDA: result = hsmm::decode_tensor_viterbi_cuda(N, tm, ep, dpl, sp, dp, obs); break;
 #endif
         case Backend::OMP:  result = hsmm::decode_tensor_viterbi_omp (N, tm, ep, dpl, sp, dp, obs); break;
+        case Backend::OMP_OPT:  result = hsmm::decode_tensor_viterbi_omp_opt (N, tm, ep, dpl, sp, dp, obs); break;
         default:            result = hsmm::decode_tensor_viterbi     (N, tm, ep, dpl, sp, dp, obs); break;
     }
 
@@ -98,7 +99,20 @@ PYBIND11_MODULE(_native, m) {
           py::arg("n_states"), py::arg("trans_mat"), py::arg("emission_probs"),
           py::arg("duration_probs_linear"), py::arg("start_probs"),
           py::arg("duration_probs"), py::arg("obs_seq"),
-          "Run tensor Viterbi on CPU with OpenMP parallelism. Data must already be in log space.");
+          "Run tensor Viterbi on CPU with Old-OpenMP parallelism. Data must already be in log space.");
+    
+    m.def("decode_tensor_viterbi_omp_opt",
+          [](int n_states,
+             arr_d trans_mat, arr_d emission_probs, arr_d duration_probs_linear,
+             arr_d start_probs, arr_d duration_probs,
+             arr_i obs_seq) {
+              return _run(n_states, trans_mat, emission_probs, duration_probs_linear,
+                          start_probs, duration_probs, obs_seq, Backend::OMP_OPT);
+          },
+          py::arg("n_states"), py::arg("trans_mat"), py::arg("emission_probs"),
+          py::arg("duration_probs_linear"), py::arg("start_probs"),
+          py::arg("duration_probs"), py::arg("obs_seq"),
+          "Run tensor Viterbi on CPU with OpenMP Optimized parallelism. Data must already be in log space.");
 
 #ifndef NO_GPU
     m.def("decode_tensor_viterbi_cuda",
