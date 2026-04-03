@@ -1,7 +1,7 @@
 function,n_states,timesteps,max_duration,iteration,elapsed_s
-decode_tensor_viterbi_cuda,75,10000,500,0,1.480138
-decode_tensor_viterbi_cuda,75,10000,500,1,0.645845
-decode_tensor_viterbi_cuda,75,10000,500,2,0.643900
-decode_tensor_viterbi_cuda,75,10000,500,3,0.643816
-decode_tensor_viterbi_cuda,75,10000,500,4,0.643648
-decode_tensor_viterbi_cuda,75,10000,500,5,0.643308
+decode_tensor_viterbi_cuda,75,10000,500,0,1.425491
+decode_tensor_viterbi_cuda,75,10000,500,1,0.648787
+decode_tensor_viterbi_cuda,75,10000,500,2,0.647815
+decode_tensor_viterbi_cuda,75,10000,500,3,0.647110
+decode_tensor_viterbi_cuda,75,10000,500,4,0.647504
+decode_tensor_viterbi_cuda,75,10000,500,5,0.649084
