@@ -191,13 +191,13 @@ submit_job() {
 # durations=(100 250 500 1000)
 # timesteps=(1000 10000) # 100000)
 
+#states=(10 15 25 50 75)
+#durations=(100 250 500 1000)
+#timesteps=(100000)
+
 states=(10 15 25 50 75)
 durations=(100 250 500 1000)
-timesteps=(100000)
-
-#states=(10)
-#durations=(100 250)
-#timesteps=(1000)
+timesteps=(1000 10000 100000)
 
 # Pre-flight: verify that compile.sh has already been run for this system/toolchain.
 VENV_DIR="$SCRIPT_DIR/.venv/$SYS_NAME"
@@ -226,9 +226,13 @@ for s in "${states[@]}"; do
             config_file="data/${s}states_${t}steps_${d}dur.json"
             echo "Submitting job for: System=$SYSTEM, State=$s, Duration=$d, Timesteps=$t, Walltime=$walltime"
 
+            # Reduce iterations for very large T to keep wall-time reasonable.
+            _iters=$ITERATIONS
+            [[ $t -eq 1000000 && $_iters -gt 2 ]] && _iters=2
+
             if [[ "$TYPE" == "cpu" && $t -eq 100000 ]]; then
                 # At T=100000, HSMMLearn C++ needs fewer iterations (very slow).
-                # Split into two jobs: baseline-cpp (2 iter) + everything else (ITERATIONS).
+                # Split into two jobs: baseline-cpp (2 iter) + everything else (_iters).
                 # Determine whether baseline-cpp is part of the current run.
                 _runs_bcpp=0
                 _rest_flags=()
@@ -254,10 +258,10 @@ for s in "${states[@]}"; do
                 fi
                 if [[ ${#_rest_flags[@]} -gt 0 ]]; then
                     _rest=$(IFS=':'; echo "${_rest_flags[*]}")
-                    submit_job "$stem" "$_rest" "$ITERATIONS" "$walltime" "$config_file"
+                    submit_job "$stem" "$_rest" "$_iters" "$walltime" "$config_file"
                 fi
             else
-                submit_job "$stem" "$VITERBI_FLAGS" "$ITERATIONS" "$walltime" "$config_file"
+                submit_job "$stem" "$VITERBI_FLAGS" "$_iters" "$walltime" "$config_file"
             fi
         done
     done
