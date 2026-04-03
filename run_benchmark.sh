@@ -91,6 +91,7 @@ fi
 
 MODULES="${SYS_MODULES[$SYSTEM/$TOOLCHAIN]}"
 METRICS_BACKEND="${SYS_METRICS_BACKEND[$SYSTEM/$TOOLCHAIN]:-}"
+UENV="${SYS_UENV[$SYSTEM/$TOOLCHAIN]:-}"
 SYS_NAME="$SYSTEM/$TOOLCHAIN"
 
 # Returns the wall-clock time limit for a given (states, duration, timesteps) combination.
@@ -153,13 +154,13 @@ submit_job() {
     echo "  -> flags=[$vflags] iterations=$iters"
     if [[ "$LOCAL" -eq 1 ]]; then
         SYS_NAME="$SYS_NAME" SYS_TYPE="$TYPE" SYS_MODULES="$MODULES" \
-        SYS_METRICS_BACKEND="$METRICS_BACKEND" SYS_CPUS="$CPUS" \
+        SYS_METRICS_BACKEND="$METRICS_BACKEND" SYS_UENV="$UENV" SYS_CPUS="$CPUS" \
         VITERBI_FLAGS="$vflags" BENCHMARK_ITERATIONS="$iters" \
         bash "$SCRIPT_DIR/run.slrm" "$config_file" \
             > "$RESULTS_DIR/${job_stem}.out" 2> "$RESULTS_DIR/${job_stem}.err"
         return
     fi
-    local export_str="ALL,SYS_NAME=$SYS_NAME,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,SYS_METRICS_BACKEND=$METRICS_BACKEND,VITERBI_FLAGS=$vflags,BENCHMARK_ITERATIONS=$iters"
+    local export_str="ALL,SYS_NAME=$SYS_NAME,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,SYS_METRICS_BACKEND=$METRICS_BACKEND,SYS_UENV=$UENV,VITERBI_FLAGS=$vflags,BENCHMARK_ITERATIONS=$iters"
     JOB_OUTPUT=$(sbatch "${SBATCH_FLAGS[@]}" \
         "--export=$export_str" \
         --job-name="tv_${job_stem}" \

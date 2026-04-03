@@ -10,6 +10,7 @@ if [[ "$PWD" != "$SCRIPT_DIR" ]]; then
     exit 1
 fi
 source "$SCRIPT_DIR/systems.conf"
+_ORIG_ARGS=("$@")
 
 SYSTEM=""
 TOOLCHAIN=""
@@ -65,14 +66,21 @@ ACCOUNT="${SYS_ACCOUNT[$SYSTEM]}"
 GPU_ARCH="${SYS_GPU_ARCH[$SYSTEM]}"
 
 MODULES_BUILD="${SYS_MODULES_BUILD[$SYSTEM/$TOOLCHAIN]}"
+UENV="${SYS_UENV[$SYSTEM/$TOOLCHAIN]:-}"
 BUILD_DIR="build/$SYSTEM/$TOOLCHAIN"
 CMAKE_SYSTEM_NAME="$SYSTEM/$TOOLCHAIN"
+
+# If a uenv is specified and we are not already inside it, re-exec under it.
+if [[ -n "$UENV" && -z "${_UENV_ACTIVE:-}" ]]; then
+    exec uenv run --view=modules "$UENV" -- \
+        env _UENV_ACTIVE=1 bash "$0" "${_ORIG_ARGS[@]}"
+fi
 
 # Load build modules
 #module purge
 IFS=':' read -ra _MODS <<< "$MODULES_BUILD"
 for _mod in "${_MODS[@]}"; do
-    module load "$_mod"
+    [[ -n "$_mod" ]] && module load "$_mod"
 done
 
 # Create a per-toolchain venv.

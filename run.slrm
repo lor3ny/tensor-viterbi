@@ -9,6 +9,12 @@
 SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 CONFIG_PATH=$1
 
+# If a uenv is required and we are not already inside it, re-exec under it.
+if [[ -n "${SYS_UENV:-}" && -z "${_UENV_ACTIVE:-}" ]]; then
+    exec uenv run --view=modules "$SYS_UENV" -- \
+        env _UENV_ACTIVE=1 bash "$0" "$@"
+fi
+
 # Hardware diagnostics
 if [[ "$SYS_TYPE" == "cpu" ]]; then
     lscpu | grep -E "Model name|CPU\(s\):|Thread\(s\) per core|Core\(s\) per socket"
@@ -26,7 +32,7 @@ fi
 
 IFS=':' read -ra _MODS <<< "$SYS_MODULES"
 for _mod in "${_MODS[@]}"; do
-    module load "$_mod"
+    [[ -n "$_mod" ]] && module load "$_mod"
 done
 
 if [[ -n "$SLURM_CPUS_PER_TASK" ]]; then
