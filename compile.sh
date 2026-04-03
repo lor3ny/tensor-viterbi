@@ -101,9 +101,13 @@ fi
 if [[ ! -f "$VENV_DIR/bin/python3" ]]; then
     echo "Creating venv at $VENV_DIR ..."
     if [[ "$TYPE" == "gpu" ]]; then
-        # Inherit system-wide site-packages so numpy and pybind11 installed
-        # by the system Python module are visible without a separate pip install.
+        # --system-site-packages lets the venv see numpy/pybind11 if the system
+        # Python module already provides them (e.g. MareNostrum).  We also run
+        # pip install so that environments lacking them (e.g. a bare uenv) get
+        # them installed into the venv directly.  pip reports "already satisfied"
+        # and is a no-op when they are found via system-site-packages.
         python3 -m venv --system-site-packages "$VENV_DIR"
+        "$VENV_DIR/bin/pip" install --quiet numpy pybind11
     else
         python3 -m venv "$VENV_DIR"
         "$VENV_DIR/bin/pip" install --upgrade pip
