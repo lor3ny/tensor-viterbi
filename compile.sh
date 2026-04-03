@@ -66,6 +66,7 @@ ACCOUNT="${SYS_ACCOUNT[$SYSTEM]}"
 GPU_ARCH="${SYS_GPU_ARCH[$SYSTEM]}"
 
 MODULES_BUILD="${SYS_MODULES_BUILD[$SYSTEM/$TOOLCHAIN]}"
+PYTHON3="${SYS_PYTHON[$SYSTEM]:-python3}"
 UENV="${SYS_UENV[$SYSTEM/$TOOLCHAIN]:-}"
 BUILD_DIR="build/$SYSTEM/$TOOLCHAIN"
 CMAKE_SYSTEM_NAME="$SYSTEM/$TOOLCHAIN"
@@ -90,9 +91,9 @@ done
 _VENV_CREATED=0
 VENV_DIR="$SCRIPT_DIR/.venv/$SYSTEM/$TOOLCHAIN"
 # Require Python >= 3.10 (numpy 2.x, pybind11 3.x)
-_py_ver=$(python3 -c "import sys; print(sys.version_info.major * 100 + sys.version_info.minor)" 2>/dev/null || echo 0)
+_py_ver=$("$PYTHON3" -c "import sys; print(sys.version_info.major * 100 + sys.version_info.minor)" 2>/dev/null || echo 0)
 if (( _py_ver < 310 )); then
-    _py_str=$(python3 --version 2>&1)
+    _py_str=$("$PYTHON3" --version 2>&1)
     echo "ERROR: Python >= 3.10 required, but found: $_py_str"
     echo "       Load a newer Python module for $SYSTEM/$TOOLCHAIN in systems.conf"
     exit 1
@@ -106,10 +107,10 @@ if [[ ! -f "$VENV_DIR/bin/python3" ]]; then
         # pip install so that environments lacking them (e.g. a bare uenv) get
         # them installed into the venv directly.  pip reports "already satisfied"
         # and is a no-op when they are found via system-site-packages.
-        python3 -m venv --system-site-packages "$VENV_DIR"
+        "$PYTHON3" -m venv --system-site-packages "$VENV_DIR"
         "$VENV_DIR/bin/pip" install --quiet numpy pybind11
     else
-        python3 -m venv "$VENV_DIR"
+        "$PYTHON3" -m venv "$VENV_DIR"
         "$VENV_DIR/bin/pip" install --upgrade pip
         "$VENV_DIR/bin/pip" install -r "$SCRIPT_DIR/requirements.txt"
         _VENV_CREATED=1
