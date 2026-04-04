@@ -18,6 +18,7 @@ Adding a new backend
 """
 
 from __future__ import annotations
+import os
 from abc import ABC, abstractmethod
 
 
@@ -67,16 +68,29 @@ class CrayPMCollector(Collector):
     Each counter file has the format:
         <joules> J <microseconds> us
 
-    Six extra CSV columns are emitted (delta between stop and start):
+    Base CSV columns (always present when the node exposes them):
         energy_j,        energy_us
         cpu_energy_j,    cpu_energy_us
         memory_energy_j, memory_energy_us
+
+    Additional columns are added automatically for each accelN_energy file
+    found in the pm_counters directory (accel0 … accel3):
+        accel0_energy_j, accel0_energy_us
+        accel1_energy_j, accel1_energy_us
+        ...
     """
 
-    _COUNTERS = ("energy", "cpu_energy", "memory_energy")
+    _BASE_COUNTERS = ("energy", "cpu_energy", "memory_energy")
+    _ACCEL_RANGE   = range(4)          # accel0_energy … accel3_energy
     _BASE = "/sys/cray/pm_counters"
 
     def __init__(self) -> None:
+        counters = list(self._BASE_COUNTERS)
+        for i in self._ACCEL_RANGE:
+            name = f"accel{i}_energy"
+            if os.path.exists(f"{self._BASE}/{name}"):
+                counters.append(name)
+        self._counters: tuple[str, ...] = tuple(counters)
         self._start: dict[str, tuple[int, int]] = {}
 
     @staticmethod
@@ -89,11 +103,11 @@ class CrayPMCollector(Collector):
         return int(parts[0]), int(parts[2])
 
     def start(self) -> None:
-        self._start = {name: self._read(name) for name in self._COUNTERS}
+        self._start = {name: self._read(name) for name in self._counters}
 
     def stop(self) -> dict[str, float]:
         result: dict[str, float] = {}
-        for name in self._COUNTERS:
+        for name in self._counters:
             j1, us1 = self._start[name]
             j2, us2 = self._read(name)
             result[f"{name}_j"]  = j2  - j1
@@ -102,7 +116,7 @@ class CrayPMCollector(Collector):
 
     def column_names(self) -> list[str]:
         cols = []
-        for name in self._COUNTERS:
+        for name in self._counters:
             cols.append(f"{name}_j")
             cols.append(f"{name}_us")
         return cols

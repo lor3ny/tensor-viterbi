@@ -25,6 +25,7 @@ CPU_FUNCTIONS = [
     "HSMMLearn_OMP",
     "decode_tensor_viterbi_cpp",
     "decode_tensor_viterbi_omp",
+    "decode_tensor_viterbi_omp_opt",
 ]
 GPU_FUNCTIONS = ["decode_tensor_viterbi_cuda"]
 

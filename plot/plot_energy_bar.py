@@ -1,25 +1,24 @@
 #!/usr/bin/env python3
 """
-plot_energy_bar.py — energy-efficiency bar chart vs HSMMLearn C++ across all systems.
+plot_energy_bar.py — energy breakdown stacked bar charts.
 
-Energy efficiency = energy_j_per_iter[HSMMLearn_CPP, ref] / energy_j_per_iter[function, system]
-  - CPU systems: reference = same system's HSMMLearn_CPP
-  - GPU systems: reference = slowest CPU HSMMLearn_CPP for that (D, T)
-    (override with --ref-system)
+Each bar represents one (function, system/toolchain) combo.
+Bars are stacked by energy component:
+  - cpu_energy
+  - memory_energy
+  - accel0_energy … accel3_energy  (GPU nodes, when data is present)
+  - others  =  total − (cpu + mem + accels)
+Total bar height = total energy (J per iteration).
 
-Values > 1 mean the function uses less energy per decode than the baseline.
-HSMMLearn_CPP is never shown as a bar (it would always be 1.0); the dashed
-reference line marks 1×.
-
-X-axis  : (D, T) pairs; ticks labelled by D, grouped by T with bracket below.
-Bars    : sorted by system/toolchain, then by function within each system.
-          Systems / functions with no metrics data are silently skipped.
-Legend  : "Function name — system/toolchain"
-Output  : plot/bars/<N>s_energy_bars.png
+Generates two plots per (N, T) pair:
+  bars/cpu/cpu_{N}s_{T}t_energy.png    — CPU systems
+  bars/gpu/gpu_{N}s_{T}t_energy.png    — GPU systems
 
 Usage:
+  python plot/plot_energy_bar.py              # all (N, T) pairs
   python plot/plot_energy_bar.py --states 75
-  python plot/plot_energy_bar.py --states 75 --ref-system xeon8480/intel
+  python plot/plot_energy_bar.py --states 75 --timesteps 100000
+  python plot/plot_energy_bar.py --all-toolchains
 """
 
 import argparse
@@ -29,7 +28,7 @@ import sys
 
 import matplotlib
 matplotlib.use("Agg")
-from matplotlib.lines import Line2D
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -38,16 +37,71 @@ import pandas as pd
 RESULTS_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "results")
 OUT_ROOT     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bars")
 
-# Default toolchain per system prefix — used unless --all-toolchains is given.
 DEFAULT_TOOLCHAINS = {
     "a100":      "cuda",
+    "h100":      "cuda",
     "mi250x":    "cray",
-    "epyc-7763": "cray",   # matches epyc-7763-bigmem etc.
+    "epyc-7763": "cray",
     "xeon8480":  "gnu",
 }
 
+GPU_GENERATION = {
+    "a100":         0,
+    "mi250x":       1,
+    "h100":         2,
+    "gh200-hopper": 3,
+    "mi300x":       4,
+}
+
+CPU_FUNCTION_ORDER = [
+    "HSMMLearn_CPP",
+    "HSMMLearn_OMP",
+    "decode_tensor_viterbi_cpp",
+    "decode_tensor_viterbi_omp",
+]
+GPU_FUNCTION_ORDER = [
+    "decode_tensor_viterbi_cuda",
+]
+# CPU functions shown as reference bars inside GPU energy plots
+GPU_REF_FUNCTIONS = ["HSMMLearn_OMP", "decode_tensor_viterbi_omp"]
+FUNCTION_LABELS = {
+    "HSMMLearn_CPP":              "HSMMLearn C++",
+    "HSMMLearn_OMP":              "HSMMLearn OMP",
+    "decode_tensor_viterbi_cpp":  "Tensor C++",
+    "decode_tensor_viterbi_omp":  "Tensor OMP",
+    "decode_tensor_viterbi_cuda": "Tensor GPU",
+}
+
+# ── Energy component config ───────────────────────────────────────────────────
+
+ACCEL_NAMES = [f"accel{i}_energy" for i in range(4)]
+ORDERED_COMPONENTS = ["cpu_energy", "memory_energy"] + ACCEL_NAMES + ["others"]
+
+COMPONENT_COLORS = {
+    "cpu_energy":    "#4e79a7",   # blue
+    "memory_energy": "#59a14f",   # green
+    "accel0_energy": "#f28e2b",   # orange
+    "accel1_energy": "#e15759",   # red
+    "accel2_energy": "#b07aa1",   # purple
+    "accel3_energy": "#ff9da7",   # pink
+    "others":        "#bab0ac",   # grey
+}
+COMPONENT_LABELS = {
+    "cpu_energy":    "CPU",
+    "memory_energy": "Memory",
+    "accel0_energy": "Accel 0",
+    "accel1_energy": "Accel 1",
+    "accel2_energy": "Accel 2",
+    "accel3_energy": "Accel 3",
+    "others":        "Others",
+}
+
+HATCHES = ["", "///", "\\\\", "xxx", "...", "|||", "---", "+++"]
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
 def _filter_systems(all_systems, use_all):
-    """Keep only the default toolchain per system unless use_all is True."""
     if use_all:
         return all_systems
     kept = []
@@ -61,23 +115,17 @@ def _filter_systems(all_systems, use_all):
             kept.append(sys_tc)
     return kept
 
-FUNCTION_ORDER = [
-    "HSMMLearn_CPP",
-    "HSMMLearn_OMP",
-    "decode_tensor_viterbi_cpp",
-    "decode_tensor_viterbi_omp",
-    "decode_tensor_viterbi_cuda",
-]
-FUNCTION_LABELS = {
-    "HSMMLearn_CPP":              "HSMMLearn C++",
-    "HSMMLearn_OMP":              "HSMMLearn OMP",
-    "decode_tensor_viterbi_cpp":  "Tensor C++",
-    "decode_tensor_viterbi_omp":  "Tensor OMP",
-    "decode_tensor_viterbi_cuda": "Tensor CUDA",
-}
+
+def _has_gpu_func(sys_tc_energy):
+    """True if any D-value entry for this system has a cuda function."""
+    for d_data in sys_tc_energy.values():        # d_data = {func: {comp: value}}
+        if any("cuda" in func for func in d_data):
+            return True
+    return False
 
 
 def discover_systems():
+    """Systems that have at least one _metrics.csv file."""
     pattern = os.path.join(RESULTS_ROOT, "*", "*", "*_metrics.csv")
     return sorted({
         os.path.join(
@@ -88,8 +136,23 @@ def discover_systems():
     })
 
 
-def load_energy(system, n, d, t):
-    """Return {function -> energy_j_per_iter} for files that have energy_j."""
+def discover_nt_pairs():
+    pattern = os.path.join(RESULTS_ROOT, "*", "*", "*_metrics.csv")
+    pairs = set()
+    for p in glob.glob(pattern):
+        fname = os.path.basename(p)
+        parts = fname.split("_")
+        try:
+            n = int(parts[0].rstrip("s"))
+            t = int(parts[2].rstrip("t"))
+            pairs.add((n, t))
+        except (IndexError, ValueError):
+            pass
+    return sorted(pairs)
+
+
+def load_energy_components(system, n, d, t):
+    """Return {func: {component: j_per_iter}} including 'total' and 'others'."""
     files = glob.glob(os.path.join(RESULTS_ROOT, system, f"{n}s_{d}d_{t}t_*_metrics.csv"))
     result = {}
     for f in files:
@@ -100,183 +163,258 @@ def load_energy(system, n, d, t):
         if "energy_j" not in df.columns or "total_iterations" not in df.columns:
             continue
         for _, row in df.iterrows():
-            func = row["function"]
-            total_iters = row["total_iterations"]
-            energy_j    = row["energy_j"]
-            if total_iters > 0:
-                result[func] = energy_j / total_iters
+            func  = row["function"]
+            iters = row["total_iterations"]
+            if iters <= 0:
+                continue
+            raw_total = row["energy_j"]
+            if not pd.notna(raw_total):
+                continue
+            total     = float(raw_total) / iters
+            comps     = {"total": total}
+            accounted = 0.0
+            for name in ["cpu_energy", "memory_energy"] + ACCEL_NAMES:
+                col = f"{name}_j"
+                if col in df.columns and pd.notna(row[col]):
+                    val = float(row[col]) / iters
+                    comps[name] = val
+                    accounted  += val
+                else:
+                    comps[name] = 0.0
+            comps["others"] = max(0.0, total - accounted)
+            result[func] = comps
     return result
 
 
-def draw_group_bracket(ax, x_left, x_right, label, y_frac=-0.18, tick_h=0.03):
-    """Bracket below x-axis spanning data x-coords x_left..x_right (y in axes fraction)."""
-    trans = ax.get_xaxis_transform()
-    for ln in [
-        Line2D([x_left,  x_right], [y_frac,           y_frac],         transform=trans, color="black", lw=0.9, clip_on=False),
-        Line2D([x_left,  x_left],  [y_frac - tick_h,  y_frac],         transform=trans, color="black", lw=0.9, clip_on=False),
-        Line2D([x_right, x_right], [y_frac - tick_h,  y_frac],         transform=trans, color="black", lw=0.9, clip_on=False),
-    ]:
-        ax.add_line(ln)
-    ax.text((x_left + x_right) / 2, y_frac - tick_h - 0.02, label,
-            transform=trans, ha="center", va="top", fontsize=9, fontstyle="italic")
+# ── Per-kind plot ─────────────────────────────────────────────────────────────
 
+def make_plot(N, T, kind, all_systems, all_energy, d_values):
+    """
+    kind : 'cpu' or 'gpu'
+    Saves bars/cpu/cpu_{N}s_{T}t_energy.png  or
+          bars/gpu/gpu_{N}s_{T}t_energy.png
+    Skips silently if no data.
+    """
+    cpu_systems = sorted(s for s in all_systems if not _has_gpu_func(all_energy[s]))
+
+    if kind == "cpu":
+        systems = cpu_systems
+
+        combo_set = set()
+        for sys_tc in systems:
+            for d_data in all_energy[sys_tc].values():
+                for func in d_data:
+                    combo_set.add((func, sys_tc))
+
+        def combo_key(c):
+            func, sys_tc = c
+            si = systems.index(sys_tc) if sys_tc in systems else len(systems)
+            fi = CPU_FUNCTION_ORDER.index(func) if func in CPU_FUNCTION_ORDER else len(CPU_FUNCTION_ORDER)
+            return (si, fi)
+
+        ordered_combos = sorted(combo_set, key=combo_key)
+    else:
+        gpu_systems = sorted(
+            (s for s in all_systems if _has_gpu_func(all_energy[s])),
+            key=lambda s: GPU_GENERATION.get(s.split("/")[0], 99),
+        )
+
+        # GPU function combos (cuda only)
+        gpu_combo_set = set()
+        for sys_tc in gpu_systems:
+            for d_data in all_energy[sys_tc].values():
+                for func in d_data:
+                    if "cuda" in func:
+                        gpu_combo_set.add((func, sys_tc))
+
+        def gpu_combo_key(c):
+            func, sys_tc = c
+            si = gpu_systems.index(sys_tc) if sys_tc in gpu_systems else len(gpu_systems)
+            fi = GPU_FUNCTION_ORDER.index(func) if func in GPU_FUNCTION_ORDER else len(GPU_FUNCTION_ORDER)
+            return (si, fi)
+
+        # CPU reference combos (HSMMLearn_OMP, decode_tensor_viterbi_omp)
+        cpu_ref_set = set()
+        for sys_tc in cpu_systems:
+            for d_data in all_energy[sys_tc].values():
+                for func in d_data:
+                    if func in GPU_REF_FUNCTIONS:
+                        cpu_ref_set.add((func, sys_tc))
+
+        def cpu_ref_key(c):
+            func, sys_tc = c
+            si = cpu_systems.index(sys_tc) if sys_tc in cpu_systems else len(cpu_systems)
+            fi = GPU_REF_FUNCTIONS.index(func) if func in GPU_REF_FUNCTIONS else len(GPU_REF_FUNCTIONS)
+            return (si, fi)
+
+        ordered_combos = (
+            sorted(gpu_combo_set, key=gpu_combo_key)
+            + sorted(cpu_ref_set, key=cpu_ref_key)
+        )
+
+    if not ordered_combos:
+        return
+
+    # Which components are actually non-zero across all combos in this plot?
+    scan_systems = {sys_tc for _, sys_tc in ordered_combos}
+    active_components = []
+    for comp in ORDERED_COMPONENTS:
+        found = False
+        for sys_tc in scan_systems:
+            for D_val in d_values:
+                for func_data in all_energy[sys_tc].get(D_val, {}).values():
+                    if func_data.get(comp, 0.0) > 0.0:
+                        found = True
+                        break
+                if found:
+                    break
+            if found:
+                break
+        if found:
+            active_components.append(comp)
+
+    if not active_components:
+        return
+
+    n_combos  = len(ordered_combos)
+    bar_width = 0.8 / n_combos
+    x_pos     = np.arange(len(d_values), dtype=float)
+
+    fig_w = max(8, len(d_values) * (n_combos * bar_width + 0.6) + 4)
+    fig, ax = plt.subplots(figsize=(fig_w, 5.5))
+
+    any_data = False
+    for ci, (func, sys_tc) in enumerate(ordered_combos):
+        offset  = (ci - (n_combos - 1) / 2) * bar_width
+        hatch   = HATCHES[ci % len(HATCHES)]
+        bottoms = np.zeros(len(d_values))
+
+        for comp in active_components:
+            heights = np.array([
+                all_energy[sys_tc].get(D_val, {}).get(func, {}).get(comp, 0.0)
+                for D_val in d_values
+            ])
+            ax.bar(
+                x_pos + offset, heights, width=bar_width,
+                bottom=bottoms,
+                color=COMPONENT_COLORS[comp],
+                hatch=hatch,
+                edgecolor="white" if hatch else "#555",
+                linewidth=0.4,
+                zorder=2,
+            )
+            if np.any(heights > 0):
+                any_data = True
+            bottoms += heights
+
+    if not any_data:
+        plt.close(fig)
+        return
+
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels([f"D = {D}" for D in d_values], fontsize=9)
+    ax.set_xlabel("Duration  D", fontsize=9)
+    ax.set_ylabel("Energy  (J per iteration)", fontsize=9)
+    ax.yaxis.grid(True, linestyle="--", linewidth=0.5, alpha=0.6, zorder=0)
+    ax.set_axisbelow(True)
+
+    if kind == "gpu":
+        ax.set_title(
+            f"GPU Energy Breakdown  (+ CPU OMP reference)\nN = {N} states,  T = {T:,}",
+            fontsize=10,
+        )
+    else:
+        ax.set_title(
+            f"CPU Energy Breakdown\nN = {N} states,  T = {T:,}",
+            fontsize=10,
+        )
+
+    # Two-level legend: component colours + function/system hatching
+    comp_handles = [
+        mpatches.Patch(facecolor=COMPONENT_COLORS[c], edgecolor="#555",
+                       linewidth=0.6, label=COMPONENT_LABELS[c])
+        for c in active_components
+    ]
+    spacer = mpatches.Patch(visible=False, label="")
+    combo_handles = [
+        mpatches.Patch(
+            facecolor="#dddddd", edgecolor="#555",
+            hatch=HATCHES[ci % len(HATCHES)],
+            linewidth=0.6,
+            label=f"{FUNCTION_LABELS.get(func, func)} — {sys_tc}",
+        )
+        for ci, (func, sys_tc) in enumerate(ordered_combos)
+    ]
+    all_handles = comp_handles + [spacer] + combo_handles
+    ax.legend(
+        all_handles, [h.get_label() for h in all_handles],
+        fontsize=7.5, loc="upper left",
+        bbox_to_anchor=(1.01, 1), borderaxespad=0,
+        title="Components  /  Systems",
+        title_fontsize=8,
+    )
+
+    if kind == "gpu":
+        out_dir  = os.path.join(OUT_ROOT, "gpu")
+        out_path = os.path.join(out_dir, f"gpu_{N}s_{T}t_energy.png")
+    else:
+        out_dir  = os.path.join(OUT_ROOT, "cpu")
+        out_path = os.path.join(out_dir, f"cpu_{N}s_{T}t_energy.png")
+    os.makedirs(out_dir, exist_ok=True)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--states",         "-s", type=int, required=True)
-    parser.add_argument("--ref-system",     default=None,
-                        help="System/toolchain to use as HSMMLearn C++ reference for GPU bars.")
+    parser.add_argument("--states",    "-s", type=int, default=None,
+                        help="Filter to this N value (default: all)")
+    parser.add_argument("--timesteps", "-t", type=int, default=None,
+                        help="Filter to this T value (default: all)")
     parser.add_argument("--all-toolchains", action="store_true",
-                        help="Show all toolchains; by default only the default toolchain per system is shown.")
+                        help="Show all toolchains; by default only the "
+                             "default toolchain per system is shown.")
     args = parser.parse_args()
-    N = args.states
 
     all_systems = _filter_systems(discover_systems(), args.all_toolchains)
     if not all_systems:
-        print("Error: no metrics results found.", file=sys.stderr)
-        sys.exit(1)
+        sys.exit("Error: no metrics results found.")
 
-    # Discover (D, T) pairs with metrics data for this N
-    dt_pairs = set()
-    for sys_tc in all_systems:
-        for f in glob.glob(os.path.join(RESULTS_ROOT, sys_tc, f"{N}s_*_metrics.csv")):
-            fname = os.path.basename(f)
-            parts = fname.split("_")
-            try:
-                d_val = int(parts[1].rstrip("d"))
-                t_val = int(parts[2].rstrip("t"))
-                dt_pairs.add((d_val, t_val))
-            except (IndexError, ValueError):
-                pass
+    nt_pairs = discover_nt_pairs()
+    if args.states:
+        nt_pairs = [(n, t) for n, t in nt_pairs if n == args.states]
+    if args.timesteps:
+        nt_pairs = [(n, t) for n, t in nt_pairs if t == args.timesteps]
+    if not nt_pairs:
+        sys.exit("Error: no (N, T) pairs match the given filters.")
 
-    if not dt_pairs:
-        print(f"Error: no metrics data for N={N}.", file=sys.stderr)
-        sys.exit(1)
+    for N, T in nt_pairs:
+        d_set = set()
+        for sys_tc in all_systems:
+            for f in glob.glob(
+                os.path.join(RESULTS_ROOT, sys_tc, f"{N}s_*_{T}t_*_metrics.csv")
+            ):
+                parts = os.path.basename(f).split("_")
+                try:
+                    d_set.add(int(parts[1].rstrip("d")))
+                except (IndexError, ValueError):
+                    pass
+        if not d_set:
+            continue
+        d_values = sorted(d_set)
 
-    t_values = sorted({t for _, t in dt_pairs})
-    d_values = sorted({d for d, _ in dt_pairs})
+        all_energy = {}
+        for sys_tc in all_systems:
+            all_energy[sys_tc] = {
+                D_val: load_energy_components(sys_tc, N, D_val, T)
+                for D_val in d_values
+            }
 
-    # Load all energy data: all_energy[sys_tc][(D, T)] = {func: energy_j_per_iter}
-    all_energy = {}
-    for sys_tc in all_systems:
-        all_energy[sys_tc] = {}
-        for D_val, T_val in dt_pairs:
-            all_energy[sys_tc][(D_val, T_val)] = load_energy(sys_tc, N, D_val, T_val)
-
-    # System ordering: CPU first, then GPU
-    cpu_sys = sorted(s for s in all_systems if "cuda" not in s and "mi250x" not in s)
-    gpu_sys = sorted(s for s in all_systems if s not in cpu_sys)
-    ordered_systems = cpu_sys + gpu_sys
-
-    # Build sorted combo list, excluding HSMMLearn_CPP (it is the reference, always 1)
-    combo_set = set()
-    for sys_tc in all_systems:
-        for dt, funcs in all_energy[sys_tc].items():
-            for func in funcs:
-                combo_set.add((func, sys_tc))
-
-    def combo_key(c):
-        func, sys_tc = c
-        si = ordered_systems.index(sys_tc) if sys_tc in ordered_systems else len(ordered_systems)
-        fi = FUNCTION_ORDER.index(func) if func in FUNCTION_ORDER else len(FUNCTION_ORDER)
-        return (si, fi)
-
-    ordered_combos = sorted(
-        (c for c in combo_set if c[0] != "HSMMLearn_CPP"),
-        key=combo_key,
-    )
-    n_combos = len(ordered_combos)
-
-    if n_combos == 0:
-        print("Error: no non-baseline functions with energy data.", file=sys.stderr)
-        sys.exit(1)
-
-    # Colors: tab10 cycles for up to 10 combos, tab20 for more
-    cmap_name = "tab10" if n_combos <= 10 else "tab20"
-    cmap  = plt.get_cmap(cmap_name)
-    n_map = 10 if cmap_name == "tab10" else 20
-    colors = {combo: cmap(i / n_map) for i, combo in enumerate(ordered_combos)}
-
-    def get_ref(sys_tc, D_val, T_val):
-        d = all_energy[sys_tc].get((D_val, T_val), {})
-        if "HSMMLearn_CPP" in d:
-            return d["HSMMLearn_CPP"]
-        if args.ref_system:
-            d2 = all_energy.get(args.ref_system, {}).get((D_val, T_val), {})
-            if "HSMMLearn_CPP" in d2:
-                return d2["HSMMLearn_CPP"]
-        # Auto: slowest (most energy) CPU HSMMLearn_CPP — conservative GPU reference
-        candidates = [
-            all_energy[s][(D_val, T_val)]["HSMMLearn_CPP"]
-            for s in all_systems
-            if "HSMMLearn_CPP" in all_energy[s].get((D_val, T_val), {})
-        ]
-        return max(candidates) if candidates else None
-
-    # ── X-axis layout ────────────────────────────────────────────────────────
-    TICK_SPACING = 1.0
-    GROUP_GAP    = 1.5
-    bar_width    = 0.8 / n_combos
-
-    tick_pos = {}
-    x = 0.0
-    for ti, T_val in enumerate(t_values):
-        if ti > 0:
-            x += GROUP_GAP
-        for D_val in d_values:
-            tick_pos[(T_val, D_val)] = x
-            x += TICK_SPACING
-
-    # ── Draw ────────────────────────────────────────────────────────────────
-    fig_width = max(16, x * 2.5 + 6)
-    fig, ax = plt.subplots(figsize=(fig_width, 6))
-
-    for ci, (func, sys_tc) in enumerate(ordered_combos):
-        offset = (ci - (n_combos - 1) / 2) * bar_width
-        xs      = []
-        heights = []
-        for T_val in t_values:
-            for D_val in d_values:
-                xs.append(tick_pos[(T_val, D_val)] + offset)
-                fval = all_energy[sys_tc].get((D_val, T_val), {}).get(func)
-                ref  = get_ref(sys_tc, D_val, T_val)
-                if fval is None or ref is None or fval == 0:
-                    heights.append(0.0)
-                else:
-                    heights.append(ref / fval)
-
-        label = f"{FUNCTION_LABELS.get(func, func)} — {sys_tc}"
-        ax.bar(xs, heights, width=bar_width, color=colors[(func, sys_tc)],
-               label=label, zorder=2)
-
-    # Reference line at 1×
-    ax.axhline(1.0, color="black", lw=0.9, linestyle="--", zorder=3)
-
-    # X ticks
-    all_ticks = [(T_val, D_val) for T_val in t_values for D_val in d_values]
-    ax.set_xticks([tick_pos[(T, D)] for T, D in all_ticks])
-    ax.set_xticklabels([f"D = {D}" for _, D in all_ticks], fontsize=8)
-
-    # T-group brackets below x-axis
-    half_group = (n_combos / 2) * bar_width
-    for T_val in t_values:
-        x_left  = tick_pos[(T_val, d_values[0])]  - half_group - 0.05
-        x_right = tick_pos[(T_val, d_values[-1])] + half_group + 0.05
-        draw_group_bracket(ax, x_left, x_right, f"T = {T_val:,}")
-
-    ax.set_ylabel("Energy efficiency vs HSMMLearn C++  (higher = greener)", fontsize=9)
-    ref_note = f"GPU ref: {args.ref_system}" if args.ref_system else "GPU ref: highest-energy CPU HSMMLearn C++ (conservative)"
-    ax.set_title(f"Energy efficiency vs HSMMLearn C++  —  N = {N} states    ({ref_note})", fontsize=10)
-    ax.yaxis.grid(True, linestyle="--", linewidth=0.5, alpha=0.6, zorder=0)
-    ax.set_axisbelow(True)
-    ax.legend(fontsize=7.5, loc="upper left", bbox_to_anchor=(1.01, 1),
-              borderaxespad=0, title="function — system/toolchain", title_fontsize=8)
-
-    plt.subplots_adjust(bottom=0.22)
-    os.makedirs(OUT_ROOT, exist_ok=True)
-    out_path = os.path.join(OUT_ROOT, f"{N}s_energy_bars.png")
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    print(f"Saved: {out_path}")
+        make_plot(N, T, "cpu", all_systems, all_energy, d_values)
+        make_plot(N, T, "gpu", all_systems, all_energy, d_values)
 
 
 if __name__ == "__main__":

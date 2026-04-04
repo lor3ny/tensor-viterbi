@@ -97,11 +97,9 @@ def benchmark_baseline(json_file: str, csv_path="benchmark.csv", iterations=100,
         decoded_states = model.decode(obs_seq)
         times.append(time.perf_counter() - start)
 
-    write_header = not os.path.exists(csv_path)
-    with open(csv_path, "a", newline="") as f:
+    with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        if write_header:
-            writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
+        writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
         for i, t in enumerate(times):
             writer.writerow(["HSMMLearn_CPP", n_states, timesteps, max_duration, i, f"{t:.6f}"])
 
