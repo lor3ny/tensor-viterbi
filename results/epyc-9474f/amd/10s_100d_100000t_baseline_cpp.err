@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/tensor-viterbi/run_viterbi.py", line 413, in <module>
+    benchmark_baseline(data_path, csv_path=f"{_csv_base}_HSMMLearn_CPP.csv", iterations=args.iterations, n_states=N, timesteps=T, max_duration=D)
+  File "/tensor-viterbi/validation/hsmmlearn_viterbi.py", line 97, in benchmark_baseline
+    decoded_states = model.decode(obs_seq)
+                     ^^^^^^^^^^^^^^^^^^^^^
+  File "/tensor-viterbi/.venv/epyc-9474f/amd/lib/python3.11/site-packages/hsmmlearn/hsmm.py", line 118, in decode
+    _viterbi_impl(
+KeyboardInterrupt
