@@ -19,4 +19,5 @@ source /leonardo/home/userexternal/lpiarull/fast-viterbi/.venv/bin/activate
 
 cd /leonardo/home/userexternal/lpiarull/fast-viterbi
 
-python run_viterbi.py --system xeon8480/gnu --omp -m measure -dp data/50states_10000steps_1000dur.json
+# python run_viterbi.py --system xeon8480/gnu --omp -m measure -dp data/50states_10000steps_1000dur.json
+python benchmark_to_log_space.py

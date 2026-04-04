@@ -3,6 +3,7 @@ import csv
 import os
 import time
 import numpy as np
+import copy
 
 # Propagate --system to SYS_NAME before tensor_viterbi.viterbi is imported.
 # native.py reads SYS_NAME at module-load time to locate the correct _native.so.
@@ -270,10 +271,10 @@ if __name__ == "__main__":
             _times = []
             _collector.start()
             for _ in range(args.iterations):
-                my_hsmm = HSMM.load_model(data_path)
-                my_hsmm.to_log_space()
+                tmp_hsmm = copy.copy(my_hsmm)
                 start = time.perf_counter()
-                decode_log_tensor_viterbi_cached(my_hsmm)
+                tmp_hsmm.to_log_space()
+                decode_log_tensor_viterbi_cached(tmp_hsmm)
                 _times.append(time.perf_counter() - start)
             _metrics = _collector.stop()
             with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
@@ -297,10 +298,10 @@ if __name__ == "__main__":
             _times = []
             _collector.start()
             for _ in range(args.iterations):
-                my_hsmm = HSMM.load_model(data_path)
-                my_hsmm.to_log_space()
+                tmp_hsmm = copy.copy(my_hsmm)
                 start = time.perf_counter()
-                decode_tensor_viterbi_cpp(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
+                tmp_hsmm.to_log_space()
+                decode_tensor_viterbi_cpp(N, tmp_hsmm.trans_mat, tmp_hsmm.emission_probs, tmp_hsmm.duration_probs_linear, tmp_hsmm.start_probs, tmp_hsmm.duration_probs, tmp_hsmm.obs_seq)
                 _times.append(time.perf_counter() - start)
             _metrics = _collector.stop()
             with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
@@ -324,10 +325,10 @@ if __name__ == "__main__":
             _times = []
             _collector.start()
             for _ in range(args.iterations):
-                my_hsmm = HSMM.load_model(data_path)
-                my_hsmm.to_log_space()
+                tmp_hsmm = copy.copy(my_hsmm)
                 start = time.perf_counter()
-                res = decode_tensor_viterbi_omp(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
+                tmp_hsmm.to_log_space()
+                decode_tensor_viterbi_omp(N, tmp_hsmm.trans_mat, tmp_hsmm.emission_probs, tmp_hsmm.duration_probs_linear, tmp_hsmm.start_probs, tmp_hsmm.duration_probs, tmp_hsmm.obs_seq)
                 _times.append(time.perf_counter() - start)
             _metrics = _collector.stop()
             with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
@@ -351,10 +352,10 @@ if __name__ == "__main__":
             _times = []
             _collector.start()
             for _ in range(args.iterations):
-                my_hsmm = HSMM.load_model(data_path)
-                my_hsmm.to_log_space()
+                tmp_hsmm = copy.copy(my_hsmm)
                 start = time.perf_counter()
-                res = decode_tensor_viterbi_omp_opt(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
+                tmp_hsmm.to_log_space()
+                decode_tensor_viterbi_omp_opt(N, tmp_hsmm.trans_mat, tmp_hsmm.emission_probs, tmp_hsmm.duration_probs_linear, tmp_hsmm.start_probs, tmp_hsmm.duration_probs, tmp_hsmm.obs_seq)
                 _times.append(time.perf_counter() - start)
             _metrics = _collector.stop()
             with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
@@ -378,10 +379,10 @@ if __name__ == "__main__":
             _times = []
             _collector.start()
             for _ in range(args.iterations):
-                my_hsmm = HSMM.load_model(data_path)
-                my_hsmm.to_log_space()
+                tmp_hsmm = copy.copy(my_hsmm) # Avoid in-place log-space conversion affecting subsequent iterations
                 start = time.perf_counter()
-                decode_tensor_viterbi_cuda(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
+                tmp_hsmm.to_log_space()
+                decode_tensor_viterbi_cuda(N, tmp_hsmm.trans_mat, tmp_hsmm.emission_probs, tmp_hsmm.duration_probs_linear, tmp_hsmm.start_probs, tmp_hsmm.duration_probs, tmp_hsmm.obs_seq)
                 _times.append(time.perf_counter() - start)
             _metrics = _collector.stop()
             with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
