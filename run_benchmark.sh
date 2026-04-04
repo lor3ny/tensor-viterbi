@@ -152,15 +152,15 @@ get_walltime() {
             fi
         elif [[ $s -eq 50 ]]; then
             if   [[ $d -eq 100  ]]; then echo "2:00:00"
-            elif [[ $d -eq 250  ]]; then echo "4:00:00"
-            elif [[ $d -eq 500  ]]; then echo "8:00:00"
-            else                         echo "14:00:00"
+            elif [[ $d -eq 250  ]]; then echo "8:00:00"
+            elif [[ $d -eq 500  ]]; then echo "14:00:00"
+            else                         echo "20:00:00"
             fi
         elif [[ $s -eq 75 ]]; then
-            if   [[ $d -eq 100  ]]; then echo "2:00:00"
-            elif [[ $d -eq 250  ]]; then echo "5:00:00"
-            elif [[ $d -eq 500  ]]; then echo "10:00:00"
-            else                         echo "18:00:00"
+            if   [[ $d -eq 100  ]]; then echo "5:00:00"
+            elif [[ $d -eq 250  ]]; then echo "10:00:00"
+            elif [[ $d -eq 500  ]]; then echo "18:00:00"
+            else                         echo "24:00:00"
             fi
         else
             echo "02:00:00"
@@ -221,9 +221,9 @@ states=(10 15 25 50 75)
 durations=(100 250 500 1000)
 timesteps=(1000 10000) # 100000)
 
-# states=(10 15 25 50 75)
-# durations=(100 250 500 1000)
-# timesteps=(1000000)
+states=(50)
+durations=(250 500 1000)
+timesteps=(1000000)
 
 
 # Pre-flight: verify that compile.sh has already been run for this system/toolchain.
