@@ -1,7 +1,0 @@
-Traceback (most recent call last):
-  File "/capstor/scratch/cscs/desensi/tensor-viterbi/run_viterbi.py", line 307, in <module>
-    decode_tensor_viterbi_omp(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
-    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/capstor/scratch/cscs/desensi/tensor-viterbi/tensor_viterbi/viterbi/native.py", line 87, in decode_tensor_viterbi_omp
-    return _decode_omp(n_states, trans_mat, emission_probs, duration_probs_linear, start_probs, duration_probs, obs_seq)
-KeyboardInterrupt
