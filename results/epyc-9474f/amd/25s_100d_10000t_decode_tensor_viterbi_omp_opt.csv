@@ -1,0 +1,7 @@
+function,n_states,timesteps,max_duration,iteration,elapsed_s
+decode_tensor_viterbi_omp_opt,25,10000,100,0,1.287101
+decode_tensor_viterbi_omp_opt,25,10000,100,1,1.392178
+decode_tensor_viterbi_omp_opt,25,10000,100,2,1.300208
+decode_tensor_viterbi_omp_opt,25,10000,100,3,1.308317
+decode_tensor_viterbi_omp_opt,25,10000,100,4,1.396233
+decode_tensor_viterbi_omp_opt,25,10000,100,5,1.299794
