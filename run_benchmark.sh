@@ -84,6 +84,8 @@ PARTITION="${SYS_PARTITION[$SYSTEM]}"
 QOS="${SYS_QOS[$SYSTEM]:-}"
 ACCOUNT="${SYS_ACCOUNT[$SYSTEM]}"
 CPUS="${SYS_CPUS[$SYSTEM]}"
+OMP_BIND="${SYS_OMP_BIND[$SYSTEM]:-}"
+OMP_PLACES="${SYS_OMP_PLACES[$SYSTEM]:-}"
 
 # Default for CPU: run all variants if no flags were specified
 if [[ "$TYPE" == "cpu" && -z "$VITERBI_FLAGS" ]]; then
@@ -190,12 +192,13 @@ submit_job() {
     if [[ "$LOCAL" -eq 1 ]]; then
         SYS_NAME="$SYS_NAME" SYS_TYPE="$TYPE" SYS_MODULES="$MODULES" \
         SYS_METRICS_BACKEND="$METRICS_BACKEND" SYS_UENV="$UENV" SYS_CPUS="$CPUS" \
+        SYS_OMP_BIND="$OMP_BIND" SYS_OMP_PLACES="$OMP_PLACES" \
         VITERBI_FLAGS="$vflags" BENCHMARK_ITERATIONS="$iters" \
         bash "$SCRIPT_DIR/run.slrm" "$config_file" \
             > "$RESULTS_DIR/${job_stem}.out" 2> "$RESULTS_DIR/${job_stem}.err"
         return
     fi
-    local export_str="ALL,SYS_NAME=$SYS_NAME,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,SYS_METRICS_BACKEND=$METRICS_BACKEND,SYS_UENV=$UENV,VITERBI_FLAGS=$vflags,BENCHMARK_ITERATIONS=$iters"
+    local export_str="ALL,SYS_NAME=$SYS_NAME,SYS_TYPE=$TYPE,SYS_MODULES=$MODULES,SYS_METRICS_BACKEND=$METRICS_BACKEND,SYS_UENV=$UENV,SYS_OMP_BIND=$OMP_BIND,SYS_OMP_PLACES=$OMP_PLACES,VITERBI_FLAGS=$vflags,BENCHMARK_ITERATIONS=$iters"
     JOB_OUTPUT=$(sbatch "${SBATCH_FLAGS[@]}" \
         "--export=$export_str" \
         --job-name="tv_${job_stem}" \

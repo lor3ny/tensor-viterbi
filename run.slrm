@@ -40,6 +40,8 @@ if [[ -n "$SLURM_CPUS_PER_TASK" ]]; then
 elif [[ -n "$SYS_CPUS" ]]; then
     export OMP_NUM_THREADS=$SYS_CPUS
 fi
+[[ -n "${SYS_OMP_BIND:-}" ]]   && export OMP_PROC_BIND="$SYS_OMP_BIND"
+[[ -n "${SYS_OMP_PLACES:-}" ]] && export OMP_PLACES="$SYS_OMP_PLACES"
 
 source "$SCRIPT_DIR/.venv/$SYS_NAME/bin/activate"
 cd "$SCRIPT_DIR"
