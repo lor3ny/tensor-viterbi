@@ -201,7 +201,8 @@ if __name__ == "__main__":
                 return decode_log_tensor_viterbi_cached(my_hsmm)
             _py_cached.__name__ = decode_log_tensor_viterbi_cached.__name__
             _, tc_elapsed = TIME_MEASURE(_py_cached)
-            validate("Validate", _, data_path)
+            if _run_baseline_cpp:
+                validate("Validate", _, data_path)
             if baseline_elapsed is not None:
                 print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{baseline_elapsed / tc_elapsed:.2f}x{R} vs HSMMLearn C++\n")
 
@@ -213,7 +214,8 @@ if __name__ == "__main__":
                 return decode_tensor_viterbi_cpp(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
             _cpp.__name__ = decode_tensor_viterbi_cpp.__name__
             _, cpp_elapsed = TIME_MEASURE(_cpp)
-            validate("Validate", _, data_path)
+            if _run_baseline_cpp:
+                validate("Validate", _, data_path)
             if baseline_elapsed is not None:
                 print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{baseline_elapsed / cpp_elapsed:.2f}x{R} vs HSMMLearn C++\n")
 
@@ -225,7 +227,8 @@ if __name__ == "__main__":
                 return decode_tensor_viterbi_omp(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
             _omp.__name__ = decode_tensor_viterbi_omp.__name__
             _, omp_elapsed = TIME_MEASURE(_omp)
-            validate("Validate", _, data_path)
+            if _run_baseline_cpp:
+                validate("Validate", _, data_path)
             if omp_baseline_elapsed is not None:
                 print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{omp_baseline_elapsed / omp_elapsed:.2f}x{R} vs HSMMLearn OMP C++\n")
                 print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{cpp_elapsed / omp_elapsed:.2f}x{R} vs Tensor Viterbi C++\n")
@@ -238,7 +241,8 @@ if __name__ == "__main__":
                 return decode_tensor_viterbi_omp_opt(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
             _omp_opt.__name__ = decode_tensor_viterbi_omp_opt.__name__
             _, omp_opt_elapsed = TIME_MEASURE(_omp_opt)
-            validate("Validate", _, data_path)
+            if _run_baseline_cpp:
+                validate("Validate", _, data_path)
             if omp_baseline_elapsed is not None:
                 print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{omp_baseline_elapsed / omp_opt_elapsed:.2f}x{R} vs HSMMLearn OMP C++\n")
                 print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{cpp_elapsed / omp_opt_elapsed:.2f}x{R} vs Tensor Viterbi C++\n")
@@ -251,7 +255,8 @@ if __name__ == "__main__":
                 return decode_tensor_viterbi_cuda(N, my_hsmm.trans_mat, my_hsmm.emission_probs, my_hsmm.duration_probs_linear, my_hsmm.start_probs, my_hsmm.duration_probs, my_hsmm.obs_seq)
             _cuda.__name__ = decode_tensor_viterbi_cuda.__name__
             _, cuda_elapsed = TIME_MEASURE(_cuda)
-            validate("Validate", _, data_path)
+            if _run_baseline_cpp:
+                validate("Validate", _, data_path)
             if baseline_elapsed is not None:
                 print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{baseline_elapsed / cuda_elapsed:.2f}x{R} vs HSMMLearn C++\n")
                 print(f"  {GRAY}speedup{R}  {BOLD}{GREEN}{cpp_elapsed / cuda_elapsed:.2f}x{R} vs Tensor Viterbi C++\n")
