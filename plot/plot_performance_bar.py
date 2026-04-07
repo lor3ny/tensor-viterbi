@@ -44,6 +44,22 @@ DEFAULT_TOOLCHAINS = {
     "xeon8480":  "gnu",
 }
 
+EXCLUDED_SYSTEMS = ["epyc-7763-bigmem", "epyc-9474f"]
+
+SYSTEM_LABELS = {
+    "epyc-7763":    "AMD EPYC 7763",
+    "epyc-7a53":    "AMD EPYC (7A53)",
+    "xeon8480":     "Intel Xeon 8480",
+    "a100":         "A100",
+    "mi250x":       "MI250X",
+    "h100":         "H100",
+    "gh200-hopper": "GH200",
+    "gh200-grace":  "ARM Grace",
+    "mi300x":       "MI300X",
+    "b200":         "B200",
+    "a64fx":        "A64FX",
+}
+
 GPU_GENERATION = {
     "a100":         0,   # A100  SM80  ~2020
     "mi250x":       1,   # MI250X gfx90a ~2021
@@ -56,7 +72,6 @@ GPU_GENERATION = {
 CPU_FUNCTION_ORDER = [
     "HSMMLearn_OMP",
     "decode_tensor_viterbi_cpp",
-    "decode_tensor_viterbi_omp",
     "decode_tensor_viterbi_omp_opt",
 ]
 GPU_FUNCTION_ORDER = [
@@ -65,9 +80,8 @@ GPU_FUNCTION_ORDER = [
 FUNCTION_LABELS = {
     "HSMMLearn_CPP":                 "HSMMLearn (Sequential)",
     "HSMMLearn_OMP":                 "HSMMLearn (OMP)",
-    "decode_tensor_viterbi_cpp":     "Tensor (Sequential)",
-    "decode_tensor_viterbi_omp":     "Tensor (OMP)",
-    "decode_tensor_viterbi_omp_opt": "Tensor (OMP-OPT)",
+    "decode_tensor_viterbi_cpp":     "Tensor Single-Core",
+    "decode_tensor_viterbi_omp_opt": "Tensor Multi-Core",
     "decode_tensor_viterbi_cuda":    "Tensor (GPU)",
 }
 
@@ -75,7 +89,6 @@ FUNCTION_LABELS = {
 FUNCTION_BASE_COLORS = {
     "HSMMLearn_OMP":                 "#4C72B0",
     "decode_tensor_viterbi_cpp":     "#DD8452",
-    "decode_tensor_viterbi_omp":     "#55A868",
     "decode_tensor_viterbi_omp_opt": "#C44E52",
     "decode_tensor_viterbi_cuda":    "#8172B2",
 }
@@ -94,11 +107,14 @@ def _shade_color(hex_color, factor):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _filter_systems(all_systems, use_all):
-    if use_all:
-        return all_systems
     kept = []
     for sys_tc in all_systems:
         system, toolchain = sys_tc.split("/", 1)
+        if system in EXCLUDED_SYSTEMS:
+            continue
+        if use_all:
+            kept.append(sys_tc)
+            continue
         default = next(
             (tc for prefix, tc in DEFAULT_TOOLCHAINS.items() if system.startswith(prefix)),
             None,
@@ -185,14 +201,14 @@ def make_plot(N, T, kind, all_systems, all_data, d_values, ref_system,
     for sys_tc in systems:
         for funcs in all_data[sys_tc].values():
             for func in funcs:
-                if func != "HSMMLearn_CPP":
+                if func not in ("HSMMLearn_CPP", "decode_tensor_viterbi_omp"):
                     combo_set.add((func, sys_tc))
 
     def combo_key(c):
         func, sys_tc = c
         si = systems.index(sys_tc) if sys_tc in systems else len(systems)
         fi = func_order.index(func) if func in func_order else len(func_order)
-        return (si, fi)
+        return (fi, si)
 
     ordered_combos = sorted(combo_set, key=combo_key)
     if not ordered_combos:
@@ -255,16 +271,32 @@ def make_plot(N, T, kind, all_systems, all_data, d_values, ref_system,
         candidates = [c for c in candidates if c is not None]
         return max(candidates) if candidates else None  # slowest CPP
 
-    # ── Draw ────────────────────────────────────────────────────────────────
-    bar_width = 0.8 / n_combos
-    x_pos     = np.arange(len(d_values), dtype=float)
+    # ── Group combos by function for bracket annotations ─────────────────────
+    from itertools import groupby as _groupby
+    func_groups = []
+    for _func, _it in _groupby(ordered_combos, key=lambda c: c[0]):
+        func_groups.append((_func, [c[1] for c in _it]))
 
-    fig_w = max(8, len(d_values) * (n_combos * bar_width + 0.6) + 4)
+    _n_gaps   = max(len(func_groups) - 1, 0)
+    group_gap = 0.04 if _n_gaps > 0 else 0.0
+    bar_width = (0.8 - _n_gaps * group_gap) / max(n_combos, 1)
+    combo_offsets = {}
+    _pos = -0.4 + bar_width / 2
+    for _func, _syss in func_groups:
+        for _sys_tc in _syss:
+            combo_offsets[(_func, _sys_tc)] = _pos
+            _pos += bar_width
+        _pos += group_gap
+
+    # ── Draw ────────────────────────────────────────────────────────────────
+    x_pos = np.arange(len(d_values), dtype=float)
+
+    fig_w = max(8, len(d_values) * 1.6 + 4)
     fig, ax = plt.subplots(figsize=(fig_w, 5.5))
 
     any_data = False
-    for ci, (func, sys_tc) in enumerate(ordered_combos):
-        offset   = (ci - (n_combos - 1) / 2) * bar_width
+    for func, sys_tc in ordered_combos:
+        offset = combo_offsets[(func, sys_tc)]
         heights, errs = [], []
         for D_val in d_values:
             fdata = all_data[sys_tc].get(D_val, {}).get(func)
@@ -302,7 +334,35 @@ def make_plot(N, T, kind, all_systems, all_data, d_values, ref_system,
     ax.set_xticks(x_pos)
     ax.set_xticklabels([str(D) for D in d_values], fontsize=10)
     ax.tick_params(axis="y", labelsize=10)
-    ax.set_xlabel("Duration  D", fontsize=11)
+
+    # ── Algorithm group brackets below each D tick ────────────────────────────
+    if len(func_groups) > 1:
+        import matplotlib.transforms as _mtrans
+        _blended = _mtrans.blended_transform_factory(ax.transData, ax.transAxes)
+        _bkt_y  = -0.08
+        _tick_h = 0.015
+        _lbl_y  = -0.10
+        _short  = {
+            "HSMMLearn_OMP":                 "Baseline\n(M.-Core)",
+            "decode_tensor_viterbi_cpp":     "Tensor\n(S.-Core)",
+            "decode_tensor_viterbi_omp_opt": "Tensor\n(M.-Core)",
+            "decode_tensor_viterbi_cuda":    "Tensor\n(GPU)",
+        }
+        for _xd in x_pos:
+            for _gfunc, _gsyss in func_groups:
+                _xl = _xd + combo_offsets[(_gfunc, _gsyss[0])]  - bar_width / 2
+                _xr = _xd + combo_offsets[(_gfunc, _gsyss[-1])] + bar_width / 2
+                _xm = (_xl + _xr) / 2
+                ax.plot([_xl, _xr], [_bkt_y, _bkt_y],
+                        transform=_blended, color="black", lw=0.9, clip_on=False)
+                ax.plot([_xl, _xl], [_bkt_y, _bkt_y - _tick_h],
+                        transform=_blended, color="black", lw=0.9, clip_on=False)
+                ax.plot([_xr, _xr], [_bkt_y, _bkt_y - _tick_h],
+                        transform=_blended, color="black", lw=0.9, clip_on=False)
+                ax.text(_xm, _lbl_y, _short.get(_gfunc, _gfunc),
+                        transform=_blended, ha="center", va="top",
+                        fontsize=7.5, clip_on=False, linespacing=1.3)
+    ax.set_xlabel("Duration  D", fontsize=11, labelpad=35 if len(func_groups) > 1 else 8)
 
     if kind == "gpu" and gpu_ref == "hsmmomp":
         ref_label = "HSMMLearn OMP (fastest CPU)"
@@ -317,42 +377,31 @@ def make_plot(N, T, kind, all_systems, all_data, d_values, ref_system,
         ref_label = "HSMMLearn C++"
         ref_note  = None
 
-    ax.set_ylabel(f"Speedup vs {ref_label}  (higher = faster)", fontsize=11)
+    ax.set_ylabel("Speedup vs Single Core Baseline  (higher = faster)", fontsize=11)
     ax.yaxis.grid(True, linestyle="--", linewidth=0.5, alpha=0.6, zorder=0)
     ax.set_axisbelow(True)
 
-    if kind == "gpu":
-        title = (
-            f"GPU Speedup vs {ref_label}\n"
-            f"N = {N} states,  T = {T:,}    ({ref_note})"
-        )
-    else:
-        title = f"CPU Speedup vs HSMMLearn C++\nN = {N} states,  T = {T:,}"
-    ax.set_title(title, fontsize=11)
-
-    # Single unified legend: one patch per (func, sys) combo, grouped by algorithm
-    legend_combos = sorted(
-        ordered_combos,
-        key=lambda c: (
-            func_order.index(c[0]) if c[0] in func_order else len(func_order),
-            systems.index(c[1]) if c[1] in systems else len(systems),
-        ),
-    )
-    legend_handles = [
-        mpatches.Patch(
-            facecolor=shade_colors.get((func, sys_tc), (0.6, 0.6, 0.6)),
+    # Legend: one entry per unique system (dedup), hatch on neutral background
+    _seen_sys = set()
+    legend_handles = []
+    for sys_tc in systems:
+        if sys_tc in _seen_sys:
+            continue
+        _seen_sys.add(sys_tc)
+        _sname = SYSTEM_LABELS.get(sys_tc.split('/')[0], sys_tc.split('/')[0])
+        legend_handles.append(mpatches.Patch(
+            facecolor=(0.88, 0.88, 0.88),
             hatch=hatch_map.get(sys_tc, ""),
             edgecolor="black", linewidth=0.4,
-            label=f"{FUNCTION_LABELS.get(func, func)} — {sys_tc.split('/')[0]}",
-        )
-        for func, sys_tc in legend_combos
-    ]
+            label=_sname,
+        ))
     ax.legend(
         handles=legend_handles,
-        fontsize=10, loc="upper center",
-        bbox_to_anchor=(0.5, -0.18), borderaxespad=0,
-        ncol=min(len(legend_handles), 4),
+        fontsize=9, loc="upper left",
+        bbox_to_anchor=(0.01, 0.99),
+        ncol=1,
         frameon=True,
+        framealpha=0.85,
     )
 
     if kind == "gpu":
