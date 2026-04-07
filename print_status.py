@@ -19,7 +19,18 @@ SYSTEMS_CONF  = "systems.conf"
 
 STATES    = [10, 15, 25, 50, 75]
 DURATIONS = [100, 250, 500, 1000]
-T_VALUES  = [1_000, 10_000, 100_000, 1_000_000]
+T_VALUES  = [1_000, 10_000, 100_000, 1_000_000, 10_000_000]
+
+# T=10M uses a single fixed configuration (one data file exists) and is GPU-only.
+T_OVERRIDES = {
+    10_000_000: {"states": [100], "durations": [10_000], "gpu_only": True},
+}
+
+# Systems to hide from the summary table (still accessible via --system).
+EXCLUDED_SYSTEMS = [
+    "epyc-7763-bigmem",
+    "epyc-9474f",
+]
 
 CPU_FUNCTIONS = [
     "HSMMLearn_CPP",
@@ -88,14 +99,16 @@ def row_key(sys_tc, sys_type):
 
 # ── Coverage counting ─────────────────────────────────────────────────────────
 
-def count_csvs(sys_tc, T, functions):
+def count_csvs(sys_tc, T, functions, states=None, durations=None):
     """Return (found, expected) CSV file counts."""
     root = Path(RESULTS_ROOT) / sys_tc
-    expected = len(STATES) * len(DURATIONS) * len(functions)
+    _states = states if states is not None else STATES
+    _durs   = durations if durations is not None else DURATIONS
+    expected = len(_states) * len(_durs) * len(functions)
     found = sum(
         (root / f"{s}s_{d}d_{T}t_{fn}.csv").exists()
-        for s in STATES
-        for d in DURATIONS
+        for s in _states
+        for d in _durs
         for fn in functions
     )
     return found, expected
@@ -123,13 +136,23 @@ def print_missing(sys_tc, sys_type):
 
     missing = []
     for T in T_VALUES:
-        for s in STATES:
-            for d in DURATIONS:
+        ov = T_OVERRIDES.get(T, {})
+        if ov.get("gpu_only") and not is_gpu:
+            continue
+        _states = ov.get("states", STATES)
+        _durs   = ov.get("durations", DURATIONS)
+        for s in _states:
+            for d in _durs:
                 for fn in functions:
                     if not (root / f"{s}s_{d}d_{T}t_{fn}.csv").exists():
                         missing.append((s, d, T, fn))
 
-    total_expected = len(T_VALUES) * len(STATES) * len(DURATIONS) * len(functions)
+    total_expected = sum(
+        len(ov.get("states", STATES)) * len(ov.get("durations", DURATIONS)) * len(functions)
+        for T in T_VALUES
+        for ov in [T_OVERRIDES.get(T, {})]
+        if not (ov.get("gpu_only") and not is_gpu)
+    )
     total_missing  = len(missing)
     total_found    = total_expected - total_missing
 
@@ -171,6 +194,7 @@ def main():
         conf_sys_tc | result_sys_tc,
         key=lambda s: row_key(s, sys_type),
     )
+    all_sys_tc = [s for s in all_sys_tc if s.split("/")[0] not in EXCLUDED_SYSTEMS]
 
     # ── Detail mode ────────────────────────────────────────────────────────────
     if args.system:
@@ -200,7 +224,14 @@ def main():
             print()
         prev_sys = sys
 
-        cells = [fmt_cell(*count_csvs(sys_tc, T, functions)) for T in T_VALUES]
+        cells = []
+        for T in T_VALUES:
+            ov = T_OVERRIDES.get(T, {})
+            if ov.get("gpu_only") and not is_gpu:
+                cells.append(" " * CELL_W)
+            else:
+                cells.append(fmt_cell(*count_csvs(sys_tc, T, functions,
+                                                   ov.get("states"), ov.get("durations"))))
 
         print(f"{sys_tc:<{ROW_W}}", end="")
         for c in cells:
@@ -211,11 +242,15 @@ def main():
     print(sep)
     cpu_exp = len(STATES) * len(DURATIONS) * len(CPU_FUNCTIONS)
     gpu_exp = len(STATES) * len(DURATIONS) * len(GPU_FUNCTIONS)
+    _10m_ov = T_OVERRIDES[10_000_000]
+    gpu_10m_exp = len(_10m_ov["states"]) * len(_10m_ov["durations"]) * len(GPU_FUNCTIONS)
     print(
-        f"\nExpected per T:  "
+        f"\nExpected per T (≤1M):  "
         f"CPU = {cpu_exp} CSVs "
         f"({len(STATES)} states × {len(DURATIONS)} durations × {len(CPU_FUNCTIONS)} functions)   "
         f"GPU = {gpu_exp} CSVs ({len(GPU_FUNCTIONS)} function)\n"
+        f"Expected T=10M (GPU only): {gpu_10m_exp} CSV "
+        f"(N={_10m_ov['states']}, D={_10m_ov['durations']})\n"
         f"{GREEN('FULL')}  all expected files present   "
         f"{YELLOW('n/N')}  partial   "
         f"{RED('NONE')}  nothing yet"

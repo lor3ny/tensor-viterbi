@@ -275,18 +275,20 @@ if __name__ == "__main__":
             _fname = decode_log_tensor_viterbi_cached.__name__
             _times = []
             _collector.start()
+            with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as _csv_f:
+                _csv_writer = csv.writer(_csv_f)
+                _csv_writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
+                _csv_f.flush()
             for _ in range(args.iterations):
                 tmp_hsmm = copy.copy(my_hsmm)
                 start = time.perf_counter()
                 tmp_hsmm.to_log_space()
                 decode_log_tensor_viterbi_cached(tmp_hsmm)
-                _times.append(time.perf_counter() - start)
+                _elapsed = time.perf_counter() - start
+                _times.append(_elapsed)
+                with open(f"{_stem}_{_fname}{_ext}", "a", newline="") as _csv_f:
+                    csv.writer(_csv_f).writerow([_fname, N, T, D, len(_times) - 1, f"{_elapsed:.6f}"])
             _metrics = _collector.stop()
-            with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
-                for i, t in enumerate(_times):
-                    writer.writerow([_fname, N, T, D, i, f"{t:.6f}"])
             if _collector.column_names():
                 _mfile = f"{_stem}_{_fname}_metrics{_ext}"
                 with open(_mfile, "w", newline="") as f:
@@ -302,18 +304,20 @@ if __name__ == "__main__":
             _fname = decode_tensor_viterbi_cpp.__name__
             _times = []
             _collector.start()
+            with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as _csv_f:
+                _csv_writer = csv.writer(_csv_f)
+                _csv_writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
+                _csv_f.flush()
             for _ in range(args.iterations):
                 tmp_hsmm = copy.copy(my_hsmm)
                 start = time.perf_counter()
                 tmp_hsmm.to_log_space()
                 decode_tensor_viterbi_cpp(N, tmp_hsmm.trans_mat, tmp_hsmm.emission_probs, tmp_hsmm.duration_probs_linear, tmp_hsmm.start_probs, tmp_hsmm.duration_probs, tmp_hsmm.obs_seq)
-                _times.append(time.perf_counter() - start)
+                _elapsed = time.perf_counter() - start
+                _times.append(_elapsed)
+                with open(f"{_stem}_{_fname}{_ext}", "a", newline="") as _csv_f:
+                    csv.writer(_csv_f).writerow([_fname, N, T, D, len(_times) - 1, f"{_elapsed:.6f}"])
             _metrics = _collector.stop()
-            with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
-                for i, t in enumerate(_times):
-                    writer.writerow([_fname, N, T, D, i, f"{t:.6f}"])
             if _collector.column_names():
                 _mfile = f"{_stem}_{_fname}_metrics{_ext}"
                 with open(_mfile, "w", newline="") as f:
@@ -329,18 +333,20 @@ if __name__ == "__main__":
             _fname = decode_tensor_viterbi_omp.__name__
             _times = []
             _collector.start()
+            with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as _csv_f:
+                _csv_writer = csv.writer(_csv_f)
+                _csv_writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
+                _csv_f.flush()
             for _ in range(args.iterations):
                 tmp_hsmm = copy.copy(my_hsmm)
                 start = time.perf_counter()
                 tmp_hsmm.to_log_space()
                 decode_tensor_viterbi_omp(N, tmp_hsmm.trans_mat, tmp_hsmm.emission_probs, tmp_hsmm.duration_probs_linear, tmp_hsmm.start_probs, tmp_hsmm.duration_probs, tmp_hsmm.obs_seq)
-                _times.append(time.perf_counter() - start)
+                _elapsed = time.perf_counter() - start
+                _times.append(_elapsed)
+                with open(f"{_stem}_{_fname}{_ext}", "a", newline="") as _csv_f:
+                    csv.writer(_csv_f).writerow([_fname, N, T, D, len(_times) - 1, f"{_elapsed:.6f}"])
             _metrics = _collector.stop()
-            with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
-                for i, t in enumerate(_times):
-                    writer.writerow([_fname, N, T, D, i, f"{t:.6f}"])
             if _collector.column_names():
                 _mfile = f"{_stem}_{_fname}_metrics{_ext}"
                 with open(_mfile, "w", newline="") as f:
@@ -356,18 +362,20 @@ if __name__ == "__main__":
             _fname = decode_tensor_viterbi_omp_opt.__name__
             _times = []
             _collector.start()
+            with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as _csv_f:
+                _csv_writer = csv.writer(_csv_f)
+                _csv_writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
+                _csv_f.flush()
             for _ in range(args.iterations):
                 tmp_hsmm = copy.copy(my_hsmm)
                 start = time.perf_counter()
                 tmp_hsmm.to_log_space()
                 decode_tensor_viterbi_omp_opt(N, tmp_hsmm.trans_mat, tmp_hsmm.emission_probs, tmp_hsmm.duration_probs_linear, tmp_hsmm.start_probs, tmp_hsmm.duration_probs, tmp_hsmm.obs_seq)
-                _times.append(time.perf_counter() - start)
+                _elapsed = time.perf_counter() - start
+                _times.append(_elapsed)
+                with open(f"{_stem}_{_fname}{_ext}", "a", newline="") as _csv_f:
+                    csv.writer(_csv_f).writerow([_fname, N, T, D, len(_times) - 1, f"{_elapsed:.6f}"])
             _metrics = _collector.stop()
-            with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
-                for i, t in enumerate(_times):
-                    writer.writerow([_fname, N, T, D, i, f"{t:.6f}"])
             if _collector.column_names():
                 _mfile = f"{_stem}_{_fname}_metrics{_ext}"
                 with open(_mfile, "w", newline="") as f:
@@ -383,18 +391,20 @@ if __name__ == "__main__":
             _fname = decode_tensor_viterbi_cuda.__name__
             _times = []
             _collector.start()
+            with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as _csv_f:
+                _csv_writer = csv.writer(_csv_f)
+                _csv_writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
+                _csv_f.flush()
             for _ in range(args.iterations):
                 tmp_hsmm = copy.copy(my_hsmm) # Avoid in-place log-space conversion affecting subsequent iterations
                 start = time.perf_counter()
                 tmp_hsmm.to_log_space()
                 decode_tensor_viterbi_cuda(N, tmp_hsmm.trans_mat, tmp_hsmm.emission_probs, tmp_hsmm.duration_probs_linear, tmp_hsmm.start_probs, tmp_hsmm.duration_probs, tmp_hsmm.obs_seq)
-                _times.append(time.perf_counter() - start)
+                _elapsed = time.perf_counter() - start
+                _times.append(_elapsed)
+                with open(f"{_stem}_{_fname}{_ext}", "a", newline="") as _csv_f:
+                    csv.writer(_csv_f).writerow([_fname, N, T, D, len(_times) - 1, f"{_elapsed:.6f}"])
             _metrics = _collector.stop()
-            with open(f"{_stem}_{_fname}{_ext}", "w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
-                for i, t in enumerate(_times):
-                    writer.writerow([_fname, N, T, D, i, f"{t:.6f}"])
             if _collector.column_names():
                 _mfile = f"{_stem}_{_fname}_metrics{_ext}"
                 with open(_mfile, "w", newline="") as f:

@@ -264,7 +264,8 @@ for s in "${states[@]}"; do
 
             # Reduce iterations for very large T to keep wall-time reasonable.
             _iters=$ITERATIONS
-            [[ $t -eq 1000000 && $_iters -gt 2 ]] && _iters=2
+            [[ $t -eq 1000000  && $_iters -gt 2 ]] && _iters=2
+            [[ $t -eq 10000000 && $_iters -gt 2 ]] && _iters=2
 
             if [[ "$TYPE" == "cpu" && $t -eq 100000 ]]; then
                 # At T=100000, HSMMLearn C++ needs fewer iterations (very slow).
