@@ -83,6 +83,23 @@ IFS=':' read -ra _MODS <<< "$MODULES_BUILD"
 for _mod in "${_MODS[@]}"; do
     [[ -n "$_mod" ]] && module load "$_mod"
 done
+# Re-prepend the active pyenv version bin so pip-installed tools (e.g. cmake)
+# take precedence over wrong-arch system module binaries.
+if [[ -n "${SYS_PYTHON[$SYSTEM]:-}" ]] && command -v pyenv &>/dev/null; then
+    export PATH="$(pyenv root)/versions/$(pyenv version-name)/bin:$PATH"
+fi
+# Select compilers: SYS_CC/SYS_CXX override takes precedence; otherwise derive
+# from toolchain name. Exported so cmake and hsmmlearn builds use the same compiler.
+case "$TOOLCHAIN" in
+    cray)    _CC=cc;    _CXX=CC      ;;
+    intel)   _CC=icx;   _CXX=icpx    ;;
+    llvm)    _CC=clang; _CXX=clang++ ;;
+    fujitsu) _CC=fcc;   _CXX=FCC     ;;
+    *)       _CC=gcc;   _CXX=g++     ;;
+esac
+[[ -n "${SYS_CC[$SYSTEM/$TOOLCHAIN]:-}" ]] && _CC="${SYS_CC[$SYSTEM/$TOOLCHAIN]}"
+[[ -n "${SYS_CXX[$SYSTEM/$TOOLCHAIN]:-}" ]] && _CXX="${SYS_CXX[$SYSTEM/$TOOLCHAIN]}"
+export CC="$_CC" CXX="$_CXX"
 
 # Create a per-toolchain venv.
 # CPU venvs also include hsmmlearn built with the matching compiler.
@@ -149,12 +166,7 @@ cmake --build "$BUILD_DIR" -j 8
 # GPU systems do not run these baselines, so skip them there.
 # Only build when the venv was just created; remove the venv dir to force a rebuild.
 if [[ "$TYPE" == "cpu" && $_VENV_CREATED -eq 1 ]]; then
-    case "$TOOLCHAIN" in
-        cray) _CC=cc;    _CXX=CC     ;;
-        intel)  _CC=icx;   _CXX=icpx   ;;
-        llvm)   _CC=clang; _CXX=clang++ ;;
-        *)      _CC=gcc;   _CXX=g++    ;;
-    esac
+    # _CC/_CXX already set and exported above
     echo "Building hsmmlearn packages with CC=$_CC CXX=$_CXX ..."
     # wheel and setuptools must be present for --no-build-isolation builds
     # (setuptools is not bundled in Python 3.12+ venvs by default)
