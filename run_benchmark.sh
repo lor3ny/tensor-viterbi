@@ -89,7 +89,7 @@ OMP_PLACES="${SYS_OMP_PLACES[$SYSTEM]:-}"
 
 # Default for CPU: run all variants if no flags were specified
 if [[ "$TYPE" == "cpu" && -z "$VITERBI_FLAGS" ]]; then
-    VITERBI_FLAGS="cpp:omp:omp-opt:baseline-cpp:baseline-omp"
+    VITERBI_FLAGS="cpp:omp-opt:baseline-cpp:baseline-omp"
 fi
 
 MODULES="${SYS_MODULES[$SYSTEM/$TOOLCHAIN]}"
@@ -222,6 +222,10 @@ submit_job() {
 }
 
 # Define parameter arrays
+#states=(10 15 25 50 75)
+#durations=(100 250 500 1000)
+#timesteps=(1000000)
+
 # states=(10 15 25 50 75)
 # durations=(100 250 500 1000)
 # timesteps=(1000 10000) # 100000)

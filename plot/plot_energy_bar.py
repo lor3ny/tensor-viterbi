@@ -39,6 +39,7 @@ OUT_ROOT     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bars")
 
 DEFAULT_TOOLCHAINS = {
     "a100":      "cuda",
+    "b200":      "cuda",
     "h100":      "cuda",
     "mi250x":    "cray",
     "epyc-7763": "cray",
@@ -51,6 +52,7 @@ GPU_GENERATION = {
     "h100":         2,
     "gh200-hopper": 3,
     "mi300x":       4,
+    "b200":         5,
 }
 
 CPU_FUNCTION_ORDER = [

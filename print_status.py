@@ -6,6 +6,7 @@ Cols: T (number of timesteps): 1 k, 10 k, 100 k, 1 M
 Cell: FULL | <found>/<expected> | NONE
 """
 
+import argparse
 import os
 import re
 import sys
@@ -24,7 +25,6 @@ CPU_FUNCTIONS = [
     "HSMMLearn_CPP",
     "HSMMLearn_OMP",
     "decode_tensor_viterbi_cpp",
-    "decode_tensor_viterbi_omp",
     "decode_tensor_viterbi_omp_opt",
 ]
 GPU_FUNCTIONS = ["decode_tensor_viterbi_cuda"]
@@ -111,9 +111,52 @@ def fmt_cell(found, expected):
         text, colorize = f"{found}/{expected}", YELLOW
     return colorize(text.rjust(CELL_W))
 
+
+# ── Detail view ───────────────────────────────────────────────────────────────
+
+def print_missing(sys_tc, sys_type):
+    """Print every missing (N, D, T, function) combination for a system/toolchain."""
+    sys = sys_tc.split("/")[0]
+    is_gpu = sys_type.get(sys, "cpu") == "gpu"
+    functions = GPU_FUNCTIONS if is_gpu else CPU_FUNCTIONS
+    root = Path(RESULTS_ROOT) / sys_tc
+
+    missing = []
+    for T in T_VALUES:
+        for s in STATES:
+            for d in DURATIONS:
+                for fn in functions:
+                    if not (root / f"{s}s_{d}d_{T}t_{fn}.csv").exists():
+                        missing.append((s, d, T, fn))
+
+    total_expected = len(T_VALUES) * len(STATES) * len(DURATIONS) * len(functions)
+    total_missing  = len(missing)
+    total_found    = total_expected - total_missing
+
+    print(f"\n{BOLD(sys_tc)}  —  {total_found}/{total_expected} CSVs present\n")
+
+    if total_missing == 0:
+        print(GREEN("  All experiments complete.\n"))
+        return
+
+    # Group by T for readability
+    from itertools import groupby
+    missing.sort(key=lambda x: (x[2], x[0], x[1], x[3]))
+    for T, group in groupby(missing, key=lambda x: x[2]):
+        items = list(group)
+        print(YELLOW(f"  T = {T:,}  ({len(items)} missing):"))
+        for s, d, _, fn in items:
+            print(f"    N={s:>2}  D={d:>4}  {fn}")
+        print()
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    parser = argparse.ArgumentParser(description="Benchmark coverage status")
+    parser.add_argument("--system", "-s", default=None,
+                        help="system/toolchain to inspect in detail (e.g. epyc-7763-bigmem/cray)")
+    args = parser.parse_args()
+
     # Always run relative to the repo root (where systems.conf lives)
     os.chdir(Path(__file__).parent)
 
@@ -128,6 +171,13 @@ def main():
         conf_sys_tc | result_sys_tc,
         key=lambda s: row_key(s, sys_type),
     )
+
+    # ── Detail mode ────────────────────────────────────────────────────────────
+    if args.system:
+        if args.system not in all_sys_tc:
+            sys.exit(f"Error: '{args.system}' not found. Known: {sorted(all_sys_tc)}")
+        print_missing(args.system, sys_type)
+        return
 
     # ── Header ────────────────────────────────────────────────────────────────
     sep = "─" * LINE_W

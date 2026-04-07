@@ -4,8 +4,9 @@ plot_performance_bar.py — speedup bar charts vs HSMMLearn C++.
 
 Generates three plots per (N, T) pair:
   bars/cpu/cpu_{N}s_{T}t.png          — CPU systems only, ref = HSMMLearn C++
-  bars/gpu/vscpp/gpu_vs_cpp_{N}s_{T}t.png — GPU systems, ref = slowest CPU HSMMLearn C++
-  bars/gpu/vsomp/gpu_vs_omp_{N}s_{T}t.png — GPU systems, ref = fastest CPU HSMMLearn OMP
+  bars/gpu/vshsmm/gpu_vs_hsmm_{N}s_{T}t.png    — GPU systems, ref = HSMMLearn C++ (slowest CPU)
+  bars/gpu/vshsmmomp/gpu_vs_hsmmomp_{N}s_{T}t.png — GPU systems, ref = fastest CPU HSMMLearn OMP
+  bars/gpu/vsopt/gpu_vs_opt_{N}s_{T}t.png       — GPU systems, ref = fastest CPU Tensor OMP-OPT
 
 X-axis: duration D values.
 
@@ -17,12 +18,14 @@ Usage:
 """
 
 import argparse
+import colorsys
 import glob
 import os
 import sys
 
 import matplotlib
 matplotlib.use("Agg")
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -34,6 +37,7 @@ OUT_ROOT     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bars")
 # Default toolchain per system prefix
 DEFAULT_TOOLCHAINS = {
     "a100":      "cuda",
+    "b200":      "cuda",
     "h100":      "cuda",
     "mi250x":    "cray",
     "epyc-7763": "cray",
@@ -46,11 +50,12 @@ GPU_GENERATION = {
     "h100":         2,   # H100  SM90  ~2022
     "gh200-hopper": 3,   # H100  SM90 (GH200) ~2023
     "mi300x":       4,   # MI300X gfx942 ~2023
+    "b200":         5,   # B200  SM100 ~2025
 }
 
 CPU_FUNCTION_ORDER = [
-    "decode_tensor_viterbi_cpp",
     "HSMMLearn_OMP",
+    "decode_tensor_viterbi_cpp",
     "decode_tensor_viterbi_omp",
     "decode_tensor_viterbi_omp_opt",
 ]
@@ -58,13 +63,32 @@ GPU_FUNCTION_ORDER = [
     "decode_tensor_viterbi_cuda",
 ]
 FUNCTION_LABELS = {
-    "HSMMLearn_CPP":                 "HSMMLearn C++",
-    "HSMMLearn_OMP":                 "HSMMLearn OMP",
-    "decode_tensor_viterbi_cpp":     "Tensor C++",
-    "decode_tensor_viterbi_omp":     "Tensor OMP",
-    "decode_tensor_viterbi_omp_opt": "Tensor OMP-OPT",
-    "decode_tensor_viterbi_cuda":    "Tensor GPU",
+    "HSMMLearn_CPP":                 "HSMMLearn (Sequential)",
+    "HSMMLearn_OMP":                 "HSMMLearn (OMP)",
+    "decode_tensor_viterbi_cpp":     "Tensor (Sequential)",
+    "decode_tensor_viterbi_omp":     "Tensor (OMP)",
+    "decode_tensor_viterbi_omp_opt": "Tensor (OMP-OPT)",
+    "decode_tensor_viterbi_cuda":    "Tensor (GPU)",
 }
+
+# Base hue per algorithm; shade+hatch vary by system within each family
+FUNCTION_BASE_COLORS = {
+    "HSMMLearn_OMP":                 "#4C72B0",
+    "decode_tensor_viterbi_cpp":     "#DD8452",
+    "decode_tensor_viterbi_omp":     "#55A868",
+    "decode_tensor_viterbi_omp_opt": "#C44E52",
+    "decode_tensor_viterbi_cuda":    "#8172B2",
+}
+_HATCH_PATTERNS = ["", "///", "...", "xxx", "|||", "---"]
+
+
+def _shade_color(hex_color, factor):
+    """Return an RGB tuple with lightness scaled by factor (0.65=dark, 1.3=light)."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:6], 16) / 255
+    hue, lgt, sat = colorsys.rgb_to_hls(r, g, b)
+    lgt = max(0.15, min(0.88, lgt * factor))
+    return colorsys.hls_to_rgb(hue, lgt, sat)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -136,11 +160,12 @@ def load_means(system, n, d, t):
 # ── Per-kind plot ─────────────────────────────────────────────────────────────
 
 def make_plot(N, T, kind, all_systems, all_data, d_values, ref_system,
-              gpu_ref="cpp"):
+              gpu_ref="hsmm"):
     """
     kind    : 'cpu' or 'gpu'
-    gpu_ref : 'cpp' → ref = slowest CPU HSMMLearn C++ (conservative upper bound)
-              'omp' → ref = fastest CPU HSMMLearn OMP (practical parallel baseline)
+    gpu_ref : 'hsmm'    → ref = slowest CPU HSMMLearn C++
+              'hsmmomp' → ref = fastest CPU HSMMLearn OMP
+              'opt'     → ref = fastest CPU Tensor OMP-OPT
     all_data: {sys_tc: {D_val: {func: {mean, std}}}}
     Saves bars/{kind}_{N}s_{T}t.png (cpu) or
           bars/gpu_vs_{gpu_ref}_{N}s_{T}t.png (gpu); skips if no data.
@@ -175,30 +200,50 @@ def make_plot(N, T, kind, all_systems, all_data, d_values, ref_system,
 
     n_combos = len(ordered_combos)
 
-    # Color map
-    cmap_name = "tab10" if n_combos <= 10 else "tab20"
-    cmap  = plt.get_cmap(cmap_name)
-    n_map = 10 if cmap_name == "tab10" else 20
-    colors = {combo: cmap(i / n_map) for i, combo in enumerate(ordered_combos)}
+    # Hatch + shade: both keyed by system index for consistency across functions
+    n_sys = len(systems)
+    shade_factors = [
+        0.65 + (1.30 - 0.65) * i / max(n_sys - 1, 1)
+        for i in range(n_sys)
+    ]
+    hatch_map = {
+        sys_tc: _HATCH_PATTERNS[i % len(_HATCH_PATTERNS)]
+        for i, sys_tc in enumerate(systems)
+    }
+    shade_colors = {
+        (func, sys_tc): _shade_color(
+            FUNCTION_BASE_COLORS.get(func, "#999999"), shade_factors[i]
+        )
+        for func in func_order
+        for i, sys_tc in enumerate(systems)
+    }
 
     # Reference helper.
     # CPU plots: same system's HSMMLearn C++.
-    # GPU plots, gpu_ref='cpp': slowest CPU HSMMLearn C++ (conservative upper bound).
-    # GPU plots, gpu_ref='omp': fastest CPU HSMMLearn OMP (practical parallel baseline).
+    # GPU plots, gpu_ref='hsmm':    slowest CPU HSMMLearn C++.
+    # GPU plots, gpu_ref='hsmmomp': fastest CPU HSMMLearn OMP.
+    # GPU plots, gpu_ref='opt':     fastest CPU Tensor OMP-OPT (best CPU parallel baseline).
     def get_ref(sys_tc, D_val):
         if kind == "cpu":
             d = all_data[sys_tc].get(D_val, {})
             if "HSMMLearn_CPP" in d:
                 return d["HSMMLearn_CPP"]["mean"]
         cpu_sys = [s for s in all_systems if not _is_gpu(s, all_data)]
-        if gpu_ref == "omp":
+        if gpu_ref == "hsmmomp":
             candidates = [
                 all_data[s].get(D_val, {}).get("HSMMLearn_OMP", {}).get("mean")
                 for s in cpu_sys
             ]
             candidates = [c for c in candidates if c is not None]
-            return min(candidates) if candidates else None  # fastest OMP
-        # gpu_ref == "cpp" (default)
+            return min(candidates) if candidates else None  # fastest HSMMLearn OMP
+        if gpu_ref == "opt":
+            candidates = [
+                all_data[s].get(D_val, {}).get("decode_tensor_viterbi_omp_opt", {}).get("mean")
+                for s in cpu_sys
+            ]
+            candidates = [c for c in candidates if c is not None]
+            return min(candidates) if candidates else None  # fastest Tensor OMP-OPT
+        # gpu_ref == "hsmm": slowest CPU HSMMLearn C++
         if ref_system:
             d2 = all_data.get(ref_system, {}).get(D_val, {})
             if "HSMMLearn_CPP" in d2:
@@ -234,10 +279,11 @@ def make_plot(N, T, kind, all_systems, all_data, d_values, ref_system,
                 errs.append(ref * s / (m ** 2))
                 any_data = True
 
-        label = f"{FUNCTION_LABELS.get(func, func)} — {sys_tc}"
         ax.bar(
             x_pos + offset, heights, width=bar_width,
-            color=colors[(func, sys_tc)], label=label,
+            color=shade_colors.get((func, sys_tc), (0.6, 0.6, 0.6)),
+            hatch=hatch_map.get(sys_tc, ""),
+            edgecolor="black", linewidth=0.4,
             yerr=errs, capsize=2,
             error_kw={"elinewidth": 0.7, "ecolor": "black"},
             zorder=2,
@@ -248,21 +294,30 @@ def make_plot(N, T, kind, all_systems, all_data, d_values, ref_system,
         return
 
     ax.axhline(1.0, color="black", lw=0.9, linestyle="--", zorder=3)
+    ax.annotate("baseline", xy=(0.99, 1.0),
+                xycoords=("axes fraction", "data"),
+                xytext=(0, 3), textcoords="offset points",
+                fontsize=9, ha="right", va="bottom", color="black",
+                bbox=dict(facecolor="white", edgecolor="none", pad=2, alpha=0.85))
     ax.set_xticks(x_pos)
-    ax.set_xticklabels([f"D = {D}" for D in d_values], fontsize=9)
-    ax.set_xlabel("Duration  D", fontsize=9)
+    ax.set_xticklabels([str(D) for D in d_values], fontsize=10)
+    ax.tick_params(axis="y", labelsize=10)
+    ax.set_xlabel("Duration  D", fontsize=11)
 
-    if kind == "gpu" and gpu_ref == "omp":
+    if kind == "gpu" and gpu_ref == "hsmmomp":
         ref_label = "HSMMLearn OMP (fastest CPU)"
         ref_note  = "ref: fastest CPU HSMMLearn OMP"
+    elif kind == "gpu" and gpu_ref == "opt":
+        ref_label = "Tensor OMP-OPT (fastest CPU)"
+        ref_note  = "ref: fastest CPU Tensor OMP-OPT"
     elif kind == "gpu":
-        ref_label = "HSMMLearn C++"
+        ref_label = "HSMMLearn C++"  # hsmm
         ref_note  = f"ref: {ref_system}" if ref_system else "ref: slowest CPU HSMMLearn C++"
     else:
         ref_label = "HSMMLearn C++"
         ref_note  = None
 
-    ax.set_ylabel(f"Speedup vs {ref_label}  (higher = faster)", fontsize=9)
+    ax.set_ylabel(f"Speedup vs {ref_label}  (higher = faster)", fontsize=11)
     ax.yaxis.grid(True, linestyle="--", linewidth=0.5, alpha=0.6, zorder=0)
     ax.set_axisbelow(True)
 
@@ -273,12 +328,31 @@ def make_plot(N, T, kind, all_systems, all_data, d_values, ref_system,
         )
     else:
         title = f"CPU Speedup vs HSMMLearn C++\nN = {N} states,  T = {T:,}"
-    ax.set_title(title, fontsize=10)
+    ax.set_title(title, fontsize=11)
 
+    # Single unified legend: one patch per (func, sys) combo, grouped by algorithm
+    legend_combos = sorted(
+        ordered_combos,
+        key=lambda c: (
+            func_order.index(c[0]) if c[0] in func_order else len(func_order),
+            systems.index(c[1]) if c[1] in systems else len(systems),
+        ),
+    )
+    legend_handles = [
+        mpatches.Patch(
+            facecolor=shade_colors.get((func, sys_tc), (0.6, 0.6, 0.6)),
+            hatch=hatch_map.get(sys_tc, ""),
+            edgecolor="black", linewidth=0.4,
+            label=f"{FUNCTION_LABELS.get(func, func)} — {sys_tc.split('/')[0]}",
+        )
+        for func, sys_tc in legend_combos
+    ]
     ax.legend(
-        fontsize=7.5, loc="upper left",
-        bbox_to_anchor=(1.01, 1), borderaxespad=0,
-        title="function — system/toolchain", title_fontsize=8,
+        handles=legend_handles,
+        fontsize=10, loc="upper center",
+        bbox_to_anchor=(0.5, -0.18), borderaxespad=0,
+        ncol=min(len(legend_handles), 4),
+        frameon=True,
     )
 
     if kind == "gpu":
@@ -346,7 +420,7 @@ def main():
             }
 
         make_plot(N, T, "cpu", all_systems, all_data, d_values, args.ref_system)
-        for gpu_ref in ("cpp", "omp"):
+        for gpu_ref in ("hsmm", "hsmmomp", "opt"):
             make_plot(N, T, "gpu", all_systems, all_data, d_values,
                       args.ref_system, gpu_ref=gpu_ref)
 

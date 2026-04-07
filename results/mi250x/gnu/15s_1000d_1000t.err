@@ -1,8 +1,13 @@
-The following modules were not unloaded:
-  (Use "module --force purge" to unload all):
 
-  1) ModuleLabel/label   2) lumi-tools/24.05   3) init-lumi/0.2
+Lmod is automatically replacing "craype-x86-rome" with "craype-x86-trento".
 
-The following sticky modules could not be reloaded:
 
-  1) lumi-tools
+Lmod is automatically replacing "cce/19.0.0" with "gcc-native/14.2".
+
+
+Lmod is automatically replacing "PrgEnv-cray/8.6.0" with "PrgEnv-gnu/8.6.0".
+
+
+Due to MODULEPATH changes, the following have been reloaded:
+  1) cray-libsci/25.03.0     2) cray-mpich/8.1.32
+
