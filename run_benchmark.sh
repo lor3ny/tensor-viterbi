@@ -167,6 +167,11 @@ get_walltime() {
         fi
         return
     fi
+
+    if [[ $t -eq 10000000 ]]; then
+        echo "20:00:00"
+        return
+    fi
 }
 
 # Build system-specific sbatch flags (no --time, --output, --error, --export: computed per job)
@@ -221,9 +226,9 @@ submit_job() {
 # durations=(100 250 500 1000)
 # timesteps=(1000 10000) # 100000)
 
-states=(75)
-durations=(500 1000)
-timesteps=(1000000)
+states=(100)
+durations=(10000)
+timesteps=(10000000)
 
 
 # Pre-flight: verify that compile.sh has already been run for this system/toolchain.
