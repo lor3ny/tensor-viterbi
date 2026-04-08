@@ -80,8 +80,8 @@ GPU_FUNCTION_ORDER = [
 FUNCTION_LABELS = {
     "HSMMLearn_CPP":                 "HSMMLearn (Sequential)",
     "HSMMLearn_OMP":                 "HSMMLearn (OMP)",
-    "decode_tensor_viterbi_cpp":     "Tensor Single-Core",
-    "decode_tensor_viterbi_omp_opt": "Tensor Multi-Core",
+    "decode_tensor_viterbi_cpp":     "Tens-1C",
+    "decode_tensor_viterbi_omp_opt": "Tens-MC",
     "decode_tensor_viterbi_cuda":    "Tensor (GPU)",
 }
 
@@ -326,7 +326,7 @@ def make_plot(N, T, kind, all_systems, all_data, d_values, ref_system,
         return
 
     ax.axhline(1.0, color="black", lw=0.9, linestyle="--", zorder=3)
-    ax.annotate("baseline", xy=(0.99, 1.0),
+    ax.annotate("Base-1C", xy=(0.99, 1.0),
                 xycoords=("axes fraction", "data"),
                 xytext=(0, 3), textcoords="offset points",
                 fontsize=9, ha="right", va="bottom", color="black",
@@ -343,10 +343,10 @@ def make_plot(N, T, kind, all_systems, all_data, d_values, ref_system,
         _tick_h = 0.015
         _lbl_y  = -0.10
         _short  = {
-            "HSMMLearn_OMP":                 "Baseline\n(M.-Core)",
-            "decode_tensor_viterbi_cpp":     "Tensor\n(S.-Core)",
-            "decode_tensor_viterbi_omp_opt": "Tensor\n(M.-Core)",
-            "decode_tensor_viterbi_cuda":    "Tensor\n(GPU)",
+            "HSMMLearn_OMP":                 "Base-MC",
+            "decode_tensor_viterbi_cpp":     "Tens-1C",
+            "decode_tensor_viterbi_omp_opt": "Tens-MC",
+            "decode_tensor_viterbi_cuda":    "Tens-GPU",
         }
         for _xd in x_pos:
             for _gfunc, _gsyss in func_groups:
