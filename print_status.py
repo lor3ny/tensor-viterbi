@@ -194,7 +194,10 @@ def main():
         conf_sys_tc | result_sys_tc,
         key=lambda s: row_key(s, sys_type),
     )
-    all_sys_tc = [s for s in all_sys_tc if s.split("/")[0] not in EXCLUDED_SYSTEMS]
+    EXCLUDED_SYS_TC = {"xeon8480/gnu"}
+    all_sys_tc = [s for s in all_sys_tc
+                  if s.split("/")[0] not in EXCLUDED_SYSTEMS
+                  and s not in EXCLUDED_SYS_TC]
 
     # ── Detail mode ────────────────────────────────────────────────────────────
     if args.system:
