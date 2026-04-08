@@ -1,0 +1,6 @@
+
+Lmod is automatically replacing "craype-x86-rome" with "craype-x86-trento".
+
+terminate called after throwing an instance of 'std::bad_alloc'
+  what():  std::bad_alloc
+/var/spool/slurmd/job17247614/slurm_script: line 63: 20125 Aborted                 (core dumped) python run_viterbi.py $PYTHON_FLAGS --system "$SYS_NAME" -m benchmark -dp "$SCRIPT_DIR/$CONFIG_PATH" --iterations "${BENCHMARK_ITERATIONS:-10}"

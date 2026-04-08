@@ -188,14 +188,48 @@ def load_energy_components(system, n, d, t):
     return result
 
 
+def load_power_components(system, n, d, t):
+    """Return {func: {component: watts}} where watts = energy_j / (energy_us / 1e6)."""
+    files = glob.glob(os.path.join(RESULTS_ROOT, system, f"{n}s_{d}d_{t}t_*_metrics.csv"))
+    result = {}
+    for f in files:
+        try:
+            df = pd.read_csv(f)
+        except Exception:
+            continue
+        if "energy_j" not in df.columns or "energy_us" not in df.columns:
+            continue
+        for _, row in df.iterrows():
+            func    = row["function"]
+            dur_us  = row["energy_us"]
+            if not pd.notna(dur_us) or float(dur_us) <= 0:
+                continue
+            dur_s   = float(dur_us) / 1e6
+            raw_j   = row["energy_j"]
+            if not pd.notna(raw_j):
+                continue
+            total_w = float(raw_j) / dur_s
+            comps   = {"total": total_w}
+            accounted = 0.0
+            for name in ["cpu_energy", "memory_energy"] + ACCEL_NAMES:
+                col = f"{name}_j"
+                if col in df.columns and pd.notna(row[col]):
+                    val = float(row[col]) / dur_s
+                    comps[name] = val
+                    accounted  += val
+                else:
+                    comps[name] = 0.0
+            comps["others"] = max(0.0, total_w - accounted)
+            result[func] = comps
+    return result
+
+
 # ── Per-kind plot ─────────────────────────────────────────────────────────────
 
-def make_plot(N, T, kind, all_systems, all_energy, d_values):
+def make_plot(N, T, kind, all_systems, all_energy, d_values, metric="energy"):
     """
-    kind : 'cpu' or 'gpu'
-    Saves bars/cpu/cpu_{N}s_{T}t_energy.png  or
-          bars/gpu/gpu_{N}s_{T}t_energy.png
-    Skips silently if no data.
+    kind   : 'cpu' or 'gpu'
+    metric : 'energy' (J/iter) or 'power' (W average)
     """
     cpu_systems = sorted(s for s in all_systems if not _has_gpu_func(all_energy[s]))
 
@@ -316,18 +350,20 @@ def make_plot(N, T, kind, all_systems, all_energy, d_values):
     ax.set_xticks(x_pos)
     ax.set_xticklabels([f"D = {D}" for D in d_values], fontsize=9)
     ax.set_xlabel("Duration  D", fontsize=9)
-    ax.set_ylabel("Energy  (J per iteration)", fontsize=9)
+    _ylabel = "Average Power  (W)" if metric == "power" else "Energy  (J per iteration)"
+    ax.set_ylabel(_ylabel, fontsize=9)
     ax.yaxis.grid(True, linestyle="--", linewidth=0.5, alpha=0.6, zorder=0)
     ax.set_axisbelow(True)
 
+    _metric_label = "Power" if metric == "power" else "Energy"
     if kind == "gpu":
         ax.set_title(
-            f"GPU Energy Breakdown  (+ CPU OMP reference)\nN = {N} states,  T = {T:,}",
+            f"GPU {_metric_label} Breakdown  (+ CPU OMP reference)\nN = {N} states,  T = {T:,}",
             fontsize=10,
         )
     else:
         ax.set_title(
-            f"CPU Energy Breakdown\nN = {N} states,  T = {T:,}",
+            f"CPU {_metric_label} Breakdown\nN = {N} states,  T = {T:,}",
             fontsize=10,
         )
 
@@ -356,12 +392,13 @@ def make_plot(N, T, kind, all_systems, all_energy, d_values):
         title_fontsize=8,
     )
 
+    _msuffix = "power" if metric == "power" else "energy"
     if kind == "gpu":
         out_dir  = os.path.join(OUT_ROOT, "gpu")
-        out_path = os.path.join(out_dir, f"gpu_{N}s_{T}t_energy.png")
+        out_path = os.path.join(out_dir, f"gpu_{N}s_{T}t_{_msuffix}.png")
     else:
         out_dir  = os.path.join(OUT_ROOT, "cpu")
-        out_path = os.path.join(out_dir, f"cpu_{N}s_{T}t_energy.png")
+        out_path = os.path.join(out_dir, f"cpu_{N}s_{T}t_{_msuffix}.png")
     os.makedirs(out_dir, exist_ok=True)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -415,8 +452,17 @@ def main():
                 for D_val in d_values
             }
 
-        make_plot(N, T, "cpu", all_systems, all_energy, d_values)
-        make_plot(N, T, "gpu", all_systems, all_energy, d_values)
+        make_plot(N, T, "cpu", all_systems, all_energy, d_values, metric="energy")
+        make_plot(N, T, "gpu", all_systems, all_energy, d_values, metric="energy")
+
+        all_power = {}
+        for sys_tc in all_systems:
+            all_power[sys_tc] = {
+                D_val: load_power_components(sys_tc, N, D_val, T)
+                for D_val in d_values
+            }
+        make_plot(N, T, "cpu", all_systems, all_power, d_values, metric="power")
+        make_plot(N, T, "gpu", all_systems, all_power, d_values, metric="power")
 
 
 if __name__ == "__main__":
