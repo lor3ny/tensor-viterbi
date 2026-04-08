@@ -99,7 +99,7 @@ COMPONENT_COLORS = {
 COMPONENT_LABELS = {
     "cpu_energy":    "CPU",
     "memory_energy": "Memory",
-    "accel0_energy": "Accel 0",
+    "accel0_energy": "GPU",
     "accel1_energy": "Accel 1",
     "accel2_energy": "Accel 2",
     "accel3_energy": "Accel 3",
@@ -115,7 +115,9 @@ SYSTEM_ACCEL_EXCLUDE = {
     "epyc-7a53": {"accel0_energy", "accel1_energy", "accel2_energy", "accel3_energy"},
 }
 COMBINED_FUNC_ORDER = [
+    "HSMMLearn_CPP",
     "HSMMLearn_OMP",
+    "decode_tensor_viterbi_cpp",
     "decode_tensor_viterbi_omp_opt",
     "decode_tensor_viterbi_cuda",
 ]
@@ -408,10 +410,14 @@ def make_combined_plot(N, T, all_systems, all_metric_data, d_values, metric):
     if not focus:
         return
 
-    # Build ordered (func, sys_tc) combos present in data
+    # Build ordered (func, sys_tc) combos present in data.
+    # HSMMLearn_CPP is used only as the normalisation reference, not plotted.
+    _SKIP_PLOT = {"HSMMLearn_CPP"}
     ordered_combos = []
     seen = set()
     for func in COMBINED_FUNC_ORDER:
+        if func in _SKIP_PLOT:
+            continue
         for sys_tc in focus:
             if (func, sys_tc) in seen:
                 continue
@@ -451,32 +457,43 @@ def make_combined_plot(N, T, all_systems, all_metric_data, d_values, metric):
         return
 
     n_combos  = len(ordered_combos)
-    bar_width = 0.8 / n_combos
+    bar_width = 0.55 / n_combos
     x_pos     = np.arange(len(d_values), dtype=float)
 
-    fig_w = max(8, len(d_values) * (n_combos * bar_width + 0.6) + 4)
+    # --- Compute per-(D) Base-1C total for normalisation -------------------
+    # We use Base-1C on EPYC-7A53 (first CPU focus system that has it).
+    _base_ref = {}   # D -> absolute total J (Base-1C on EPYC-7A53)
+    _epyc = next((s for s in focus if s.split("/")[0] == "epyc-7a53"), None)
+    for D in d_values:
+        ref_comps = all_metric_data.get(_epyc, {}).get(D, {}).get("HSMMLearn_CPP", {}) if _epyc else {}
+        ref_total = _apply_accel_filter(ref_comps, "epyc-7a53").get("total", 0.0) if ref_comps else 0.0
+        _base_ref[D] = ref_total if ref_total > 0 else np.nan
+
+    fig_w = max(9, len(d_values) * (n_combos * bar_width + 1.0) + 4)
     fig, ax = plt.subplots(figsize=(fig_w, 5.5))
 
+    bar_tops = {}   # (ci, di) -> top of bar (relative units) for annotation
     any_data = False
     for ci, (func, sys_tc) in enumerate(ordered_combos):
         sname   = sys_tc.split("/")[0]
         offset  = (ci - (n_combos - 1) / 2) * bar_width
-        hatch   = HATCHES[ci % len(HATCHES)]
         bottoms = np.zeros(len(d_values))
 
         for comp in active_components:
-            heights = np.array([
+            abs_heights = np.array([
                 _apply_accel_filter(
                     all_metric_data[sys_tc].get(D, {}).get(func, {}), sname
                 ).get(comp, 0.0)
                 for D in d_values
             ])
+            # Normalise to Base-1C reference
+            ref = np.array([_base_ref[D] for D in d_values])
+            heights = np.where(ref > 0, abs_heights / ref, 0.0)
             ax.bar(
                 x_pos + offset, heights, width=bar_width,
                 bottom=bottoms,
                 color=COMPONENT_COLORS[comp],
-                hatch=hatch,
-                edgecolor="white" if hatch else "#555",
+                edgecolor="#555",
                 linewidth=0.4,
                 zorder=2,
             )
@@ -484,48 +501,78 @@ def make_combined_plot(N, T, all_systems, all_metric_data, d_values, metric):
                 any_data = True
             bottoms += heights
 
+        # Store bar top for annotation
+        for di in range(len(d_values)):
+            bar_tops[(ci, di)] = bottoms[di]
+
     if not any_data:
         plt.close(fig)
         return
 
-    ax.set_xticks(x_pos)
-    ax.set_xticklabels([str(D) for D in d_values], fontsize=9)
-    ax.set_xlabel("Duration  D", fontsize=10)
-    _ylabel = "Average Power  (W)" if metric == "power" else "Energy  (J per iteration)"
+    # Annotate absolute values on top of each bar
+    _unit = "W" if metric == "power" else "J"
+    for ci, (func, sys_tc) in enumerate(ordered_combos):
+        sname  = sys_tc.split("/")[0]
+        offset = (ci - (n_combos - 1) / 2) * bar_width
+        for di, D in enumerate(d_values):
+            abs_total = _apply_accel_filter(
+                all_metric_data[sys_tc].get(D, {}).get(func, {}), sname
+            ).get("total", 0.0)
+            if abs_total <= 0:
+                continue
+            top = bar_tops[(ci, di)]
+            if abs_total < 1.0:
+                lbl = f"{abs_total*1000:.0f}m{_unit}"
+            elif abs_total < 1000:
+                lbl = f"{abs_total:.1f}{_unit}"
+            else:
+                lbl = f"{abs_total/1000:.1f}k{_unit}"
+            ax.text(
+                x_pos[di] + offset, top + 0.003,
+                lbl, ha="center", va="bottom",
+                fontsize=9, rotation=90, color="#222",
+            )
+
+    # Per-bar sub-labels (func name) as x-ticks; D group labels between them and xlabel
+    all_bar_pos    = []
+    all_bar_labels = []
+    for di in range(len(d_values)):
+        for ci, (func, sys_tc) in enumerate(ordered_combos):
+            offset = (ci - (n_combos - 1) / 2) * bar_width
+            all_bar_pos.append(x_pos[di] + offset)
+            all_bar_labels.append(FUNCTION_LABELS.get(func, func))
+    if bar_tops:
+        y_max = max(bar_tops.values())
+        ax.set_ylim(0, y_max * 1.2)
+
+    ax.set_xticks(all_bar_pos)
+    ax.set_xticklabels(all_bar_labels, rotation=45, ha="right", fontsize=9)
+    ax.tick_params(axis="x", length=0)
+
+    # D group labels directly below the rotated func labels (above xlabel)
+    for di, D in enumerate(d_values):
+        ax.annotate(
+            str(D),
+            xy=(x_pos[di], 0), xycoords=("data", "axes fraction"),
+            xytext=(0, -38), textcoords="offset points",
+            ha="center", va="top", fontsize=9, annotation_clip=False,
+        )
+    ax.set_xlabel("Duration  D", fontsize=10, labelpad=14)
+
+    _ylabel = "Relative energy  (vs Base-1C)" if metric == "energy" else "Relative power  (vs Base-1C)"
     ax.set_ylabel(_ylabel, fontsize=10)
     ax.yaxis.grid(True, linestyle="--", linewidth=0.5, alpha=0.6, zorder=0)
     ax.set_axisbelow(True)
-    _metric_lbl = "Power" if metric == "power" else "Energy"
-    ax.set_title(
-        f"EPYC7A53 + MI250X {_metric_lbl} Breakdown — N={N} states, T={T:,}",
-        fontsize=10,
-    )
 
     comp_handles = [
         mpatches.Patch(facecolor=COMPONENT_COLORS[c], edgecolor="#555",
                        linewidth=0.6, label=COMPONENT_LABELS[c])
         for c in active_components
     ]
-    spacer = mpatches.Patch(visible=False, label="")
-    combo_handles = [
-        mpatches.Patch(
-            facecolor=COMBINED_SYSTEM_COLORS.get(sys_tc.split("/")[0], "#dddddd"),
-            edgecolor="#555",
-            hatch=HATCHES[ci % len(HATCHES)], linewidth=0.6,
-            label=(
-                f"{FUNCTION_LABELS.get(func, func)}"
-                f" — {SYSTEM_LABELS.get(sys_tc.split('/')[0], sys_tc.split('/')[0])}"
-            ),
-        )
-        for ci, (func, sys_tc) in enumerate(ordered_combos)
-    ]
     ax.legend(
-        comp_handles + [spacer] + combo_handles,
-        [h.get_label() for h in comp_handles + [spacer] + combo_handles],
-        fontsize=7.5, loc="upper left",
-        bbox_to_anchor=(1.01, 1), borderaxespad=0,
-        title="Components  /  Algorithms",
-        title_fontsize=8,
+        comp_handles,
+        [h.get_label() for h in comp_handles],
+        fontsize=7.5, loc="upper left", ncol=4,
     )
 
     out_dir  = os.path.join(OUT_ROOT, metric, "combined")
