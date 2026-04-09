@@ -583,7 +583,7 @@ def make_combined_plot(N, T, all_systems, all_metric_data, d_values, metric):
     out_dir  = os.path.join(OUT_ROOT, metric, "combined")
     out_path = os.path.join(out_dir, f"combined_{N}s_{T}t_{metric}.pdf")
     os.makedirs(out_dir, exist_ok=True)
-    fig.subplots_adjust(left=0.15, right=0.97, top=0.93, bottom=0.35)
+    fig.subplots_adjust(left=0.15, right=0.97, top=0.93, bottom=0.22)
     fig.savefig(out_path)
     plt.close(fig)
     print(f"Saved: {out_path}")

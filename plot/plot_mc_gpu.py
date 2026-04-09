@@ -5,7 +5,7 @@ plot_mc_gpu.py — multicore + GPU speedup: Base-MC, Tens-MC, Tens-GPU.
 Reference:
   CPU systems: each system's own Base-MC (HSMMLearn OMP). Base-MC bars = 1.0.
                Tens-MC height = own Base-MC_time / own Tens-MC_time.
-  GPU systems: EPYC-7A53/cray Base-MC time as fixed reference.
+  GPU systems: fastest Base-MC among xeon8480/intel, gh200-grace/gnu14, epyc-7a53/cray (chosen globally).
                Tens-GPU height = epyc7a53_base_mc_time / GPU_time.
 
 X-axis: D values. Groups per D: algorithm order with bracket annotations.
@@ -49,7 +49,7 @@ DEFAULT_TOOLCHAINS = {
     "gh200-grace": "gnu14",
 }
 
-EXCLUDED_SYSTEMS = ["epyc-7763-bigmem", "epyc-9474f", "gh200-hopper"]
+EXCLUDED_SYSTEMS = ["epyc-7763-bigmem", "epyc-9474f", "gh200-hopper", "b200"]
 
 SYSTEM_LABELS = {
     "epyc-7763":    "AMD EPYC 7763",
@@ -199,7 +199,12 @@ def _fmt_time(t):
 
 
 def make_plot(N, T, all_systems, all_data, d_values):
-    cpu_systems = sorted(s for s in all_systems if not _is_gpu(s, all_data))
+    # Sort CPU systems by CPU_ORDER first, before building ordered_combos
+    cpu_systems = sorted(
+        (s for s in all_systems if not _is_gpu(s, all_data)),
+        key=lambda s: CPU_ORDER.index(s.split("/")[0])
+                      if s.split("/")[0] in CPU_ORDER else len(CPU_ORDER),
+    )
     gpu_systems = sorted(
         (s for s in all_systems if _is_gpu(s, all_data)),
         key=lambda s: GPU_GENERATION.get(s.split("/")[0], 99),
@@ -217,13 +222,6 @@ def make_plot(N, T, all_systems, all_data, d_values):
 
     if not ordered_combos:
         return
-
-    # Sort CPU systems by CPU_ORDER; GPU systems already sorted by GPU_GENERATION
-    cpu_systems = sorted(
-        cpu_systems,
-        key=lambda s: CPU_ORDER.index(s.split("/")[0])
-                      if s.split("/")[0] in CPU_ORDER else len(CPU_ORDER),
-    )
 
     # Per-system colors (no shading — each system has its own distinct color)
     sys_colors = {}
@@ -257,10 +255,22 @@ def make_plot(N, T, all_systems, all_data, d_values):
             _pos += bar_width
         _pos += group_gap
 
-    EPYC_REF = "epyc-7a53/cray"
+    # Pick the single fastest CPU reference system (globally, across all D values)
+    # among the three candidates, then use it consistently for every configuration.
+    _CPU_CANDIDATES = ["xeon8480/intel", "gh200-grace/gnu14", "epyc-7a53/cray"]
+    _cand_totals = {}
+    for _cand in _CPU_CANDIDATES:
+        _vals = [
+            v[BASE_MC_FUNC]["mean"]
+            for v in all_data.get(_cand, {}).values()
+            if BASE_MC_FUNC in v and v[BASE_MC_FUNC]["mean"] > 0
+        ]
+        if _vals:
+            _cand_totals[_cand] = sum(_vals) / len(_vals)
+    CPU_REF = min(_cand_totals, key=_cand_totals.get) if _cand_totals else "epyc-7a53/cray"
 
     def best_cpu_base_mc(D_val):
-        ref_data = all_data.get(EPYC_REF, {}).get(D_val, {}).get(BASE_MC_FUNC)
+        ref_data = all_data.get(CPU_REF, {}).get(D_val, {}).get(BASE_MC_FUNC)
         return ref_data["mean"] if ref_data is not None else None
 
     def get_ref_time(func, sys_tc, D_val):
@@ -315,11 +325,11 @@ def make_plot(N, T, all_systems, all_data, d_values):
         plt.close(fig); return
 
     # --- bar top annotations: base_time → tens_time (vertical, rotated 90°) ---
-    _ann = dict(ha="center", va="bottom", fontsize=9, fontweight="bold",
+    _ann = dict(ha="center", va="bottom", fontsize=11, fontweight="bold",
                 rotation=90, clip_on=True,
                 xycoords="data", textcoords="offset points")
     gap = 2.0
-    cpt = 6.2   # approx display-points per character at fontsize 9 bold
+    cpt = 6.6   # approx display-points per character at fontsize 9 bold
     first_bar_xy      = None
     first_bar_top_off = None
     for (func, sys_tc, di), (ref, m, spd, err, x_bar) in sorted(bar_data.items()):
@@ -346,7 +356,7 @@ def make_plot(N, T, all_systems, all_data, d_values):
                 xy=(x_bar, 1.0),
                 xytext=(0, 4),
                 textcoords="offset points",
-                ha="center", va="bottom", fontsize=9, fontweight="bold",
+                ha="center", va="bottom", fontsize=11, fontweight="bold",
                 color="#cc0000", clip_on=False, zorder=5,
             )
 
@@ -355,7 +365,12 @@ def make_plot(N, T, all_systems, all_data, d_values):
     ax.set_ylim(1.0, ymax * 1.30)
     import matplotlib.ticker as mtick
     ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda y, _: f"{y:.0f}x"))
-    ax.tick_params(axis="y", labelsize=10)
+    # Ensure 1x tick is present at the bottom
+    _yticks = list(ax.get_yticks())
+    if 1.0 not in _yticks:
+        _yticks = sorted([1.0] + [t for t in _yticks if t > 1.0])
+        ax.set_yticks(_yticks)
+    ax.tick_params(axis="y", labelsize=12)
 
     # Place two annotation boxes (stacked): Tens-MC and Tens-GPU references
     if first_bar_xy is not None:
@@ -366,28 +381,30 @@ def make_plot(N, T, all_systems, all_data, d_values):
         ax.annotate(
             "Base-MC Time → Tens-MC Time",
             xy=tip_px,
-            xytext=(0.48, 0.97),
+            xytext=(0.50, 0.97),
             xycoords="figure pixels",
             textcoords="axes fraction",
             fontsize=9, fontweight="bold", color="black",
             ha="center", va="top",
+            rotation=90,
             bbox=dict(facecolor="white", edgecolor="black",
                       boxstyle="round,pad=0.3", linewidth=0.8),
         )
         ax.annotate(
             "Base-MC Time → Tens-GPU Time",
             xy=tip_px,
-            xytext=(0.48, 0.90),
+            xytext=(0.55, 0.97),
             xycoords="figure pixels",
             textcoords="axes fraction",
             fontsize=9, fontweight="bold", color="black",
             ha="center", va="top",
+            rotation=90,
             bbox=dict(facecolor="white", edgecolor="black",
                       boxstyle="round,pad=0.3", linewidth=0.8),
         )
 
     ax.set_xticks(x_pos)
-    ax.set_xticklabels([str(D) for D in d_values], fontsize=10)
+    ax.set_xticklabels([str(D) for D in d_values], fontsize=12)
 
     if len(func_groups) > 1:
         _blended = mtrans.blended_transform_factory(ax.transData, ax.transAxes)
@@ -405,11 +422,11 @@ def make_plot(N, T, all_systems, all_data, d_values):
                         transform=_blended, color="black", lw=0.9, clip_on=False)
                 ax.text(xm, _lbl_y, FUNC_LABELS.get(gfunc, gfunc),
                         transform=_blended, ha="center", va="top",
-                        fontsize=7.5, clip_on=False)
+                        fontsize=9.5, clip_on=False)
 
     labelpad = 35 if len(func_groups) > 1 else 8
-    ax.set_xlabel("Duration  D", fontsize=11, labelpad=labelpad)
-    ax.set_ylabel("Speedup over Base-MC (higher=better)", fontsize=11)
+    ax.set_xlabel("Duration  D", fontsize=13, labelpad=labelpad)
+    ax.set_ylabel("Speedup over Base-MC (higher=better)", fontsize=13)
     ax.yaxis.grid(True, linestyle="--", linewidth=0.5, alpha=0.6, zorder=0)
     ax.set_axisbelow(True)
 
@@ -454,7 +471,7 @@ def make_plot(N, T, all_systems, all_data, d_values):
     legend_handles = _cpu_handles + _gpu_handles
     ncols = 2 if (_cpu_handles and _gpu_handles) else 1
 
-    ax.legend(handles=legend_handles, fontsize=9, loc="upper left",
+    ax.legend(handles=legend_handles, fontsize=10, loc="upper left",
               bbox_to_anchor=(0.01, 0.99), ncol=ncols, frameon=True, framealpha=0.85,
               handlelength=1.5, handletextpad=0.5, columnspacing=1.0)
 

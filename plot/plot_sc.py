@@ -129,7 +129,8 @@ def load_means(system, n, d, t):
     if not files:
         return {}
     df = pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
-    df = df[df["iteration"] != 0]
+    if df["iteration"].nunique() > 1:
+        df = df[df["iteration"] != 0]
     result = {}
     for func, grp in df.groupby("function"):
         result[func] = {
@@ -295,7 +296,8 @@ def make_plot(T, cpu_systems, all_data, n_values, d_values):
             xycoords="figure pixels",
             textcoords="axes fraction",
             fontsize=9, fontweight="bold", color="black",
-            ha="left", va="top",
+            ha="center", va="top",
+            rotation=90,
             bbox=dict(facecolor="white", edgecolor="black",
                       boxstyle="round,pad=0.3", linewidth=0.8),
             #arrowprops=dict(arrowstyle="-", color="black", lw=0.8),
@@ -355,8 +357,8 @@ def make_plot(T, cpu_systems, all_data, n_values, d_values):
         )
         for si, sys_tc in enumerate(cpu_systems)
     ]
-    ax.legend(handles=legend_handles, fontsize=12, loc="upper right",
-              bbox_to_anchor=(0.99, 0.99), ncol=1, frameon=True, framealpha=0.85)
+    ax.legend(handles=legend_handles, fontsize=12, loc="upper center",
+              bbox_to_anchor=(0.5, 0.99), ncol=3, frameon=True, framealpha=0.85)
 
     os.makedirs(OUT_ROOT, exist_ok=True)
     out_path = os.path.join(OUT_ROOT, f"sc_{T}t.pdf")

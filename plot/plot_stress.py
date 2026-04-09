@@ -145,7 +145,7 @@ def make_plot(data):
 
 
 
-    fig.subplots_adjust(left=0.15, right=0.97, top=0.93, bottom=0.35)
+    fig.subplots_adjust(left=0.15, right=0.97, top=0.93, bottom=0.22)
     os.makedirs(OUT_DIR, exist_ok=True)
     out_path = os.path.join(OUT_DIR, f"stress_{N}s_{T}t.pdf")
     fig.savefig(out_path)
