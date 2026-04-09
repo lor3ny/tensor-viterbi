@@ -42,6 +42,7 @@ DEFAULT_TOOLCHAINS = {
     "mi250x":    "cray",
     "epyc-7763": "cray",
     "xeon8480":  "intel",
+    "gh200-grace": "gnu14",
 }
 
 EXCLUDED_SYSTEMS = ["epyc-7763-bigmem", "epyc-9474f"]
@@ -56,7 +57,7 @@ SYSTEM_ORDER = [
 
 SYSTEM_LABELS = {
     "epyc-7763":    "AMD EPYC 7763",
-    "xeon8480":     "Intel Xeon 8480",
+    "xeon8480":     "Intel Xeon 8480+",
     "gh200-grace":  "ARM Grace",
     "epyc-7a53":    "AMD EPYC 7A53",
     "a64fx":        "A64FX",
@@ -333,7 +334,7 @@ def make_plot(T, cpu_systems, all_data, n_values, d_values):
                 fontsize=12, clip_on=False)
 
     ax.set_xlabel("", labelpad=0)
-    ax.set_ylabel("Speedup  (Tens-1C / Base-1C,  higher = faster)", fontsize=12)
+    ax.set_ylabel("Speedup over Base-1C (higher=better)", fontsize=12)
     ax.yaxis.grid(True, linestyle="--", linewidth=0.5, alpha=0.6, zorder=0)
     ax.set_axisbelow(True)
     ax.tick_params(axis="both", labelsize=12)

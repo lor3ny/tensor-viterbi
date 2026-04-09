@@ -226,13 +226,13 @@ submit_job() {
 #durations=(100 250 500 1000)
 #timesteps=(1000000)
 
-# states=(10 15 25 50 75)
-# durations=(100 250 500 1000)
-# timesteps=(1000 10000) # 100000)
+states=(10 15 25 50 75)
+durations=(100 250 500 1000)
+timesteps=(100000) # 100000)
 
-states=(100)
-durations=(10000)
-timesteps=(10000000)
+#states=(100)
+#durations=(10000)
+#timesteps=(10000000)
 
 
 # Pre-flight: verify that compile.sh has already been run for this system/toolchain.

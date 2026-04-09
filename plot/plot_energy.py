@@ -39,21 +39,24 @@ DEFAULT_TOOLCHAINS = {
     "a100":      "cuda",
     "b200":      "cuda",
     "h100":      "cuda",
+    "h200":      "cuda",
     "mi250x":    "cray",
     "epyc-7763": "cray",
     "xeon8480":  "intel",
+    "gh200-grace": "gnu14",
 }
 
-EXCLUDED_SYSTEMS = ["epyc-7763-bigmem", "epyc-9474f"]
+EXCLUDED_SYSTEMS = ["epyc-7763-bigmem", "epyc-9474f", "gh200-hopper"]
 
 SYSTEM_LABELS = {
     "epyc-7763":    "AMD EPYC 7763",
     "epyc-7a53":    "AMD EPYC 7A53",
-    "xeon8480":     "Intel Xeon 8480",
+    "xeon8480":     "Intel Xeon 8480+",
     "a100":         "A100",
     "mi250x":       "MI250X",
     "h100":         "H100",
-    "gh200-hopper": "GH200",
+    "h200":          "H200",
+    "gh200-hopper": "H100",
     "gh200-grace":  "ARM Grace",
     "mi300x":       "MI300X",
     "b200":         "B200",
@@ -64,7 +67,7 @@ GPU_GENERATION = {
     "a100":         0,
     "mi250x":       1,
     "h100":         2,
-    "gh200-hopper": 3,
+    "h200":          3,
     "mi300x":       4,
     "b200":         5,
 }
@@ -307,7 +310,7 @@ def make_plot(N, T, kind, all_systems, all_metric_data, d_values, metric):
     bar_width = 0.8 / n_combos
     x_pos     = np.arange(len(d_values), dtype=float)
 
-    fig_w = max(8, len(d_values) * (n_combos * bar_width + 0.6) + 4)
+    fig_w = max(4, len(d_values) * (n_combos * bar_width + 0.6) + 4)
     fig, ax = plt.subplots(figsize=(fig_w, 5.5))
 
     any_data = False
@@ -469,8 +472,8 @@ def make_combined_plot(N, T, all_systems, all_metric_data, d_values, metric):
         ref_total = _apply_accel_filter(ref_comps, "epyc-7a53").get("total", 0.0) if ref_comps else 0.0
         _base_ref[D] = ref_total if ref_total > 0 else np.nan
 
-    fig_w = max(9, len(d_values) * (n_combos * bar_width + 1.0) + 4)
-    fig, ax = plt.subplots(figsize=(fig_w, 5.5))
+    fig_w = max(4, len(d_values) * (n_combos * bar_width + 0.4) + 4)
+    fig, ax = plt.subplots(figsize=(6, 5.5))
 
     bar_tops = {}   # (ci, di) -> top of bar (relative units) for annotation
     any_data = False
@@ -530,7 +533,7 @@ def make_combined_plot(N, T, all_systems, all_metric_data, d_values, metric):
             ax.text(
                 x_pos[di] + offset, top + 0.003,
                 lbl, ha="center", va="bottom",
-                fontsize=9, rotation=90, color="#222",
+                fontsize=13, rotation=90, color="#222",
             )
 
     # Per-bar sub-labels (func name) as x-ticks; D group labels between them and xlabel
@@ -543,10 +546,10 @@ def make_combined_plot(N, T, all_systems, all_metric_data, d_values, metric):
             all_bar_labels.append(FUNCTION_LABELS.get(func, func))
     if bar_tops:
         y_max = max(bar_tops.values())
-        ax.set_ylim(0, y_max * 1.2)
+        ax.set_ylim(0, y_max * 1.6)
 
     ax.set_xticks(all_bar_pos)
-    ax.set_xticklabels(all_bar_labels, rotation=45, ha="right", fontsize=9)
+    ax.set_xticklabels(all_bar_labels, rotation=45, ha="right", fontsize=11)
     ax.tick_params(axis="x", length=0)
 
     # D group labels directly below the rotated func labels (above xlabel)
@@ -554,13 +557,15 @@ def make_combined_plot(N, T, all_systems, all_metric_data, d_values, metric):
         ax.annotate(
             str(D),
             xy=(x_pos[di], 0), xycoords=("data", "axes fraction"),
-            xytext=(0, -38), textcoords="offset points",
-            ha="center", va="top", fontsize=9, annotation_clip=False,
+            xytext=(0, -50), textcoords="offset points",
+            ha="center", va="top", fontsize=11, annotation_clip=False,
         )
-    ax.set_xlabel("Duration  D", fontsize=10, labelpad=14)
+    ax.set_xlabel("Duration  D", fontsize=12, labelpad=14)
 
-    _ylabel = "Relative energy  (vs Base-1C)" if metric == "energy" else "Relative power  (vs Base-1C)"
-    ax.set_ylabel(_ylabel, fontsize=10)
+    _ylabel = "Relative energy  (over Base-1C)" if metric == "energy" else "Relative power  (vs Base-1C)"
+    ax.set_ylabel(_ylabel, fontsize=12)
+    import matplotlib.ticker as mtick
+    ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0, decimals=0))
     ax.yaxis.grid(True, linestyle="--", linewidth=0.5, alpha=0.6, zorder=0)
     ax.set_axisbelow(True)
 
@@ -572,13 +577,14 @@ def make_combined_plot(N, T, all_systems, all_metric_data, d_values, metric):
     ax.legend(
         comp_handles,
         [h.get_label() for h in comp_handles],
-        fontsize=7.5, loc="upper left", ncol=4,
+        fontsize=11.5, loc="upper left", ncol=4,
     )
 
     out_dir  = os.path.join(OUT_ROOT, metric, "combined")
     out_path = os.path.join(out_dir, f"combined_{N}s_{T}t_{metric}.pdf")
     os.makedirs(out_dir, exist_ok=True)
-    fig.savefig(out_path, bbox_inches="tight")
+    fig.subplots_adjust(left=0.15, right=0.97, top=0.93, bottom=0.35)
+    fig.savefig(out_path)
     plt.close(fig)
     print(f"Saved: {out_path}")
 
@@ -590,6 +596,8 @@ def main():
                         default="both",
                         help="Which metric to plot (default: both)")
     parser.add_argument("--all-toolchains", action="store_true")
+    parser.add_argument("--durations", "-d", type=int, nargs="+", default=None,
+                        help="Restrict to these D values (e.g. -d 100 1000)")
     args = parser.parse_args()
 
     metrics = ["energy", "power"] if args.metric == "both" else [args.metric]
@@ -620,6 +628,10 @@ def main():
         if not d_set:
             continue
         d_values = sorted(d_set)
+        if args.durations:
+            d_values = [d for d in d_values if d in args.durations]
+        if not d_values:
+            continue
 
         if "energy" in metrics:
             all_energy = {

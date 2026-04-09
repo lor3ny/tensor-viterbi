@@ -5,8 +5,8 @@ plot_mc_gpu.py — multicore + GPU speedup: Base-MC, Tens-MC, Tens-GPU.
 Reference:
   CPU systems: each system's own Base-MC (HSMMLearn OMP). Base-MC bars = 1.0.
                Tens-MC height = own Base-MC_time / own Tens-MC_time.
-  GPU systems: best (fastest) CPU Base-MC time across all CPU systems.
-               Tens-GPU height = best_cpu_base_mc_time / GPU_time.
+  GPU systems: EPYC-7A53/cray Base-MC time as fixed reference.
+               Tens-GPU height = epyc7a53_base_mc_time / GPU_time.
 
 X-axis: D values. Groups per D: algorithm order with bracket annotations.
 One plot per (N, T).
@@ -42,21 +42,24 @@ DEFAULT_TOOLCHAINS = {
     "a100":      "cuda",
     "b200":      "cuda",
     "h100":      "cuda",
+    "h200":      "cuda",
     "mi250x":    "cray",
     "epyc-7763": "cray",
     "xeon8480":  "intel",
+    "gh200-grace": "gnu14",
 }
 
-EXCLUDED_SYSTEMS = ["epyc-7763-bigmem", "epyc-9474f"]
+EXCLUDED_SYSTEMS = ["epyc-7763-bigmem", "epyc-9474f", "gh200-hopper"]
 
 SYSTEM_LABELS = {
     "epyc-7763":    "AMD EPYC 7763",
     "epyc-7a53":    "AMD EPYC 7A53",
-    "xeon8480":     "Intel Xeon 8480",
+    "xeon8480":     "Intel Xeon 8480+",
     "a100":         "A100",
     "mi250x":       "MI250X",
     "h100":         "H100",
-    "gh200-hopper": "H200",
+    "h200":          "H200",
+    "gh200-hopper": "H100",
     "gh200-grace":  "ARM Grace",
     "mi300x":       "MI300X",
     "b200":         "B200",
@@ -77,7 +80,7 @@ CPU_COLORS = {
 GPU_GENERATION = {
     "a100":         0,
     "h100":         1,
-    "gh200-hopper": 2,
+    "h200":          2,
     "b200":         3,
     "mi250x":       4,
     "mi300x":       5,
@@ -86,6 +89,7 @@ GPU_COLORS = {
     "a100":         "#4393C3",
     "h100":         "#74C476",
     "gh200-hopper": "#FD8D3C",
+    "h200":         "#4DAF4A",
     "b200":         "#D6604D",
     "mi250x":       "#9E9AC8",
     "mi300x":       "#E7298A",
@@ -253,11 +257,11 @@ def make_plot(N, T, all_systems, all_data, d_values):
             _pos += bar_width
         _pos += group_gap
 
+    EPYC_REF = "epyc-7a53/cray"
+
     def best_cpu_base_mc(D_val):
-        times = [all_data[s].get(D_val, {}).get(BASE_MC_FUNC, {}).get("mean")
-                 for s in cpu_systems]
-        times = [t for t in times if t is not None]
-        return min(times) if times else None
+        ref_data = all_data.get(EPYC_REF, {}).get(D_val, {}).get(BASE_MC_FUNC)
+        return ref_data["mean"] if ref_data is not None else None
 
     def get_ref_time(func, sys_tc, D_val):
         """Return (ref_mean, tens_mean, err) or (None, None, None)."""
@@ -353,20 +357,31 @@ def make_plot(N, T, all_systems, all_data, d_values):
     ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda y, _: f"{y:.0f}x"))
     ax.tick_params(axis="y", labelsize=10)
 
-    # Place "Base-MC Time → Tens-MC/GPU Time" box (top-right)
+    # Place two annotation boxes (stacked): Tens-MC and Tens-GPU references
     if first_bar_xy is not None:
         fig.canvas.draw()
         disp_anchor = ax.transData.transform(first_bar_xy)
         top_px      = first_bar_top_off * fig.dpi / 72.0
         tip_px      = (disp_anchor[0], disp_anchor[1] + top_px)
         ax.annotate(
-            "Base-MC Time → Tens-MC/GPU Time",
+            "Base-MC Time → Tens-MC Time",
             xy=tip_px,
-            xytext=(0.98, 0.97),
+            xytext=(0.48, 0.97),
             xycoords="figure pixels",
             textcoords="axes fraction",
             fontsize=9, fontweight="bold", color="black",
-            ha="right", va="top",
+            ha="center", va="top",
+            bbox=dict(facecolor="white", edgecolor="black",
+                      boxstyle="round,pad=0.3", linewidth=0.8),
+        )
+        ax.annotate(
+            "Base-MC Time → Tens-GPU Time",
+            xy=tip_px,
+            xytext=(0.48, 0.90),
+            xycoords="figure pixels",
+            textcoords="axes fraction",
+            fontsize=9, fontweight="bold", color="black",
+            ha="center", va="top",
             bbox=dict(facecolor="white", edgecolor="black",
                       boxstyle="round,pad=0.3", linewidth=0.8),
         )
@@ -394,7 +409,7 @@ def make_plot(N, T, all_systems, all_data, d_values):
 
     labelpad = 35 if len(func_groups) > 1 else 8
     ax.set_xlabel("Duration  D", fontsize=11, labelpad=labelpad)
-    ax.set_ylabel("Speedup vs Base-MC  (higher = faster)", fontsize=11)
+    ax.set_ylabel("Speedup over Base-MC (higher=better)", fontsize=11)
     ax.yaxis.grid(True, linestyle="--", linewidth=0.5, alpha=0.6, zorder=0)
     ax.set_axisbelow(True)
 

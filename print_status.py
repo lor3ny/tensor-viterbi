@@ -30,6 +30,7 @@ T_OVERRIDES = {
 EXCLUDED_SYSTEMS = [
     "epyc-7763-bigmem",
     "epyc-9474f",
+    "gh200-hopper",
 ]
 
 CPU_FUNCTIONS = [
@@ -39,6 +40,12 @@ CPU_FUNCTIONS = [
     "decode_tensor_viterbi_omp_opt",
 ]
 GPU_FUNCTIONS = ["decode_tensor_viterbi_cuda"]
+
+# Human-readable display names for system keys (overrides the raw key in table rows)
+SYSTEM_DISPLAY = {
+    "gh200-hopper": "h200",
+    "gh200-grace":  "gh200-grace",
+}
 
 # GPU generation order (older → newer)
 GPU_GENERATION = {
@@ -194,7 +201,7 @@ def main():
         conf_sys_tc | result_sys_tc,
         key=lambda s: row_key(s, sys_type),
     )
-    EXCLUDED_SYS_TC = {"xeon8480/gnu"}
+    EXCLUDED_SYS_TC = {"xeon8480/gnu", "mi250x/amd", "mi250x/gnu", "gh200-grace/gnu"}
     all_sys_tc = [s for s in all_sys_tc
                   if s.split("/")[0] not in EXCLUDED_SYSTEMS
                   and s not in EXCLUDED_SYS_TC]
@@ -236,7 +243,8 @@ def main():
                 cells.append(fmt_cell(*count_csvs(sys_tc, T, functions,
                                                    ov.get("states"), ov.get("durations"))))
 
-        print(f"{sys_tc:<{ROW_W}}", end="")
+        display = SYSTEM_DISPLAY.get(sys, sys) + "/" + sys_tc.split("/")[1]
+        print(f"{display:<{ROW_W}}", end="")
         for c in cells:
             print(f"  {c}", end="")
         print()
