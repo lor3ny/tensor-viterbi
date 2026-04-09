@@ -17,6 +17,8 @@ import os
 
 import matplotlib
 matplotlib.use("Agg")
+matplotlib.rcParams["pdf.fonttype"] = 42
+matplotlib.rcParams["ps.fonttype"] = 42
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -131,12 +133,13 @@ def make_plot(data):
         hrs = m / 60
         lbl = f"{hrs:.1f}h" if hrs >= 1.0 else f"{m:.1f}min"
         ax.text(x_pos[i], m + _gap, lbl,
-                va="bottom", ha="center", fontsize=13, rotation=90)
+                va="bottom", ha="center", fontsize=14, rotation=90)
 
     ax.set_xticks(x_pos)
     ax.set_xticklabels(labels, fontsize=14)
 
-    ax.set_ylabel("Runtime (minutes)", fontsize=14)
+    ax.set_ylabel("Runtime (minutes)", fontsize=15)
+    ax.tick_params(axis="y", labelsize=14)
     ax.yaxis.grid(True, linestyle="--", linewidth=0.5, alpha=0.6, zorder=0)
     ax.set_axisbelow(True)
 

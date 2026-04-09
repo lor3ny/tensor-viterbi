@@ -26,6 +26,8 @@ import sys
 
 import matplotlib
 matplotlib.use("Agg")
+matplotlib.rcParams["pdf.fonttype"] = 42
+matplotlib.rcParams["ps.fonttype"] = 42
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
@@ -533,7 +535,7 @@ def make_combined_plot(N, T, all_systems, all_metric_data, d_values, metric):
             ax.text(
                 x_pos[di] + offset, top + 0.003,
                 lbl, ha="center", va="bottom",
-                fontsize=13, rotation=90, color="#222",
+                fontsize=15, rotation=90, color="#222",
             )
 
     # Per-bar sub-labels (func name) as x-ticks; D group labels between them and xlabel
@@ -549,7 +551,7 @@ def make_combined_plot(N, T, all_systems, all_metric_data, d_values, metric):
         ax.set_ylim(0, y_max * 1.6)
 
     ax.set_xticks(all_bar_pos)
-    ax.set_xticklabels(all_bar_labels, rotation=45, ha="right", fontsize=11)
+    ax.set_xticklabels(all_bar_labels, rotation=45, ha="right", fontsize=14)
     ax.tick_params(axis="x", length=0)
 
     # D group labels directly below the rotated func labels (above xlabel)
@@ -557,15 +559,16 @@ def make_combined_plot(N, T, all_systems, all_metric_data, d_values, metric):
         ax.annotate(
             str(D),
             xy=(x_pos[di], 0), xycoords=("data", "axes fraction"),
-            xytext=(0, -50), textcoords="offset points",
-            ha="center", va="top", fontsize=11, annotation_clip=False,
+            xytext=(0, -58), textcoords="offset points",
+            ha="center", va="top", fontsize=14, annotation_clip=False,
         )
-    ax.set_xlabel("Duration  D", fontsize=12, labelpad=14)
+    ax.set_xlabel("Duration  D", fontsize=15, labelpad=14)
 
     _ylabel = "Relative energy  (over Base-1C)" if metric == "energy" else "Relative power  (vs Base-1C)"
-    ax.set_ylabel(_ylabel, fontsize=12)
+    ax.set_ylabel(_ylabel, fontsize=15)
     import matplotlib.ticker as mtick
     ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0, decimals=0))
+    ax.tick_params(axis="y", labelsize=14)
     ax.yaxis.grid(True, linestyle="--", linewidth=0.5, alpha=0.6, zorder=0)
     ax.set_axisbelow(True)
 
@@ -577,7 +580,7 @@ def make_combined_plot(N, T, all_systems, all_metric_data, d_values, metric):
     ax.legend(
         comp_handles,
         [h.get_label() for h in comp_handles],
-        fontsize=11.5, loc="upper left", ncol=4,
+        fontsize=14.5, loc="upper left", ncol=2,
     )
 
     out_dir  = os.path.join(OUT_ROOT, metric, "combined")
@@ -596,7 +599,7 @@ def main():
                         default="both",
                         help="Which metric to plot (default: both)")
     parser.add_argument("--all-toolchains", action="store_true")
-    parser.add_argument("--durations", "-d", type=int, nargs="+", default=None,
+    parser.add_argument("--durations", "-d", type=int, nargs="+", default=[100, 1000],
                         help="Restrict to these D values (e.g. -d 100 1000)")
     args = parser.parse_args()
 
@@ -627,9 +630,7 @@ def main():
                     pass
         if not d_set:
             continue
-        d_values = sorted(d_set)
-        if args.durations:
-            d_values = [d for d in d_values if d in args.durations]
+        d_values = sorted(d for d in d_set if d in args.durations)
         if not d_values:
             continue
 

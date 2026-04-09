@@ -28,6 +28,8 @@ from itertools import groupby as _groupby
 
 import matplotlib
 matplotlib.use("Agg")
+matplotlib.rcParams["pdf.fonttype"] = 42
+matplotlib.rcParams["ps.fonttype"] = 42
 import matplotlib.patches as mpatches
 import matplotlib.transforms as mtrans
 import matplotlib.pyplot as plt
@@ -325,11 +327,11 @@ def make_plot(N, T, all_systems, all_data, d_values):
         plt.close(fig); return
 
     # --- bar top annotations: base_time → tens_time (vertical, rotated 90°) ---
-    _ann = dict(ha="center", va="bottom", fontsize=11, fontweight="bold",
+    _ann = dict(ha="center", va="bottom", fontsize=13, fontweight="bold",
                 rotation=90, clip_on=True,
                 xycoords="data", textcoords="offset points")
     gap = 2.0
-    cpt = 6.6   # approx display-points per character at fontsize 9 bold
+    cpt = 8   # approx display-points per character at fontsize 13 bold
     first_bar_xy      = None
     first_bar_top_off = None
     for (func, sys_tc, di), (ref, m, spd, err, x_bar) in sorted(bar_data.items()):
@@ -356,13 +358,13 @@ def make_plot(N, T, all_systems, all_data, d_values):
                 xy=(x_bar, 1.0),
                 xytext=(0, 4),
                 textcoords="offset points",
-                ha="center", va="bottom", fontsize=11, fontweight="bold",
+                ha="center", va="bottom", fontsize=13, fontweight="bold",
                 color="#cc0000", clip_on=False, zorder=5,
             )
 
     # --- y-axis: start at 1, tick labels as "Nx" ---
     _, ymax = ax.get_ylim()
-    ax.set_ylim(1.0, ymax * 1.30)
+    ax.set_ylim(1.0, ymax * 1.43)
     import matplotlib.ticker as mtick
     ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda y, _: f"{y:.0f}x"))
     # Ensure 1x tick is present at the bottom
@@ -486,6 +488,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--states",         "-s", type=int, default=None)
     parser.add_argument("--timesteps",      "-t", type=int, default=None)
+    parser.add_argument("--durations",      "-d", type=int, nargs="+", default=None)
     parser.add_argument("--all-toolchains", action="store_true")
     args = parser.parse_args()
 
@@ -517,6 +520,10 @@ def main():
         if not d_set:
             continue
         d_values = sorted(d_set)
+        if args.durations:
+            d_values = [d for d in d_values if d in args.durations]
+        if not d_values:
+            continue
 
         all_data = {
             sys_tc: {D: load_means(sys_tc, N, D, T) for D in d_values}

@@ -25,6 +25,8 @@ import sys
 
 import matplotlib
 matplotlib.use("Agg")
+matplotlib.rcParams["pdf.fonttype"] = 42
+matplotlib.rcParams["ps.fonttype"] = 42
 import matplotlib.patches as mpatches
 import matplotlib.transforms as mtrans
 import matplotlib.pyplot as plt
@@ -252,12 +254,12 @@ def make_plot(T, cpu_systems, all_data, n_values, d_values):
             label_arrow  = "\u2192"
             label_target = _fmt_time(target["mean"])
             gap  = 2.0
-            cpt  = 6.9   # display-points per character at fontsize 10 bold
+            cpt  = 8.0   # display-points per character at fontsize 13 bold
             off0 = 2.0
             off1 = off0 + max(len(label_base),   2) * cpt + gap
             off2 = off1 + max(len(label_arrow),  1) * cpt + gap
             off3 = off2 + max(len(label_target), 2) * cpt       # top of stack
-            _ann = dict(ha="center", va="bottom", fontsize=10, fontweight="bold",
+            _ann = dict(ha="center", va="bottom", fontsize=13, fontweight="bold",
                         rotation=90, clip_on=True,
                         xycoords="data", textcoords="offset points")
             ax.annotate(label_base,   xy=(x_bar, spd + 0.10), xytext=(0, off0), color=color, **_ann)
@@ -273,13 +275,13 @@ def make_plot(T, cpu_systems, all_data, n_values, d_values):
         return
     
     if T == 1000:
-        ax.set_ylim(1, ymax * 1.35)
+        ax.set_ylim(1, ymax * 1.49)
     elif T == 10000:
-        ax.set_ylim(1, ymax * 1.35)
+        ax.set_ylim(1, ymax * 1.49)
     elif T == 100000:
-        ax.set_ylim(1, ymax * 1.45)
+        ax.set_ylim(1, ymax * 1.60)
     else:
-        ax.set_ylim(1, ymax * 1.45)
+        ax.set_ylim(1, ymax * 1.60)
 
     # Place the "Base-1C → Tens-1C" box after set_ylim so the display
     # transform is correct.  xy is given in figure-pixel coords so the tip
