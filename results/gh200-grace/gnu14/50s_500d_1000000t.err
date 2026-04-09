@@ -1,0 +1,17 @@
+Traceback (most recent call last):
+  File "/capstor/scratch/cscs/desensi/tensor-viterbi/run_viterbi.py", line 437, in <module>
+    benchmark_baseline_omp(data_path, csv_path=f"{_csv_base}_HSMMLearn_OMP.csv", iterations=args.iterations, n_states=N, timesteps=T, max_duration=D)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/capstor/scratch/cscs/desensi/tensor-viterbi/validation/hsmmlearn_omp_viterbi.py", line 97, in benchmark_baseline
+    decoded_states = model.decode(obs_seq)
+  File "/capstor/scratch/cscs/desensi/tensor-viterbi/.venv/gh200-grace/gnu14/lib/python3.13/site-packages/hsmmlearn_omp/hsmm.py", line 118, in decode
+    _viterbi_impl(
+    ~~~~~~~~~~~~~^
+        n_obs,
+        ^^^^^^
+    ...<6 lines>...
+        outputs,
+        ^^^^^^^^
+    )
+    ^
+KeyboardInterrupt
