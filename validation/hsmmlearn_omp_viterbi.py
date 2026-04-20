@@ -116,14 +116,7 @@ def measure_baseline(json_file: str):
     print(f"  {GRAY}time{R}  {WHITE}HSMMLearn OMP{R}  {BOLD}{GREEN}{elapsed:.4f} s{R}\n")
     return elapsed
 
-def validate(title_str: str, computed_states: np.ndarray, json_file: str, print_states: bool = False):
+def decode_baseline(json_file: str) -> np.ndarray:
+    """Run decode once and return the state sequence."""
     model, obs_seq = load_sleep_model_hsmmlearn(json_file)
-
-    decoded_states = model.decode(obs_seq)
-
-    if(print_states):
-        print(f'HSMMLearn OMP Decoded States: {decoded_states}')
-
-    acc = compute_accuracy(decoded_states, computed_states)
-    acc_color = GREEN if acc >= 0.95 else YEL
-    print(f"  {GRAY}accuracy{R}  {WHITE}{title_str}{R}  {BOLD}{acc_color}{acc:.2%}{R}\n")
+    return model.decode(obs_seq)

@@ -1,0 +1,192 @@
+{
+  "workstation": {
+    "scheduler": "local",
+    "type": "cpu",
+    "cpus": 8,
+    "toolchains": {
+      "gnu": {
+        "modules": "",
+        "modules_build": ""
+      }
+    }
+  },
+  "a100": {
+    "scheduler": "slurm",
+    "type": "gpu",
+    "partition": "boost_usr_prod",
+    "account": "IscrC_FOCAL",
+    "gpu_arch": "80",
+    "toolchains": {
+      "cuda": {
+        "modules": "cuda:python/3.11.7",
+        "modules_build": "cuda:python/3.11.7"
+      }
+    }
+  },
+  "xeon8480": {
+    "scheduler": "slurm",
+    "type": "cpu",
+    "partition": "dcgp_usr_prod",
+    "account": "IscrC_FOCAL_0",
+    "cpus": 112,
+    "toolchains": {
+      "intel": {
+        "modules": "python/3.11.7:intel-oneapi-compilers",
+        "modules_build": "python/3.11.7:intel-oneapi-compilers"
+      },
+      "gnu": {
+        "modules": "python/3.11.7",
+        "modules_build": "python/3.11.7"
+      }
+    }
+  },
+  "epyc-7a53": {
+    "scheduler": "slurm",
+    "type": "cpu",
+    "partition": "standard-g",
+    "account": "project_465002776",
+    "cpus": 56,
+    "toolchains": {
+      "cray": {
+        "modules": "LUMI/25.03:partition/G:cray-python",
+        "modules_build": "LUMI/25.03:partition/G:cray-python",
+        "metrics_backend": "cray_pm"
+      }
+    }
+  },
+  "epyc-7763-bigmem": {
+    "scheduler": "slurm",
+    "type": "cpu",
+    "partition": "small",
+    "account": "project_465002776",
+    "cpus": 128,
+    "toolchains": {
+      "cray": {
+        "modules": "LUMI/25.03:partition/C:cray-python",
+        "modules_build": "LUMI/25.03:partition/C:cray-python",
+        "metrics_backend": "cray_pm"
+      },
+      "aocc": {
+        "modules": "LUMI/25.03:partition/C:cray-python:PrgEnv-aocc",
+        "modules_build": "LUMI/25.03:partition/C:cray-python:PrgEnv-aocc"
+      },
+      "gnu": {
+        "modules": "LUMI/25.03:partition/C:cray-python:PrgEnv-gnu",
+        "modules_build": "LUMI/25.03:partition/C:cray-python:PrgEnv-gnu"
+      }
+    }
+  },
+  "mi250x": {
+    "scheduler": "slurm",
+    "type": "gpu",
+    "partition": "standard-g",
+    "account": "project_465002776",
+    "gpu_arch": "gfx90a",
+    "toolchains": {
+      "cray": {
+        "modules": "LUMI/25.03:partition/G:cray-python",
+        "modules_build": "LUMI/25.03:partition/G:rocm:cray-python",
+        "metrics_backend": "cray_pm"
+      },
+      "amd": {
+        "modules": "LUMI/25.03:partition/G:cray-python:PrgEnv-AMD",
+        "modules_build": "LUMI/25.03:partition/G:rocm:cray-python:PrgEnv-AMD"
+      },
+      "gnu": {
+        "modules": "LUMI/25.03:partition/G:cray-python:PrgEnv-gnu",
+        "modules_build": "LUMI/25.03:partition/G:rocm:cray-python:PrgEnv-gnu"
+      }
+    }
+  },
+  "gh200-grace": {
+    "scheduler": "slurm",
+    "type": "cpu",
+    "partition": "normal",
+    "account": "g34",
+    "cpus": 72,
+    "toolchains": {
+      "gnu": {
+        "uenv": "prgenv-gnu",
+        "modules": "cuda:python:cmake",
+        "modules_build": "cuda:python:cmake"
+      },
+      "gnu14": {
+        "uenv": "prgenv-gnu",
+        "modules": "cuda:python:cmake:gcc/14.2.0",
+        "modules_build": "cuda:python:cmake:gcc/14.2.0"
+      }
+    }
+  },
+  "gh200-hopper": {
+    "scheduler": "slurm",
+    "type": "gpu",
+    "partition": "normal",
+    "account": "g34",
+    "gpu_arch": "90",
+    "toolchains": {
+      "gnu": {
+        "uenv": "prgenv-gnu",
+        "modules": "cuda:python:cmake",
+        "modules_build": "cuda:python:cmake"
+      }
+    }
+  },
+  "h100": {
+    "scheduler": "slurm",
+    "type": "gpu",
+    "qos": "acc_ehpc",
+    "account": "ehpc633",
+    "gpu_arch": "90",
+    "toolchains": {
+      "cuda": {
+        "modules": "hdf5:nvidia-hpc-sdk:python/3.12.1:cmake",
+        "modules_build": "hdf5:nvidia-hpc-sdk:python/3.12.1:cmake"
+      }
+    }
+  },
+  "mi300x": {
+    "scheduler": "local",
+    "type": "gpu",
+    "gpu_arch": "gfx942",
+    "toolchains": {
+      "amd": {
+        "modules": "",
+        "modules_build": ""
+      }
+    }
+  },
+  "epyc-9474f": {
+    "scheduler": "local",
+    "type": "cpu",
+    "cpus": 96,
+    "python": "python3.11",
+    "toolchains": {
+      "amd": {
+        "modules": "",
+        "modules_build": ""
+      }
+    }
+  },
+  "b200": {
+    "scheduler": "local",
+    "type": "gpu",
+    "gpu_arch": "100",
+    "toolchains": {
+      "cuda": {
+        "modules": "",
+        "modules_build": ""
+      }
+    }
+  },
+  "h200": {
+    "scheduler": "local",
+    "type": "gpu",
+    "gpu_arch": "90",
+    "toolchains": {
+      "cuda": {
+        "modules": "",
+        "modules_build": ""
+      }
+    }
+  }
+}

@@ -1,0 +1,22 @@
+Traceback (most recent call last):
+  File "/home/lor3ny/dev/tensor-viterbi/viterbi_app.py", line 250, in <module>
+    main()
+    ~~~~^^
+  File "/home/lor3ny/dev/tensor-viterbi/viterbi_app.py", line 222, in main
+    res = _bench("Tensor Viterbi OMP", decode_tensor_viterbi_omp.__name__,
+                 _run, my_hsmm, **bkw)
+  File "/home/lor3ny/dev/tensor-viterbi/viterbi_app.py", line 74, in _bench
+    result = run_fn(tmp)
+  File "/home/lor3ny/dev/tensor-viterbi/viterbi_app.py", line 219, in _run
+    return decode_tensor_viterbi_omp(N, h.trans_mat, h.emission_probs,
+                                     h.duration_probs_linear, h.start_probs,
+                                     h.duration_probs, h.obs_seq)
+  File "/home/lor3ny/dev/tensor-viterbi/tensor_viterbi/viterbi/native.py", line 92, in decode_tensor_viterbi_omp
+    _ensure_configured()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/home/lor3ny/dev/tensor-viterbi/tensor_viterbi/viterbi/native.py", line 43, in _ensure_configured
+    raise RuntimeError(
+    ...<3 lines>...
+    )
+RuntimeError: [native] Native extension not loaded.
+Pass --system and --toolchain to run_benchmark.py, or call tensor_viterbi.viterbi.native.configure(system, toolchain) directly.
