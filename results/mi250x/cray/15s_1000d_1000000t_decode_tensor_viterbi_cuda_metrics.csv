@@ -1,2 +1,0 @@
-function,n_states,timesteps,max_duration,total_iterations,energy_j,energy_us,cpu_energy_j,cpu_energy_us,memory_energy_j,memory_energy_us,accel0_energy_j,accel0_energy_us,accel1_energy_j,accel1_energy_us,accel2_energy_j,accel2_energy_us,accel3_energy_j,accel3_energy_us
-decode_tensor_viterbi_cuda,15,1000000,1000,2,16260,25647629,1262,25709248,2009,25706645,4332,25702578,2348,25705914,2355,25709186,2369,25712173

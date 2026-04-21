@@ -28,7 +28,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 STATES    = [10, 15, 25, 50, 75]
 DURATIONS = [100, 250, 500, 1000]
-TIMESTEPS = [10000, 100000, 1000000]
+TIMESTEPS = [10000]
 
 TMP_SLRM = SCRIPT_DIR / ".tmp_benchmark.slrm"
 
@@ -258,7 +258,6 @@ def run_sweep(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, args) 
         ("py",           args.py),
         ("cpp",          args.cpp),
         ("omp",          args.omp),
-        ("omp-opt",      args.omp_opt),
         ("cuda",         args.cuda),
         ("baseline",     args.baseline),
         ("baseline-cpp", args.baseline_cpp),
@@ -269,7 +268,7 @@ def run_sweep(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, args) 
         if sys_type == "gpu":
             viterbi_flags = "cuda"
         else:
-            viterbi_flags = "cpp:omp-opt:baseline-cpp:baseline-omp"
+            viterbi_flags = "cpp:omp:baseline-cpp:baseline-omp"
 
     results_dir = SCRIPT_DIR / "results" / sys_name
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -325,7 +324,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--py",           action="store_true")
     parser.add_argument("--cpp",          action="store_true")
     parser.add_argument("--omp",          action="store_true")
-    parser.add_argument("--omp-opt",      action="store_true", dest="omp_opt")
     parser.add_argument("--cuda",         action="store_true")
     parser.add_argument("--baseline",     action="store_true")
     parser.add_argument("--baseline-cpp", action="store_true", dest="baseline_cpp")

@@ -1,2 +1,0 @@
-function,n_states,timesteps,max_duration,total_iterations,energy_j,energy_us,cpu_energy_j,cpu_energy_us,memory_energy_j,memory_energy_us,accel0_energy_j,accel0_energy_us,accel1_energy_j,accel1_energy_us,accel2_energy_j,accel2_energy_us,accel3_energy_j,accel3_energy_us
-HSMMLearn_OMP,75,100000,1000,6,549124,872900170,154681,872579555,65547,872602451,79322,872607392,81403,872605415,73917,872606352,82596,872607025

@@ -1,2 +1,0 @@
-function,n_states,timesteps,max_duration,total_iterations,energy_j,energy_us,cpu_energy_j,cpu_energy_us,memory_energy_j,memory_energy_us,accel0_energy_j,accel0_energy_us,accel1_energy_j,accel1_energy_us,accel2_energy_j,accel2_energy_us,accel3_energy_j,accel3_energy_us
-decode_tensor_viterbi_cpp,25,10000,1000,6,14724,28199761,1404,28198708,2019,28202582,2632,28190653,2696,28190809,2564,28192624,2705,28196144

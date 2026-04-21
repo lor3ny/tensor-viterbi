@@ -96,19 +96,3 @@ def decode_tensor_viterbi_omp(
     return fn(n_states, trans_mat, emission_probs,
               duration_probs_linear, start_probs, duration_probs, obs_seq)
 
-
-def decode_tensor_viterbi_omp_opt(
-        n_states,
-        trans_mat,
-        emission_probs,
-        duration_probs_linear,
-        start_probs,
-        duration_probs,
-        obs_seq,
-) -> np.ndarray:
-    _ensure_configured()
-    fn = getattr(_native, "decode_tensor_viterbi_omp_opt", None)
-    if fn is None:
-        raise RuntimeError("OMP-opt backend not available in this build.")
-    return fn(n_states, trans_mat, emission_probs,
-              duration_probs_linear, start_probs, duration_probs, obs_seq)

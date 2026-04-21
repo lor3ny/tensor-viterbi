@@ -31,6 +31,7 @@ if "SYS_NAME" not in os.environ:
 from tensor_viterbi import HSMM
 from tensor_viterbi.metrics import get_collector
 from tensor_viterbi.viterbi import decode_log_tensor_viterbi_cached
+import tensor_viterbi.viterbi.native as _native_mod
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -51,12 +52,9 @@ def _validate(result, ref_path: Path) -> None:
     if result is None or not ref_path.exists():
         return
     ref = np.load(str(ref_path))
-    if np.array_equal(result, ref):
-        print(f"  {GRAY}validation{R}  {GREEN}{BOLD}✓ exact match{R}\n")
-    else:
-        acc = float(np.mean(np.asarray(result) == np.asarray(ref)))
-        color = GREEN if acc >= 0.95 else YEL
-        print(f"  {GRAY}validation{R}  {color}{BOLD}{acc:.2%} agreement{R}\n")
+    acc = float(np.mean(np.asarray(result) == np.asarray(ref)))
+    color = GREEN if acc >= 0.95 else YEL
+    print(f"  {GRAY}validation{R}  {color}{BOLD}{acc:.2%} match{R}\n")
 
 
 def _bench(label, fname, run_fn, my_hsmm, N, T, D, iterations, stem, ext, collector):
@@ -131,7 +129,6 @@ def main():
     parser.add_argument("--py",           action="store_true")
     parser.add_argument("--cpp",          action="store_true")
     parser.add_argument("--omp",          action="store_true")
-    parser.add_argument("--omp-opt",      action="store_true", dest="omp_opt")
     parser.add_argument("--cuda",         action="store_true")
     parser.add_argument("--baseline",     action="store_true", help="Enable all baselines")
     parser.add_argument("--baseline-cpp", action="store_true", dest="baseline_cpp")
@@ -139,6 +136,8 @@ def main():
     parser.add_argument("--iterations",   type=int, default=6)
     parser.add_argument("--data-path",    "-dp", required=True)
     args = parser.parse_args()
+
+    _native_mod.configure(args.system, args.toolchain)
 
     data_path = args.data_path
     if not os.path.exists(data_path):
@@ -223,17 +222,6 @@ def main():
                      _run, my_hsmm, **bkw)
         _validate(res, ref_path)
 
-    if args.omp_opt:
-        from tensor_viterbi.viterbi import decode_tensor_viterbi_omp_opt
-        def _run(h):
-            h.to_log_space()
-            return decode_tensor_viterbi_omp_opt(N, h.trans_mat, h.emission_probs,
-                                                 h.duration_probs_linear, h.start_probs,
-                                                 h.duration_probs, h.obs_seq)
-        res = _bench("Tensor Viterbi OMP-opt", decode_tensor_viterbi_omp_opt.__name__,
-                     _run, my_hsmm, **bkw)
-        _validate(res, ref_path)
-
     if args.cuda:
         from tensor_viterbi.viterbi import decode_tensor_viterbi_cuda
         def _run(h):
@@ -244,6 +232,8 @@ def main():
         res = _bench("Tensor Viterbi CUDA", decode_tensor_viterbi_cuda.__name__,
                      _run, my_hsmm, **bkw)
         _validate(res, ref_path)
+
+    ref_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

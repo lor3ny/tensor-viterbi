@@ -1,3 +1,0 @@
-terminate called after throwing an instance of 'std::bad_alloc'
-  what():  std::bad_alloc
-/leonardo_scratch/large/userexternal/ddesensi/tensor-viterbi/run.slrm: line 63: 836835 Aborted                 python run_viterbi.py $PYTHON_FLAGS --system "$SYS_NAME" -m benchmark -dp "$SCRIPT_DIR/$CONFIG_PATH" --iterations "${BENCHMARK_ITERATIONS:-10}"

@@ -1,7 +1,0 @@
-Traceback (most recent call last):
-  File "/tensor-viterbi/run_viterbi.py", line 363, in <module>
-    decode_tensor_viterbi_omp_opt(N, tmp_hsmm.trans_mat, tmp_hsmm.emission_probs, tmp_hsmm.duration_probs_linear, tmp_hsmm.start_probs, tmp_hsmm.duration_probs, tmp_hsmm.obs_seq)
-  File "/tensor-viterbi/tensor_viterbi/viterbi/native.py", line 104, in decode_tensor_viterbi_omp_opt
-    return _decode_omp_opt(n_states, trans_mat, emission_probs, duration_probs_linear, start_probs, duration_probs, obs_seq)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-KeyboardInterrupt

@@ -1,2 +1,0 @@
-function,n_states,timesteps,max_duration,total_iterations,energy_j,energy_us,cpu_energy_j,cpu_energy_us,memory_energy_j,memory_energy_us
-decode_tensor_viterbi_omp,50,100000,250,6,28601,68298844,13837,68331324,9567,68330191
