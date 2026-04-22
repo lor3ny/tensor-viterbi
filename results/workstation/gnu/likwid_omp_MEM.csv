@@ -1,0 +1,23 @@
+STRUCT,Info,3
+CPU name:,AMD Ryzen 5 5500U with Radeon Graphics         ,
+CPU type:,AMD K17 (Zen2) architecture,
+CPU clock:,2.095442403 GHz,
+TABLE,Region viterbi_omp_opt,Group 1 Raw,MEM,6
+Region Info,HWThread 0,
+RDTSC Runtime [s],2.084391,
+call count,1,
+Event,Counter,HWThread 0
+ACTUAL_CPU_CLOCK,FIXC1,8393714000
+MAX_CPU_CLOCK,FIXC2,4369168000
+RETIRED_INSTRUCTIONS,PMC0,20830540000
+CPU_CLOCKS_UNHALTED,PMC1,7743240000
+DRAM_CHANNEL_0,DFC0,167153700
+DRAM_CHANNEL_1,DFC1,165641100
+TABLE,Region viterbi_omp_opt,Group 1 Metric,MEM,6
+Metric,HWThread 0,
+Runtime (RDTSC) [s],2.0844,
+Runtime unhalted [s],4.0057,
+Clock [MHz],4025.6049,
+CPI,0.3717,
+Memory bandwidth [MBytes/s],40873.0746,
+Memory data volume [GBytes],85.1955,

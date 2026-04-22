@@ -208,12 +208,12 @@ declare -a PERF_GROUPS=(FLOPS_DP MEM L3 L2 TMA)
 
 for VERSION_FLAG in --baseline --baseline-omp --cpp --omp; do
     VERSION_NAME="${VERSION_FLAG#--}"
-    OUTPUT_FILE="${OUTDIR}/likwid_${VERSION_NAME}_75_1000_500.txt"
+    OUTPUT_FILE="${OUTDIR}/likwid_${VERSION_NAME}.txt"
     > "$OUTPUT_FILE"
 
     for GROUP in "${PERF_GROUPS[@]}"; do
         echo "-> ${VERSION_NAME} / ${GROUP}"
-        LIKWID_CSV="${OUTDIR}/likwid_${VERSION_NAME}_${GROUP}_75_1000_500.csv"
+        LIKWID_CSV="${OUTDIR}/likwid_${VERSION_NAME}_${GROUP}.csv"
                                
         likwid-perfctr -C 0 -g "${GROUP}" -m \\
             -o "${LIKWID_CSV}" \\
@@ -223,7 +223,7 @@ for VERSION_FLAG in --baseline --baseline-omp --cpp --omp; do
                "${VERSION_FLAG}" \\
                --data-path "${DATA}" \\
             >> "$OUTPUT_FILE" \\
-            2>>"${OUTDIR}/likwid_75_1000_500.log"
+            2>>"${OUTDIR}/likwid.log"
     done
 done
 """)
@@ -307,7 +307,7 @@ def run_local(
 def run_likwid_local(sys_info: dict, results_dir: Path) -> None:
     system, toolchain = sys_info["sys_name"].split("/", 1)
     data     = str(SCRIPT_DIR / LIKWID_DATA)
-    log_file = results_dir / "likwid_75_1000_500.log"
+    log_file = results_dir / "likwid.log"
 
     env = {**os.environ}
     if sys_info.get("cpus"):
@@ -319,12 +319,12 @@ def run_likwid_local(sys_info: dict, results_dir: Path) -> None:
 
     for version_flag in LIKWID_CPU_FLAGS:
         version_name = version_flag.lstrip("-")
-        output_file  = results_dir / f"likwid_{version_name}_75_1000_500.txt"
+        output_file  = results_dir / f"likwid_{version_name}.txt"
         output_file.write_text("")
 
         for group in LIKWID_PERF_GROUPS:
             print(f"  -> {version_name} / {group}")
-            likwid_csv = log_file.parent / f"likwid_{version_name}_{group}_75_1000_500.csv"
+            likwid_csv = log_file.parent / f"likwid_{version_name}_{group}.csv"
 
             cmd = [
                 "likwid-perfctr", "-C", "0", "-g", group, "-m",
@@ -358,7 +358,7 @@ def submit_likwid_slurm(sys_info: dict, sbatch_flags: list, results_dir: Path) -
         "SYS_CPUS":       str(sys_info.get("cpus", "")),
     }
     export_str = "ALL," + ",".join(f"{k}={v}" for k, v in job_env.items())
-    stem = "likwid_75_1000_500"
+    stem = "likwid"
     cmd = [
         "sbatch", *sbatch_flags,
         f"--export={export_str}",
