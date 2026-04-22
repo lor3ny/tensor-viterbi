@@ -30,7 +30,11 @@ STATES    = [10, 15, 25, 50, 75]
 DURATIONS = [100, 250, 500, 1000]
 TIMESTEPS = [10000]
 
-TMP_SLRM = SCRIPT_DIR / ".tmp_benchmark.slrm"
+TMP_SLRM           = SCRIPT_DIR / ".tmp_benchmark.slrm"
+TMP_LIKWID_SLRM    = SCRIPT_DIR / ".tmp_likwid.slrm"
+LIKWID_DATA        = "data/75states_1000steps_500dur.json"
+LIKWID_PERF_GROUPS = ["FLOPS_DP", "MEM", "L3", "L2", "TMA"]
+LIKWID_CPU_FLAGS   = ["--baseline", "--baseline-omp", "--cpp", "--omp"]
 
 # ── Requirements check ───────────────────────────────────────────────────────
 
@@ -163,6 +167,71 @@ python viterbi_app.py $PYTHON_FLAGS \\
     return TMP_SLRM
 
 
+def generate_likwid_slrm() -> Path:
+    """Write the SLURM script for LIKWID hardware-counter profiling."""
+    TMP_LIKWID_SLRM.write_text("""\
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --exclusive
+# SYS_NAME, SYS_MODULES, SYS_UENV, SYS_OMP_BIND, SYS_OMP_PLACES, SYS_CPUS
+# are passed via --export.
+
+SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+
+if [[ -n "${SYS_UENV:-}" && -z "${_UENV_ACTIVE:-}" ]]; then
+    exec uenv run --view=modules "$SYS_UENV" -- env _UENV_ACTIVE=1 bash "$0" "$@"
+fi
+
+lscpu | grep -E "Model name|CPU\\(s\\):|Thread\\(s\\) per core|Core\\(s\\) per socket"
+grep MemTotal /proc/meminfo
+
+IFS=':' read -ra _MODS <<< "$SYS_MODULES"
+for _mod in "${_MODS[@]}"; do [[ -n "$_mod" ]] && module load "$_mod"; done
+
+if [[ -n "$SLURM_CPUS_PER_TASK" ]]; then
+    export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+elif [[ -n "$SYS_CPUS" ]]; then
+    export OMP_NUM_THREADS=$SYS_CPUS
+fi
+[[ -n "${SYS_OMP_BIND:-}" ]]   && export OMP_PROC_BIND="$SYS_OMP_BIND"
+[[ -n "${SYS_OMP_PLACES:-}" ]] && export OMP_PLACES="$SYS_OMP_PLACES"
+
+cd "$SCRIPT_DIR"
+
+IFS='/' read -r _SYS _TC <<< "$SYS_NAME"
+OUTDIR="${SCRIPT_DIR}/results/${SYS_NAME}"
+mkdir -p "$OUTDIR"
+DATA="${SCRIPT_DIR}/data/75states_1000steps_500dur.json"
+
+declare -a PERF_GROUPS=(FLOPS_DP MEM L3 L2 TMA)
+
+for VERSION_FLAG in --baseline --baseline-omp --cpp --omp; do
+    VERSION_NAME="${VERSION_FLAG#--}"
+    OUTPUT_FILE="${OUTDIR}/${VERSION_NAME}_75_1000_500.txt"
+    > "$OUTPUT_FILE"
+
+    for GROUP in "${PERF_GROUPS[@]}"; do
+        echo "-> ${VERSION_NAME} / ${GROUP}"
+        {
+            echo "=== ${GROUP} ==="
+            likwid-perfctr -C 0 -g "${GROUP}" \\
+                -- python "${SCRIPT_DIR}/viterbi_app.py" \\
+                   --system "${_SYS}" --toolchain "${_TC}" \\
+                   --iterations 1 \\
+                   "${VERSION_FLAG}" \\
+                   --data-path "${DATA}" \\
+                2>>"${OUTDIR}/75_1000_500.log" \\
+                | grep -E '^\\+|^\\|'
+            echo ""
+        } >> "$OUTPUT_FILE"
+    done
+done
+""")
+    TMP_LIKWID_SLRM.chmod(0o755)
+    return TMP_LIKWID_SLRM
+
+
 # ── Job environment ───────────────────────────────────────────────────────────
 
 def _build_job_env(sys_info: dict, vflags: str, iters: int, data_path: str) -> dict:
@@ -234,6 +303,76 @@ def run_local(
     with open(results_dir / f"{stem}.out", "w") as fout, \
          open(results_dir / f"{stem}.err", "w") as ferr:
         subprocess.run(cmd, env=env, stdout=fout, stderr=ferr, cwd=str(SCRIPT_DIR))
+
+
+def run_likwid_local(sys_info: dict, results_dir: Path) -> None:
+    system, toolchain = sys_info["sys_name"].split("/", 1)
+    data     = str(SCRIPT_DIR / LIKWID_DATA)
+    log_file = results_dir / "75_1000_500.log"
+
+    env = {**os.environ}
+    if sys_info.get("cpus"):
+        env["OMP_NUM_THREADS"] = str(sys_info["cpus"])
+    if sys_info.get("omp_bind"):
+        env["OMP_PROC_BIND"] = sys_info["omp_bind"]
+    if sys_info.get("omp_places"):
+        env["OMP_PLACES"] = sys_info["omp_places"]
+
+    for version_flag in LIKWID_CPU_FLAGS:
+        version_name = version_flag.lstrip("-")
+        output_file  = results_dir / f"{version_name}_75_1000_500.txt"
+        output_file.write_text("")
+
+        for group in LIKWID_PERF_GROUPS:
+            print(f"  -> {version_name} / {group}")
+            cmd = [
+                "likwid-perfctr", "-C", "0", "-g", group,
+                "--",
+                "python", str(SCRIPT_DIR / "viterbi_app.py"),
+                "--system", system, "--toolchain", toolchain,
+                "--iterations", "1",
+                version_flag,
+                "--data-path", data,
+            ]
+            result = subprocess.run(
+                cmd, env=env, cwd=str(SCRIPT_DIR), capture_output=True, text=True,
+            )
+            with open(log_file, "a") as flog:
+                flog.write(result.stderr)
+            with open(output_file, "a") as fout:
+                fout.write(f"=== {group} ===\n")
+                for line in result.stdout.splitlines():
+                    if line.startswith("+") or line.startswith("|"):
+                        fout.write(line + "\n")
+                fout.write("\n")
+
+
+def submit_likwid_slurm(sys_info: dict, sbatch_flags: list, results_dir: Path) -> None:
+    job_env = {
+        "SYS_NAME":       sys_info["sys_name"],
+        "SYS_TYPE":       sys_info["type"],
+        "SYS_MODULES":    sys_info.get("modules", ""),
+        "SYS_UENV":       sys_info.get("uenv", ""),
+        "SYS_OMP_BIND":   sys_info.get("omp_bind", ""),
+        "SYS_OMP_PLACES": sys_info.get("omp_places", ""),
+        "SYS_CPUS":       str(sys_info.get("cpus", "")),
+    }
+    export_str = "ALL," + ",".join(f"{k}={v}" for k, v in job_env.items())
+    stem = "likwid_75_1000_500"
+    cmd = [
+        "sbatch", *sbatch_flags,
+        f"--export={export_str}",
+        f"--job-name=tv_{stem}",
+        "--time=02:00:00",
+        f"--output={results_dir / (stem + '.out')}",
+        f"--error={results_dir / (stem + '.err')}",
+        str(TMP_LIKWID_SLRM),
+    ]
+    print(f"  -> Submitting LIKWID profiling job for {sys_info['sys_name']}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    print(result.stdout.strip())
+    if result.returncode != 0:
+        print(result.stderr.strip(), file=sys.stderr)
 
 
 # ── Sweep ─────────────────────────────────────────────────────────────────────
@@ -312,6 +451,44 @@ def run_sweep(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, args) 
                                 sbatch_flags, sys_info, results_dir)
 
 
+def run_likwid_profiling(system: str, toolchain: str, sys_conf: dict, tc_conf: dict) -> None:
+    sys_name  = f"{system}/{toolchain}"
+    sys_type  = sys_conf["type"]
+    scheduler = sys_conf.get("scheduler", "slurm")
+
+    if sys_type != "cpu":
+        print(f"Warning: LIKWID profiling is CPU-only (system type={sys_type}). Skipping {sys_name}.")
+        return
+
+    sys_info = {
+        "sys_name":    sys_name,
+        "type":        sys_type,
+        "modules":     tc_conf.get("modules", ""),
+        "uenv":        tc_conf.get("uenv", ""),
+        "omp_bind":    sys_conf.get("omp_bind", ""),
+        "omp_places":  sys_conf.get("omp_places", ""),
+        "cpus":        sys_conf.get("cpus", ""),
+    }
+
+    results_dir = SCRIPT_DIR / "results" / sys_name
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"LIKWID profiling: {sys_name}")
+
+    if scheduler == "local":
+        run_likwid_local(sys_info, results_dir)
+    else:
+        sbatch_flags: list[str] = []
+        if "account" in sys_conf:
+            sbatch_flags.append(f"--account={sys_conf['account']}")
+        if sys_conf.get("partition"):
+            sbatch_flags.append(f"--partition={sys_conf['partition']}")
+        if "qos" in sys_conf:
+            sbatch_flags.append(f"--qos={sys_conf['qos']}")
+        sbatch_flags.append(f"--cpus-per-task={sys_conf.get('cpus', 1)}")
+        submit_likwid_slurm(sys_info, sbatch_flags, results_dir)
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -329,6 +506,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--baseline-cpp", action="store_true", dest="baseline_cpp")
     parser.add_argument("--baseline-omp", action="store_true", dest="baseline_omp")
     parser.add_argument("--iterations",   type=int, default=6, metavar="N")
+    parser.add_argument("--likwid", action="store_true",
+                        help="Run LIKWID hardware-counter profiling (CPU only, fixed data file, 1 iteration)")
     return parser
 
 
@@ -353,6 +532,8 @@ def main() -> None:
 
     if sys_conf.get("scheduler", "slurm") == "slurm":
         generate_slrm()
+        if args.likwid:
+            generate_likwid_slrm()
 
     if args.toolchain == "all":
         if not toolchains:
@@ -360,7 +541,10 @@ def main() -> None:
             sys.exit(1)
         for tc in sorted(toolchains):
             print(f"=== Submitting {args.system} / {tc} ===")
-            run_sweep(args.system, tc, sys_conf, toolchains[tc], args)
+            if args.likwid:
+                run_likwid_profiling(args.system, tc, sys_conf, toolchains[tc])
+            else:
+                run_sweep(args.system, tc, sys_conf, toolchains[tc], args)
         return
 
     if args.toolchain not in toolchains:
@@ -368,7 +552,10 @@ def main() -> None:
         print(f"Known toolchains: {', '.join(toolchains)}")
         sys.exit(1)
 
-    run_sweep(args.system, args.toolchain, sys_conf, toolchains[args.toolchain], args)
+    if args.likwid:
+        run_likwid_profiling(args.system, args.toolchain, sys_conf, toolchains[args.toolchain])
+    else:
+        run_sweep(args.system, args.toolchain, sys_conf, toolchains[args.toolchain], args)
 
 
 if __name__ == "__main__":
