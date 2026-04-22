@@ -128,24 +128,52 @@ def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, l
     # OMP runtime mismatches between the baseline and the native extension.
     hsmmlearn_build = ""
     if sys_type == "cpu":
+        
         hsmmlearn_build = f"""\
-echo "Building hsmmlearn with CC={cc} CXX={cxx} ..."
-"{sys.executable}" -m pip install --quiet wheel setuptools
-CC={cc} CXX={cxx} "{sys.executable}" -m pip install --quiet --no-build-isolation "{SCRIPT_DIR}/hsmmlearn"
-CC={cc} CXX={cxx} "{sys.executable}" -m pip install --quiet --no-build-isolation "{SCRIPT_DIR}/hsmmlearn_omp"
-"""
+            echo "Building hsmmlearn with CC={cc} CXX={cxx} ..."
+            "{sys.executable}" -m pip install --quiet wheel setuptools
+
+            if [ "{int(likwid)}" -eq 1 ]; then
+                LIKWID_INC=$(cmake -LA -N "{build_dir}" | grep '^LIKWID_INCLUDE_DIR:' | cut -d= -f2)
+                LIKWID_LIB=$(cmake -LA -N "{build_dir}" | grep '^LIKWID_LIB_DIR:' | cut -d= -f2)
+
+                if [ -z "$LIKWID_INC" ] || [ -z "$LIKWID_LIB" ]; then
+                    echo "ERROR: LIKWID requested but paths are empty"
+                    exit 1
+                fi
+
+                USE_LIKWID=1
+            else
+                USE_LIKWID=0
+                LIKWID_INC=""
+                LIKWID_LIB=""
+            fi
+
+            CC={cc} CXX={cxx} \
+            USE_LIKWID=$USE_LIKWID \
+            LIKWID_INCLUDE_DIR=$LIKWID_INC \
+            LIKWID_LIB_DIR=$LIKWID_LIB \
+            "{sys.executable}" -m pip install --quiet --no-build-isolation "{SCRIPT_DIR}/hsmmlearn"
+
+            CC={cc} CXX={cxx} \
+            USE_LIKWID=$USE_LIKWID \
+            LIKWID_INCLUDE_DIR=$LIKWID_INC \
+            LIKWID_LIB_DIR=$LIKWID_LIB \
+            "{sys.executable}" -m pip install --quiet --no-build-isolation "{SCRIPT_DIR}/hsmmlearn_omp"
+        """
 
     script = f"""\
-set -e
-{module_cmds}
+        set -e
+        {module_cmds}
 
-export CC={cc} CXX={cxx}
+        export CC={cc} CXX={cxx}
 
-rm -rf "{build_dir}"
-cmake -B "{build_dir}" -DPYTHON_EXECUTABLE="{sys.executable}" {cmake_flags}
-cmake --build "{build_dir}" -j 8
+        rm -rf "{build_dir}"
+        cmake -B "{build_dir}" -DPYTHON_EXECUTABLE="{sys.executable}" {cmake_flags}
+        cmake --build "{build_dir}" -j 8
 
-{hsmmlearn_build}"""
+        {hsmmlearn_build}
+    """
 
     result = subprocess.run(["bash", "-c", script], cwd=str(SCRIPT_DIR))
     if result.returncode != 0:

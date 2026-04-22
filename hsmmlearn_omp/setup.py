@@ -19,13 +19,25 @@ def get_extension_modules():
         return []
     else:
         from Cython.Build import cythonize
+
+        use_likwid = os.environ.get('USE_LIKWID', '0') == '1'
+
+        extra_compile_args = ["-fopenmp"]
+        extra_link_args    = ["-fopenmp"]
+
+        if use_likwid:
+            likwid_inc = os.environ['LIKWID_INCLUDE_DIR']
+            likwid_lib = os.environ['LIKWID_LIB_DIR']
+            extra_compile_args += ["-DLIKWID_PERFMON", f"-I{likwid_inc}"]
+            extra_link_args    += [f"-L{likwid_lib}", "-llikwid"]
+
         extensions = [
             Extension(
                 "hsmmlearn_omp.base",
                 SOURCES,
                 language="c++",
-                extra_compile_args=["-fopenmp"],
-                extra_link_args=["-fopenmp"],
+                extra_compile_args=extra_compile_args,
+                extra_link_args=extra_link_args,
             )
         ]
         return cythonize(extensions)

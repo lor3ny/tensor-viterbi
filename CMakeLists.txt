@@ -20,8 +20,11 @@ option(USE_LIKWID "Enable LIKWID marker API instrumentation" OFF)
 if(USE_LIKWID)
     find_path(LIKWID_INCLUDE_DIR likwid-marker.h REQUIRED)
     find_library(LIKWID_LIB likwid REQUIRED)
+    get_filename_component(_likwid_lib_dir ${LIKWID_LIB} DIRECTORY)
+    set(LIKWID_LIB_DIR "${_likwid_lib_dir}" CACHE PATH "Directory containing liblikwid")
     message(STATUS "LIKWID include: ${LIKWID_INCLUDE_DIR}")
     message(STATUS "LIKWID library: ${LIKWID_LIB}")
+    message(STATUS "LIKWID lib dir: ${LIKWID_LIB_DIR}")
 endif()
 
 # --- OpenMP (always required — used by both CPU and GPU builds) ---
@@ -152,12 +155,6 @@ endif()
 target_include_directories(_native PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(_native SYSTEM PRIVATE ${PYTHON_INC} ${PYBIND_INC})
 
-if(USE_LIKWID)
-    target_compile_definitions(_native PRIVATE LIKWID_PERFMON)
-    target_include_directories(_native SYSTEM PRIVATE ${LIKWID_INCLUDE_DIR})
-    target_link_libraries(_native PRIVATE ${LIKWID_LIB})
-endif()
-
 # For ROCm (clang-based): link with -fopenmp so clang picks up its own LLVM
 # OpenMP runtime (libomp, which provides __kmpc_fork_call etc.) rather than
 # the GCC/Cray libgomp found by find_package(OpenMP) for the CXX compiler.
@@ -167,3 +164,12 @@ if(BUILD_GPU AND GPU_PLATFORM STREQUAL "ROCM")
 else()
     target_link_libraries(_native PRIVATE OpenMP::OpenMP_CXX)
 endif()
+
+
+if(USE_LIKWID)
+    target_compile_definitions(_native PRIVATE LIKWID_PERFMON)
+    target_include_directories(_native SYSTEM PRIVATE ${LIKWID_INCLUDE_DIR})
+    target_link_libraries(_native PRIVATE ${LIKWID_LIB})
+endif()
+
+

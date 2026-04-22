@@ -28,7 +28,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 STATES    = [10, 15, 25, 50, 75]
 DURATIONS = [100, 250, 500, 1000]
-TIMESTEPS = [10000]
+TIMESTEPS = [1000]
 
 TMP_SLRM           = SCRIPT_DIR / ".tmp_benchmark.slrm"
 TMP_LIKWID_SLRM    = SCRIPT_DIR / ".tmp_likwid.slrm"
@@ -215,7 +215,7 @@ for VERSION_FLAG in --baseline --baseline-omp --cpp --omp; do
         echo "-> ${VERSION_NAME} / ${GROUP}"
         {
             echo "=== ${GROUP} ==="
-            likwid-perfctr -C 0 -g "${GROUP}" \\
+            likwid-perfctr -C 0 -g "${GROUP}" -m\\
                 -- python "${SCRIPT_DIR}/viterbi_app.py" \\
                    --system "${_SYS}" --toolchain "${_TC}" \\
                    --iterations 1 \\
@@ -326,7 +326,7 @@ def run_likwid_local(sys_info: dict, results_dir: Path) -> None:
         for group in LIKWID_PERF_GROUPS:
             print(f"  -> {version_name} / {group}")
             cmd = [
-                "likwid-perfctr", "-C", "0", "-g", group,
+                "likwid-perfctr", "-C", "0", "-g", group, "-m",
                 "--",
                 "python", str(SCRIPT_DIR / "viterbi_app.py"),
                 "--system", system, "--toolchain", toolchain,
