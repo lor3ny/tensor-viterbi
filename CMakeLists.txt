@@ -15,6 +15,15 @@ if(NOT SYSTEM_NAME)
     message(FATAL_ERROR "SYSTEM_NAME must be set (e.g. -DSYSTEM_NAME=mi250x)")
 endif()
 
+# --- LIKWID marker API (optional) ---
+option(USE_LIKWID "Enable LIKWID marker API instrumentation" OFF)
+if(USE_LIKWID)
+    find_path(LIKWID_INCLUDE_DIR likwid-marker.h REQUIRED)
+    find_library(LIKWID_LIB likwid REQUIRED)
+    message(STATUS "LIKWID include: ${LIKWID_INCLUDE_DIR}")
+    message(STATUS "LIKWID library: ${LIKWID_LIB}")
+endif()
+
 # --- OpenMP (always required — used by both CPU and GPU builds) ---
 find_package(OpenMP REQUIRED)
 message(STATUS "OpenMP found: ${OpenMP_CXX_FLAGS}")
@@ -142,6 +151,12 @@ endif()
 
 target_include_directories(_native PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(_native SYSTEM PRIVATE ${PYTHON_INC} ${PYBIND_INC})
+
+if(USE_LIKWID)
+    target_compile_definitions(_native PRIVATE LIKWID_PERFMON)
+    target_include_directories(_native SYSTEM PRIVATE ${LIKWID_INCLUDE_DIR})
+    target_link_libraries(_native PRIVATE ${LIKWID_LIB})
+endif()
 
 # For ROCm (clang-based): link with -fopenmp so clang picks up its own LLVM
 # OpenMP runtime (libomp, which provides __kmpc_fork_call etc.) rather than

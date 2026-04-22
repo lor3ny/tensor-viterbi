@@ -10,6 +10,10 @@
 #include <limits>
 #include <omp.h>
 
+#ifdef LIKWID_PERFMON
+#include <likwid-marker.h>
+#endif
+
 #ifndef NO_GPU
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -247,7 +251,10 @@ std::vector<int> decode_tensor_viterbi(
     // Time-major layout (t*N+n) — used by BRICK UPDATE reads and condition guard
     std::vector<double> delta_t  (T * N, NEG_INF);
 
-
+    #ifdef LIKWID_PERFMON
+        LIKWID_MARKER_INIT;
+        LIKWID_MARKER_START("viterbi_cpp");
+    #endif
     //* AP = TRANS_MAT + DURATION_PROBS — layout [j, d, i] (j outermost)
     // AP[j*D*N + d*N + i]: for fixed j, all (d, i) entries are contiguous.
     // The argmax inner loop accesses AP[j*D*N + d*N ..] with d varying —
@@ -357,6 +364,11 @@ std::vector<int> decode_tensor_viterbi(
                     EMISSION_PROBS, delta_t, survival_probs,
                     trans_mat, N, D, T);
 
+    #ifdef LIKWID_PERFMON
+        LIKWID_MARKER_STOP("viterbi_cpp");
+        LIKWID_MARKER_CLOSE;
+    #endif
+
     return backtracking_termination(delta, psi_state, psi_dur, N, T);
 }
 
@@ -400,8 +412,19 @@ std::vector<int> decode_tensor_viterbi_omp(
 
     //* ── Single persistent thread team for all phases ──────────────────────── *//
     // One spawn/join for the whole function. omp for barriers enforce data-flow.
+    
+    #ifdef LIKWID_PERFMON
+        LIKWID_MARKER_INIT;
+    #endif
+
     #pragma omp parallel default(shared)
-    {
+    {   
+        #ifdef LIKWID_PERFMON
+            LIKWID_MARKER_THREADINIT;
+            #pragma omp master
+            LIKWID_MARKER_START("viterbi_omp_opt");
+        #endif
+
         // ── Survival probs (j independent, d sequential per j) ────────────── //
         #pragma omp for schedule(static)
         for (int j = 0; j < N; ++j) {
@@ -562,7 +585,17 @@ std::vector<int> decode_tensor_viterbi_omp(
                 psi_dur  [j * T + t] = best_d + 1;
             }
         }
+        
+        #ifdef LIKWID_PERFMON
+            #pragma omp master
+            LIKWID_MARKER_STOP("viterbi_omp_opt");
+        #endif
     } // omp parallel
+
+
+    #ifdef LIKWID_PERFMON
+        LIKWID_MARKER_CLOSE;
+    #endif
 
     return backtracking_termination(delta, psi_state, psi_dur, N, T);
 }

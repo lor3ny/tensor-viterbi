@@ -13,6 +13,10 @@
 #include <minmax.h>
 #endif
 
+#ifdef LIKWID_PERFMON
+#include <likwid-marker.h>
+#endif
+
 void ViterbiImpl(int tauPara, int JPara, int MPara,
                  double dPara[], double pPara[], double piPara[], double pdfPara[], int hiddenStatesPara[])
 {
@@ -21,6 +25,11 @@ void ViterbiImpl(int tauPara, int JPara, int MPara,
     bool first, first_i, first_alpha;
 
     InitParaAndVar(dummyInt, tauPara, JPara, MPara, dPara, pPara, piPara, pdfPara);
+
+    #ifdef LIKWID_PERFMON
+        LIKWID_MARKER_INIT;
+        LIKWID_MARKER_START("viterbi_baseline");
+    #endif
 
     CalcStoreD();
 
@@ -93,6 +102,11 @@ void ViterbiImpl(int tauPara, int JPara, int MPara,
         }
         alpha[j][tau - 1] += log(pdf[j][tau - 1]);
     }
+
+    #ifdef LIKWID_PERFMON
+        LIKWID_MARKER_STOP("viterbi_baseline");
+        LIKWID_MARKER_CLOSE;
+    #endif
 
     // Save result
     first = true;

@@ -78,7 +78,7 @@ def _compiler_for_toolchain(toolchain: str) -> tuple[str, str]:
     }.get(toolchain, ("gcc", "g++"))
 
 
-def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict) -> None:
+def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, likwid: bool = False) -> None:
     sys_type      = sys_conf["type"]
     gpu_arch      = sys_conf.get("gpu_arch", "")
     modules_build = tc_conf.get("modules_build", "")
@@ -115,6 +115,9 @@ def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict) -
             )
     else:
         cmake_flags = f"-DBUILD_GPU=OFF -DSYSTEM_NAME={sys_name}"
+
+    if likwid:
+        cmake_flags += " -DUSE_LIKWID=ON"
 
     # Module-load commands (HPC only; empty string on local/bare systems)
     module_cmds = "\n".join(
@@ -161,6 +164,8 @@ def main() -> None:
                         help="System key from systems.json")
     parser.add_argument("--toolchain", "-t", required=True,
                         help="Toolchain key, or 'all' to build every toolchain for the system")
+    parser.add_argument("--likwid", action="store_true", default=False,
+                        help="Enable LIKWID marker API instrumentation (-DUSE_LIKWID=ON)")
     args = parser.parse_args()
 
     # Python version gate
@@ -192,7 +197,7 @@ def main() -> None:
             sys.exit(1)
         for tc in sorted(toolchains):
             print(f"=== Compiling {args.system} / {tc} ===")
-            compile_system(args.system, tc, sys_conf, toolchains[tc])
+            compile_system(args.system, tc, sys_conf, toolchains[tc], args.likwid)
         return
 
     if args.toolchain not in toolchains:
@@ -200,7 +205,7 @@ def main() -> None:
         print(f"Known toolchains: {', '.join(toolchains)}")
         sys.exit(1)
 
-    compile_system(args.system, args.toolchain, sys_conf, toolchains[args.toolchain])
+    compile_system(args.system, args.toolchain, sys_conf, toolchains[args.toolchain], args.likwid)
 
 
 if __name__ == "__main__":
