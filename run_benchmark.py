@@ -33,7 +33,7 @@ TIMESTEPS = [10000]
 TMP_SLRM           = SCRIPT_DIR / ".tmp_benchmark.slrm"
 TMP_LIKWID_SLRM    = SCRIPT_DIR / ".tmp_likwid.slrm"
 LIKWID_DATA        = "data/75states_1000steps_500dur.json"
-LIKWID_PERF_GROUPS = ["FLOPS_DP", "MEM", "L3", "L2", "BRANCH", "TMA"]
+LIKWID_PERF_GROUPS = ["FLOPS_DP", "MEM", "L3", "L2", "BRANCH"]
 LIKWID_CPU_FLAGS   = ["--baseline", "--baseline-omp", "--cpp", "--omp"]
 
 # ── Requirements check ───────────────────────────────────────────────────────
