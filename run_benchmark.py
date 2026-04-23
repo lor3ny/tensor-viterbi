@@ -33,7 +33,7 @@ TIMESTEPS = [10000]
 TMP_SLRM           = SCRIPT_DIR / ".tmp_benchmark.slrm"
 TMP_LIKWID_SLRM    = SCRIPT_DIR / ".tmp_likwid.slrm"
 LIKWID_DATA        = "data/75states_1000steps_500dur.json"
-LIKWID_PERF_GROUPS = ["FLOPS_DP", "MEM", "L3", "L2", "TMA"]
+LIKWID_PERF_GROUPS = ["BRANCH", "TMA"]#["FLOPS_DP", "MEM", "L3", "L2", "BRANCH"]
 LIKWID_CPU_FLAGS   = ["--baseline", "--baseline-omp", "--cpp", "--omp"]
 
 # ── Requirements check ───────────────────────────────────────────────────────
@@ -69,6 +69,22 @@ def check_requirements() -> None:
         print(f"Install them with: pip install -r {req_file}")
         sys.exit(1)
 
+
+def get_available_likwid_groups() -> set[str]:
+    """Query likwid-perfctr -a for available performance groups on this CPU."""
+    try:
+        result = subprocess.run(
+            ["likwid-perfctr", "-a"], capture_output=True, text=True
+        )
+        groups = set()
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if parts and re.match(r"^[A-Z0-9_]+$", parts[0]):
+                groups.add(parts[0])
+        return groups
+    except FileNotFoundError:
+        print("[✗] likwid-perfctr not found in PATH", file=sys.stderr)
+        sys.exit(1)
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
@@ -169,6 +185,7 @@ python viterbi_app.py $PYTHON_FLAGS \\
 
 def generate_likwid_slrm() -> Path:
     """Write the SLURM script for LIKWID hardware-counter profiling."""
+    groups_bash = " ".join(LIKWID_PERF_GROUPS)
     TMP_LIKWID_SLRM.write_text("""\
 #!/bin/bash
 #SBATCH --nodes=1
@@ -204,8 +221,15 @@ OUTDIR="${SCRIPT_DIR}/results/${SYS_NAME}"
 mkdir -p "$OUTDIR"
 DATA="${SCRIPT_DIR}/data/75states_1000steps_500dur.json"
 
-declare -a PERF_GROUPS=(FLOPS_DP MEM L3 L2 TMA)
-
+declare -a PERF_GROUPS=()
+for _g in {groups_bash}; do
+    if likwid-perfctr -a 2>/dev/null | grep -qE "^${{_g}}[[:space:]]"; then
+        PERF_GROUPS+=("$_g")
+    else
+        echo "[!] Skipping group $_g: not available on this CPU" >&2
+    fi
+done
+                               
 for VERSION_FLAG in --baseline --baseline-omp --cpp --omp; do
     VERSION_NAME="${VERSION_FLAG#--}"
     OUTPUT_FILE="${OUTDIR}/likwid_${VERSION_NAME}.txt"
@@ -317,12 +341,24 @@ def run_likwid_local(sys_info: dict, results_dir: Path) -> None:
     if sys_info.get("omp_places"):
         env["OMP_PLACES"] = sys_info["omp_places"]
 
+    available = get_available_likwid_groups()
+    groups_to_run = []
+    for g in LIKWID_PERF_GROUPS:
+        if g in available:
+            groups_to_run.append(g)
+        else:
+            print(f"  [!] Skipping group {g}: not available on this CPU")
+
+    if not groups_to_run:
+        print("[✗] No requested LIKWID groups are available on this CPU.", file=sys.stderr)
+        return
+
     for version_flag in LIKWID_CPU_FLAGS:
         version_name = version_flag.lstrip("-")
         output_file  = results_dir / f"likwid_{version_name}.txt"
         output_file.write_text("")
 
-        for group in LIKWID_PERF_GROUPS:
+        for group in groups_to_run:
             print(f"  -> {version_name} / {group}")
             likwid_csv = log_file.parent / f"likwid_{version_name}_{group}.csv"
 

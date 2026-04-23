@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 
-PERF_GROUPS = ["FLOPS_DP", "MEM", "L3", "L2", "TMA"]
+PERF_GROUPS = ["FLOPS_DP", "MEM", "L3", "L2", "TMA", "BRANCH"]
 
 # All available metrics and their display config
 METRIC_CONFIG = {
@@ -42,9 +42,13 @@ METRIC_CONFIG = {
     "L2_BW_load":       ("L2 Load BW\n[MBytes/s]",     1.0),
     "L2_BW_evict":      ("L2 Evict BW\n[MBytes/s]",    1.0),
     "L2_vol_GB":        ("L2 Volume\n[GB]",            1.0),
+    "Branch_rate":      ("Branch Rate",                1.0),
+    "Branch_mispredict_rate":   ("Branch Mispredict\nRate",  1.0),
+    "Branch_mispredict_ratio":  ("Branch Mispredict\nRatio", 1.0),
+    "Instr_per_branch":         ("Instr per\nBranch",        1.0),
 }
 
-DEFAULT_METRICS = ["DP_MFLOPS", "MEM_vol_GB", "CPI"]
+DEFAULT_METRICS = ["Vec_ratio_pct", "MEM_vol_GB", "Branch_mispredict_ratio"]
 
 HATCHES = ["", "//", "xx", "\\\\"]
 matplotlib.rcParams["hatch.linewidth"] = 0.4
@@ -69,8 +73,8 @@ def _parse_likwid_csv(path: Path) -> tuple[dict[str, float], dict[str, float]]:
 
         # Section header
         if tag == "TABLE":
-            section = parts[2] if len(parts) > 2 else ""
-            mode = "raw" if "Raw" in section else "metric" if "Metric" in section else None
+            mode = "raw" if any("Raw" in p for p in parts) else \
+                "metric" if any("Metric" in p for p in parts) else None
             continue
 
         # Column headers / non-data rows
@@ -151,6 +155,13 @@ def parse_files(outdir: Path, version: str) -> dict:
     result["L2_BW_evict"]  = met.get("L2D evict bandwidth [MBytes/s]")
     result["L2_vol_GB"]    = met.get("L2 data volume [GBytes]")
 
+    # ── BRANCH ───────────────────────────────────────────────────────────────
+    _, met = read("BRANCH")
+    result["Branch_rate"]             = met.get("Branch rate")
+    result["Branch_mispredict_rate"]  = met.get("Branch misprediction rate")
+    result["Branch_mispredict_ratio"] = met.get("Branch misprediction ratio")
+    result["Instr_per_branch"]        = met.get("Instructions per branch")
+
     return result
 
 
@@ -173,19 +184,19 @@ def plot_metric_subplot(ax, data_list, metric_key, xlabel, scale, colors):
         ax.bar(i, scaled, width=width, color=color, hatch=hatch,
                edgecolor="black", linewidth=0.6, zorder=2)
         if scaled > 0:
-            fmt = f"{scaled:.2f}" if scaled < 10 else f"{scaled:.1f}"
-            if fmt == "0.00":
+            fmt = f"{scaled:.3f}" if scaled < 10 else f"{scaled:.1f}"
+            if fmt == "0.000":
                 # valore troppo piccolo per essere leggibile: annotazione verticale
-                ax.text(i, vmax * 0.01, f"<{scaled + 5e-4:.3f}",
+                ax.text(i, vmax * 0.025, f"   <{scaled + 5e-4:.3f}",
                         ha="center", va="bottom", fontsize=10, color="black",
                         rotation=90)
             else:
-                ax.text(i, scaled + vmax * 0.01, fmt,
+                ax.text(i, scaled + vmax * 0.025, fmt,
                         ha="center", va="bottom", fontsize=10, color="black", rotation=90)
 
     n = len(vals)
     ax.set_xlim(-0.5, n - 0.5)
-    ax.set_ylim(0, vmax * 1.5)
+    ax.set_ylim(0, vmax * 1.5)      
     ax.set_xlabel(xlabel, fontsize=12, labelpad=10)
     ax.set_ylabel("")
     ax.set_xticks([])
