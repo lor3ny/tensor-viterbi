@@ -143,6 +143,14 @@ def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, l
     cc  = tc_conf.get("cc",  default_cc)
     cxx = tc_conf.get("cxx", default_cxx)
 
+    # On Slurm, Python is resolved at runtime after modules load so that cmake
+    # and pip target the same interpreter the benchmark will use. On local
+    # systems compile.py already runs under the correct interpreter.
+    if scheduler == "slurm":
+        python_decl = "PYTHON_EXE=$(which python3 2>/dev/null || which python)"
+    else:
+        python_decl = f'PYTHON_EXE="{sys.executable}"'
+
     # CMake flags
     if sys_type == "gpu":
         if gpu_arch.startswith("gfx"):
@@ -175,7 +183,7 @@ def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, l
 
         hsmmlearn_build = f"""\
             echo "Building hsmmlearn with CC={cc} CXX={cxx} ..."
-            "{sys.executable}" -m pip install --quiet wheel setuptools
+            "$PYTHON_EXE" -m pip install --quiet wheel setuptools
 
             if [ "{int(likwid)}" -eq 1 ]; then
                 LIKWID_INC=$(cmake -LA -N "{build_dir}" | grep '^LIKWID_INCLUDE_DIR:' | cut -d= -f2)
@@ -197,23 +205,24 @@ def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, l
             USE_LIKWID=$USE_LIKWID \
             LIKWID_INCLUDE_DIR=$LIKWID_INC \
             LIKWID_LIB_DIR=$LIKWID_LIB \
-            "{sys.executable}" -m pip install --quiet --no-build-isolation "{SCRIPT_DIR}/hsmmlearn"
+            "$PYTHON_EXE" -m pip install --no-build-isolation --force-reinstall --no-deps "{SCRIPT_DIR}/hsmmlearn"
 
             CC={cc} CXX={cxx} \
             USE_LIKWID=$USE_LIKWID \
             LIKWID_INCLUDE_DIR=$LIKWID_INC \
             LIKWID_LIB_DIR=$LIKWID_LIB \
-            "{sys.executable}" -m pip install --quiet --no-build-isolation "{SCRIPT_DIR}/hsmmlearn_omp"
+            "$PYTHON_EXE" -m pip install --no-build-isolation --force-reinstall --no-deps "{SCRIPT_DIR}/hsmmlearn_omp"
         """
 
     script = f"""\
         set -e
         {module_cmds}
+        {python_decl}
 
         export CC={cc} CXX={cxx}
 
         rm -rf "{build_dir}"
-        cmake -B "{build_dir}" -DPYTHON_EXECUTABLE="{sys.executable}" {cmake_flags}
+        cmake -B "{build_dir}" -DPYTHON_EXECUTABLE="$PYTHON_EXE" {cmake_flags}
         cmake --build "{build_dir}" -j 8
 
         {hsmmlearn_build}

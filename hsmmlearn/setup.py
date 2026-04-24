@@ -33,7 +33,7 @@ def get_extension_modules():
 
         extensions = [
             Extension(
-                "hsmmlearn_omp.base",
+                "hsmmlearn.base",
                 SOURCES,
                 language="c++",
                 extra_compile_args=extra_compile_args,
