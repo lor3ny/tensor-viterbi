@@ -78,16 +78,60 @@ def _compiler_for_toolchain(toolchain: str) -> tuple[str, str]:
     }.get(toolchain, ("gcc", "g++"))
 
 
+def _run_compile_slurm(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, script: str) -> None:
+    """Submit a blocking srun compilation job, streaming output directly to terminal."""
+    sys_type = sys_conf["type"]
+    uenv     = tc_conf.get("uenv", "")
+
+    uenv_block = ""
+    if uenv:
+        uenv_block = f"""\
+if [[ -z "${{_UENV_ACTIVE:-}}" ]]; then
+    exec uenv run --view=modules "{uenv}" -- env _UENV_ACTIVE=1 bash "$0" "$@"
+fi
+"""
+
+    tmp = SCRIPT_DIR / f".tmp_compile_{system}_{toolchain}.sh"
+    try:
+        tmp.write_text(f"#!/bin/bash\n{uenv_block}\n{script}")
+        tmp.chmod(0o755)
+
+        srun_flags = [
+            "--nodes=1", "--ntasks=1",
+            f"--job-name=tv_compile_{system}_{toolchain}",
+            "--time=01:00:00",
+        ]
+        if "account" in sys_conf:
+            srun_flags.append(f"--account={sys_conf['account']}")
+        if sys_conf.get("partition"):
+            srun_flags.append(f"--partition={sys_conf['partition']}")
+        if "qos" in sys_conf:
+            srun_flags.append(f"--qos={sys_conf['qos']}")
+        if sys_type == "gpu":
+            srun_flags += ["--cpus-per-task=8", "--gres=gpu:1"]
+        else:
+            srun_flags.append("--cpus-per-task=8")
+
+        print(f"Submitting compilation job via srun ({system}/{toolchain}) ...")
+        result = subprocess.run(["srun", *srun_flags, "bash", str(tmp)], cwd=str(SCRIPT_DIR))
+        if result.returncode != 0:
+            sys.exit(result.returncode)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, likwid: bool = False) -> None:
     sys_type      = sys_conf["type"]
+    scheduler     = sys_conf.get("scheduler", "slurm")
     gpu_arch      = sys_conf.get("gpu_arch", "")
     modules_build = tc_conf.get("modules_build", "")
     uenv          = tc_conf.get("uenv", "")
     sys_name      = f"{system}/{toolchain}"
     build_dir     = SCRIPT_DIR / "build" / system / toolchain
 
-    # If a uenv is required and we are not already inside it, re-exec under it.
-    if uenv and not os.environ.get("_UENV_ACTIVE"):
+    # For local systems only: if a uenv is required and we are not already inside
+    # it, re-exec under it. Slurm systems handle uenv inside the srun script.
+    if scheduler != "slurm" and uenv and not os.environ.get("_UENV_ACTIVE"):
         env = {**os.environ, "_UENV_ACTIVE": "1"}
         os.execvpe(
             "uenv",
@@ -128,7 +172,7 @@ def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, l
     # OMP runtime mismatches between the baseline and the native extension.
     hsmmlearn_build = ""
     if sys_type == "cpu":
-        
+
         hsmmlearn_build = f"""\
             echo "Building hsmmlearn with CC={cc} CXX={cxx} ..."
             "{sys.executable}" -m pip install --quiet wheel setuptools
@@ -175,9 +219,12 @@ def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, l
         {hsmmlearn_build}
     """
 
-    result = subprocess.run(["bash", "-c", script], cwd=str(SCRIPT_DIR))
-    if result.returncode != 0:
-        sys.exit(result.returncode)
+    if scheduler == "slurm":
+        _run_compile_slurm(system, toolchain, sys_conf, tc_conf, script)
+    else:
+        result = subprocess.run(["bash", "-c", script], cwd=str(SCRIPT_DIR))
+        if result.returncode != 0:
+            sys.exit(result.returncode)
 
 
 def main() -> None:
