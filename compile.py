@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -108,9 +109,9 @@ fi
         if "qos" in sys_conf:
             srun_flags.append(f"--qos={sys_conf['qos']}")
         if sys_type == "gpu":
-            srun_flags += ["--cpus-per-task=8", "--gres=gpu:1"]
+            srun_flags += ["--cpus-per-task=1", "--gres=gpu:1"]
         else:
-            srun_flags.append("--cpus-per-task=8")
+            srun_flags.append("--cpus-per-task=1")
 
         print(f"Submitting compilation job via srun ({system}/{toolchain}) ...")
         result = subprocess.run(["srun", *srun_flags, "bash", str(tmp)], cwd=str(SCRIPT_DIR))
@@ -172,8 +173,7 @@ def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, l
     # OMP runtime mismatches between the baseline and the native extension.
     hsmmlearn_build = ""
     if sys_type == "cpu":
-
-        hsmmlearn_build = f"""\
+        hsmmlearn_build = textwrap.dedent(f"""\
             echo "Building hsmmlearn with CC={cc} CXX={cxx} ..."
             "{sys.executable}" -m pip install --quiet wheel setuptools
 
@@ -193,31 +193,30 @@ def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, l
                 LIKWID_LIB=""
             fi
 
-            CC={cc} CXX={cxx} \
-            USE_LIKWID=$USE_LIKWID \
-            LIKWID_INCLUDE_DIR=$LIKWID_INC \
-            LIKWID_LIB_DIR=$LIKWID_LIB \
+            CC={cc} CXX={cxx} \\
+            USE_LIKWID=$USE_LIKWID \\
+            LIKWID_INCLUDE_DIR=$LIKWID_INC \\
+            LIKWID_LIB_DIR=$LIKWID_LIB \\
             "{sys.executable}" -m pip install --quiet --no-build-isolation "{SCRIPT_DIR}/hsmmlearn"
 
-            CC={cc} CXX={cxx} \
-            USE_LIKWID=$USE_LIKWID \
-            LIKWID_INCLUDE_DIR=$LIKWID_INC \
-            LIKWID_LIB_DIR=$LIKWID_LIB \
+            CC={cc} CXX={cxx} \\
+            USE_LIKWID=$USE_LIKWID \\
+            LIKWID_INCLUDE_DIR=$LIKWID_INC \\
+            LIKWID_LIB_DIR=$LIKWID_LIB \\
             "{sys.executable}" -m pip install --quiet --no-build-isolation "{SCRIPT_DIR}/hsmmlearn_omp"
-        """
+        """)
 
     script = f"""\
-        set -e
-        {module_cmds}
+set -e
+{module_cmds}
 
-        export CC={cc} CXX={cxx}
+export CC={cc} CXX={cxx}
 
-        rm -rf "{build_dir}"
-        cmake -B "{build_dir}" -DPYTHON_EXECUTABLE="{sys.executable}" {cmake_flags}
-        cmake --build "{build_dir}" -j 8
+rm -rf "{build_dir}"
+cmake -B "{build_dir}" -DPYTHON_EXECUTABLE="{sys.executable}" {cmake_flags}
+cmake --build "{build_dir}" -j 1
 
-        {hsmmlearn_build}
-    """
+{hsmmlearn_build}"""
 
     if scheduler == "slurm":
         _run_compile_slurm(system, toolchain, sys_conf, tc_conf, script)
