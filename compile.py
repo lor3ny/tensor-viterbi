@@ -127,8 +127,9 @@ def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, l
     gpu_arch      = sys_conf.get("gpu_arch", "")
     modules_build = tc_conf.get("modules_build", "")
     uenv          = tc_conf.get("uenv", "")
-    sys_name      = f"{system}/{toolchain}"
-    build_dir     = SCRIPT_DIR / "build" / system / toolchain
+    system_dir    = f"{system}_likwid" if likwid else system
+    sys_name      = f"{system_dir}/{toolchain}"
+    build_dir     = SCRIPT_DIR / "build" / system_dir / toolchain
 
     # For local systems only: if a uenv is required and we are not already inside
     # it, re-exec under it. Slurm systems handle uenv inside the srun script.

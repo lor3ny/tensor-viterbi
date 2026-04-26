@@ -244,7 +244,7 @@ for VERSION_FLAG in --baseline --baseline-omp --cpp --omp; do
         likwid-perfctr -C 0 -g "${GROUP}" -m \\
             -o "${LIKWID_CSV}" \\
             -- python "${SCRIPT_DIR}/viterbi_app.py" \\
-               --system "${_SYS}" --toolchain "${_TC}" \\
+               --system "${_SYS}_likwid" --toolchain "${_TC}" \\
                --iterations 1 \\
                "${VERSION_FLAG}" \\
                --data-path "${DATA}" \\
@@ -331,7 +331,8 @@ def run_local(
 
 
 def run_likwid_local(sys_info: dict, results_dir: Path) -> None:
-    system, toolchain = sys_info["sys_name"].split("/", 1)
+    _system, toolchain = sys_info["sys_name"].split("/", 1)
+    system = f"{_system}_likwid"
     data     = str(SCRIPT_DIR / LIKWID_DATA)
     log_file = results_dir / "likwid.log"
 
