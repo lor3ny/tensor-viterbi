@@ -24,6 +24,8 @@ import sys
 import time
 from pathlib import Path
 
+from compile import compile_system
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 STATES    = [10, 15, 25, 50, 75]
@@ -576,6 +578,8 @@ def main() -> None:
             print(f"Error: No toolchains defined for system '{args.system}'.")
             sys.exit(1)
         for tc in sorted(toolchains):
+            print(f"=== Compiling {args.system} / {tc} ===")
+            compile_system(args.system, tc, sys_conf, toolchains[tc], args.likwid)
             print(f"=== Submitting {args.system} / {tc} ===")
             if args.likwid:
                 run_likwid_profiling(args.system, tc, sys_conf, toolchains[tc])
@@ -588,6 +592,8 @@ def main() -> None:
         print(f"Known toolchains: {', '.join(toolchains)}")
         sys.exit(1)
 
+    print(f"=== Compiling {args.system} / {args.toolchain} ===")
+    compile_system(args.system, args.toolchain, sys_conf, toolchains[args.toolchain], args.likwid)
     if args.likwid:
         run_likwid_profiling(args.system, args.toolchain, sys_conf, toolchains[args.toolchain])
     else:
