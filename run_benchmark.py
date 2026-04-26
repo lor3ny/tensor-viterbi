@@ -28,9 +28,23 @@ from compile import compile_system
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
-STATES    = [10, 15, 25, 50, 75]
-DURATIONS = [100, 250, 500, 1000]
-TIMESTEPS = [10000]
+def _load_benchmark_params() -> tuple[list[int], list[int], list[int]]:
+    cfg = SCRIPT_DIR / "benchmark_params.cfg"
+    params: dict[str, list[int]] = {}
+    for line in cfg.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, _, raw = line.partition("=")
+        params[key.strip()] = [int(v) for v in raw.split(",") if v.strip()]
+    try:
+        return params["states"], params["durations"], params["timesteps"]
+    except KeyError as e:
+        print(f"Error: benchmark_params.cfg is missing key {e}")
+        sys.exit(1)
+
+
+STATES, DURATIONS, TIMESTEPS = _load_benchmark_params()
 
 TMP_SLRM           = SCRIPT_DIR / ".tmp_benchmark.slrm"
 TMP_LIKWID_SLRM    = SCRIPT_DIR / ".tmp_likwid.slrm"
