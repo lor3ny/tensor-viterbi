@@ -1,240 +1,138 @@
 #!/usr/bin/env python3
-"""
-viterbi_app.py — benchmark tensor-viterbi backends and validate results.
-
-Invoked by run_benchmark.py (via SLURM or locally).
-
-Usage:
-  python viterbi_app.py --system <sys> --toolchain <tc> --cpp --omp \
-      --iterations 6 --data-path data/10states_1000000steps_100dur.json
-"""
-
-import argparse
 import copy
-import csv
-import os
-import sys
 import time
 from pathlib import Path
 
 import numpy as np
 
-# Set SYS_NAME before tensor_viterbi imports — native.py reads it at module load time.
-if "SYS_NAME" not in os.environ:
-    _argv = sys.argv[1:]
-    _pairs = list(zip(_argv, _argv[1:]))
-    _sys = next((v for a, v in _pairs if a in ("--system", "-sys")), None)
-    _tc  = next((v for a, v in _pairs if a in ("--toolchain", "-tc")), None)
-    if _sys and _tc:
-        os.environ["SYS_NAME"] = f"{_sys}/{_tc}"
+from tensor_viterbi import HSMM, FastaReader
+from tensor_viterbi.viterbi import decode_tensor_viterbi_omp, decode_tensor_viterbi_cuda
 
-from tensor_viterbi import HSMM
-from tensor_viterbi.metrics import get_collector
-from tensor_viterbi.viterbi import decode_log_tensor_viterbi_cached
-import tensor_viterbi.viterbi.native as _native_mod
+OBS_LIMIT = 100_000   # max observations read from FASTA (None = whole file)
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-
-_TTY  = sys.stdout.isatty()
-def _c(code): return code if _TTY else ""
-R     = _c("\033[0m")
-BOLD  = _c("\033[1m")
-DIM   = _c("\033[2m")
-CYAN  = _c("\033[96m")
-GREEN = _c("\033[92m")
-YEL   = _c("\033[93m")
-GRAY  = _c("\033[90m")
-WHITE = _c("\033[97m")
-SEP   = GRAY + "─" * 52 + R
+# Dinucleotide alphabet: 5 bases (A C G T N) → 25 ordered pairs
+# Case-insensitive: FastaReader uppercases every character before lookup
+_BASES = ["A", "C", "G", "T", "N"]
+DINUCLEOTIDES = [a + b for a in _BASES for b in _BASES]  # 25 symbols
+_DINU_INDEX   = {d: i for i, d in enumerate(DINUCLEOTIDES)}  # "CG" → 6, "NN" → 24
 
 
-def _validate(result, ref_path: Path) -> None:
-    if result is None or not ref_path.exists():
-        return
-    ref = np.load(str(ref_path))
-    acc = float(np.mean(np.asarray(result) == np.asarray(ref)))
-    color = GREEN if acc >= 0.95 else YEL
-    print(f"  {GRAY}validation{R}  {color}{BOLD}{acc:.2%} match{R}\n")
+def _read_obs(fasta_path: Path, limit: int | None = None) -> np.ndarray:
+    """Read dinucleotide observation indices from a FASTA file.
+
+    Every pair is kept (including those with N). Slides one base at a time.
+    """
+    reader = FastaReader(fasta_path, symbols=_BASES)
+    obs = []
+    for window in reader.iter_windows(k=2):
+        dinu = _BASES[window[0]] + _BASES[window[1]]
+        obs.append(_DINU_INDEX[dinu])
+        if limit is not None and len(obs) >= limit:
+            break
+    return np.array(obs, dtype=float)
 
 
-def _bench(label, fname, run_fn, my_hsmm, N, T, D, iterations, stem, ext, collector):
-    """Run run_fn for `iterations` iterations, time each, write CSV, return last result."""
-    print(f"{YEL}{BOLD}▶ {label}{R}")
-    times = []
-    last_result = None
-    collector.start()
-    with open(f"{stem}_{fname}{ext}", "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
-        for i in range(iterations):
-            tmp = copy.copy(my_hsmm)
-            t0 = time.perf_counter()
-            result = run_fn(tmp)
-            elapsed = time.perf_counter() - t0
-            times.append(elapsed)
-            w.writerow([fname, N, T, D, i, f"{elapsed:.6f}"])
-            f.flush()
-            if i == iterations - 1:
-                last_result = result
-    metrics = collector.stop()
-    if collector.column_names():
-        with open(f"{stem}_{fname}_metrics{ext}", "w", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(["function", "n_states", "timesteps", "max_duration",
-                        "total_iterations", *collector.column_names()])
-            w.writerow([fname, N, T, D, iterations,
-                        *[metrics.get(k, "") for k in collector.column_names()]])
-    avg, mn, mx = sum(times) / len(times), min(times), max(times)
-    print(f"  {WHITE}{fname}{R}")
-    print(f"  avg {BOLD}{GREEN}{avg:.4f} s{R}   min {GREEN}{mn:.4f} s{R}   max {GREEN}{mx:.4f} s{R}\n")
-    return last_result
+def cpg_hsmm_loader(fasta_path: Path, N: int = 2, D: int = 50,
+             limit: int | None = OBS_LIMIT, seed: int = 42) -> HSMM:
+    """Build a CpG-island HSMM from a FASTA file.
+
+    Observations are dinucleotide indices (16 symbols, sliding by 1 base).
+    Model parameters are initialised randomly — replace with learned values
+    for real use.
+
+    Parameters
+    ----------
+    fasta_path: path to the .fa file
+    N:          number of hidden states (default 2: CpG island / background)
+    D:          max segment duration
+    limit:      cap on the number of observations (None = whole file)
+    seed:       RNG seed for random parameter initialisation
+    """
+    obs_seq = _read_obs(fasta_path, limit=limit)
+    O = len(DINUCLEOTIDES)  # 25
+
+    rng = np.random.default_rng(seed)
+
+    def _norm_rows(m): return m / m.sum(axis=1, keepdims=True)
+    def _norm_cols(m): return m / m.sum(axis=0, keepdims=True)
+
+    trans_mat      = _norm_rows(rng.random((N, N)))
+    emission_probs = _norm_cols(rng.random((O, N)))
+    duration_probs = _norm_cols(rng.random((D, N)))
+    start_probs    = rng.random(N)
+    start_probs   /= start_probs.sum()
+
+    states = ["background", "CpG island"]
+
+    return (
+        HSMM(states)
+        .set_emissions(DINUCLEOTIDES, emission_probs)
+        .set_transitions(trans_mat)
+        .set_duration_probs(duration_probs)
+        .set_start_probs(start_probs)
+        .set_observations(obs_seq)
+    )
 
 
-def _bench_baseline(label, fname, model, obs_seq, N, T, D, iterations, stem, ext, collector):
-    """Like _bench but for hsmmlearn models. Returns decoded states from last iteration."""
-    print(f"{YEL}{BOLD}▶ {label}{R}")
-    times = []
-    last_result = None
-    collector.start()
-    with open(f"{stem}_{fname}{ext}", "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["function", "n_states", "timesteps", "max_duration", "iteration", "elapsed_s"])
-        for i in range(iterations):
-            t0 = time.perf_counter()
-            result = model.decode(obs_seq)
-            elapsed = time.perf_counter() - t0
-            times.append(elapsed)
-            w.writerow([fname, N, T, D, i, f"{elapsed:.6f}"])
-            f.flush()
-            if i == iterations - 1:
-                last_result = result
-    metrics = collector.stop()
-    if collector.column_names():
-        with open(f"{stem}_{fname}_metrics{ext}", "w", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(["function", "n_states", "timesteps", "max_duration",
-                        "total_iterations", *collector.column_names()])
-            w.writerow([fname, N, T, D, iterations,
-                        *[metrics.get(k, "") for k in collector.column_names()]])
-    avg, mn, mx = sum(times) / len(times), min(times), max(times)
-    print(f"  {WHITE}{fname}{R}")
-    print(f"  avg {BOLD}{GREEN}{avg:.4f} s{R}   min {GREEN}{mn:.4f} s{R}   max {GREEN}{mx:.4f} s{R}\n")
-    return last_result
+def write_cpg(states: np.ndarray, fasta_path: Path, out_path: Path) -> None:
+    """Write decoded states to a .cpg file in FASTA-like format.
+
+    Header line contains a description and the source FASTA name.
+    State integers (0=background, 1=CpG island) are written 30 per line.
+    """
+    with open(out_path, "w") as f:
+        f.write(f"# CpG island predictions | source: {fasta_path.name} | generated by tensor-viterbi\n")
+        flat = states.astype(int)
+        for i in range(0, len(flat), 30):
+            f.write("".join(str(s) for s in flat[i:i + 30]) + "\n")
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Benchmark tensor-viterbi backends.")
-    parser.add_argument("--system",       "-sys", required=True)
-    parser.add_argument("--toolchain",    "-tc",  required=True)
-    parser.add_argument("--py",           action="store_true")
-    parser.add_argument("--cpp",          action="store_true")
-    parser.add_argument("--omp",          action="store_true")
-    parser.add_argument("--cuda",         action="store_true")
-    parser.add_argument("--baseline",     action="store_true", help="Enable all baselines")
-    parser.add_argument("--baseline-cpp", action="store_true", dest="baseline_cpp")
-    parser.add_argument("--baseline-omp", action="store_true", dest="baseline_omp")
-    parser.add_argument("--iterations",   type=int, default=6)
-    parser.add_argument("--data-path",    "-dp", required=True)
-    args = parser.parse_args()
+def run() -> None:
+    fasta_path = Path(__file__).parent / "data" / "chr22.fa"
+    cpg_hsmm = cpg_hsmm_loader(fasta_path, N=2, D=50, limit=OBS_LIMIT)
 
-    _native_mod.configure(args.system, args.toolchain)
+    N = len(cpg_hsmm.states)
+    print(f"  states (N)={N}  timesteps (T)={len(cpg_hsmm.obs_seq)}  max duration (D)={cpg_hsmm.duration_probs.shape[0]}\n")
 
-    data_path = args.data_path
-    if not os.path.exists(data_path):
-        print(f"Error: data_path '{data_path}' does not exist.")
-        sys.exit(1)
+    # # --- Python backend ---
+    # t0 = time.perf_counter()
+    # result_py = hsmm.decode()
+    # elapsed_py = time.perf_counter() - t0
+    # print(f"[python]  time={elapsed_py:.4f} s  states={result_py[:10]} ...")
 
-    _run_baseline_cpp = args.baseline or args.baseline_cpp
-    _run_baseline_omp = args.baseline or args.baseline_omp
 
-    my_hsmm = HSMM.load_model(data_path)
-    N = len(my_hsmm.states)
-    T = len(my_hsmm.obs_seq)
-    D = my_hsmm.duration_probs.shape[0]
+    # --- OpenMP backend ---
+    cpg_hsmm.to_log_space()
 
-    print(f"\n{SEP}")
-    print(f"  {BOLD}{CYAN}DATA SUMMARY{R}")
-    print(SEP)
-    print(f"  {GRAY}data path{R}  {WHITE}{data_path}{R}")
-    print(f"  {GRAY}states (N){R}  {BOLD}{N}{R}  {DIM}{my_hsmm.states}{R}")
-    print(f"  {GRAY}steps  (T){R}  {BOLD}{T}{R}")
-    print(f"  {GRAY}max dur(D){R}  {BOLD}{D}{R}")
-    print(f"{SEP}\n")
+    t0 = time.perf_counter()
+    result_omp = decode_tensor_viterbi_omp(
+        N, cpg_hsmm.trans_mat, cpg_hsmm.emission_probs,
+        cpg_hsmm.duration_probs_linear, cpg_hsmm.start_probs, cpg_hsmm.duration_probs, cpg_hsmm.obs_seq,
+    )
+    elapsed_omp = time.perf_counter() - t0
 
-    _metrics_backend = os.environ.get("SYS_METRICS_BACKEND", "").strip()
-    collector = get_collector(_metrics_backend or None)
+    print(f"[omp]     time={elapsed_omp:.4f} s  states={result_omp[:10]} ...")
 
-    sys_name = f"{args.system}/{args.toolchain}"
-    results_dir = SCRIPT_DIR / "results" / sys_name
-    results_dir.mkdir(parents=True, exist_ok=True)
-    stem = str(results_dir / f"{N}s_{D}d_{T}t")
-    ext  = ".csv"
+    out_path = fasta_path.with_suffix(".cpg")
+    write_cpg(result_omp, fasta_path, out_path)
+    print(f"  written → {out_path}")
 
-    ref_path = results_dir / (Path(data_path).stem + "_reference.npy")
+    # # --- CUDA backend ---
+    # cpg_hsmm = copy.copy(cpg_hsmm)
+    # cpg_hsmm.to_log_space()
+    # t0 = time.perf_counter()
+    # result_cuda = decode_tensor_viterbi_cuda(
+    #     N, cpg_hsmm.trans_mat, cpg_hsmm.emission_probs,
+    #     cpg_hsmm.duration_probs_linear, cpg_hsmm.start_probs, cpg_hsmm.duration_probs, cpg_hsmm.obs_seq,
+    # )
+    # elapsed_cuda = time.perf_counter() - t0
+    # print(f"[cuda]    time={elapsed_cuda:.4f} s  states={result_cuda[:10]} ...")
 
-    bkw = dict(N=N, T=T, D=D, iterations=args.iterations,
-               stem=stem, ext=ext, collector=collector)
-
-    # ── Baselines (produce the reference .npy from last iteration) ────────────
-    if _run_baseline_cpp:
-        from validation.hsmmlearn_viterbi import load_sleep_model_hsmmlearn
-        model, obs_seq = load_sleep_model_hsmmlearn(data_path)
-        ref_states = _bench_baseline("HSMMLearn C++ (baseline)", "HSMMLearn_CPP",
-                                     model, obs_seq, **bkw)
-        np.save(str(ref_path), ref_states)
-        print(f"  {GRAY}reference{R}  saved → {WHITE}{ref_path}{R}\n")
-
-    if _run_baseline_omp:
-        from validation.hsmmlearn_omp_viterbi import load_sleep_model_hsmmlearn as load_omp
-        model_omp, obs_seq_omp = load_omp(data_path)
-        ref_states_omp = _bench_baseline("HSMMLearn OMP (baseline)", "HSMMLearn_OMP",
-                                         model_omp, obs_seq_omp, **bkw)
-        if not ref_path.exists():
-            np.save(str(ref_path), ref_states_omp)
-            print(f"  {GRAY}reference{R}  saved → {WHITE}{ref_path}{R}\n")
-
-    # ── Tensor Viterbi backends ───────────────────────────────────────────────
-    if args.py:
-        def _run(h): h.to_log_space(); return decode_log_tensor_viterbi_cached(h)
-        res = _bench("Tensor Viterbi Python", decode_log_tensor_viterbi_cached.__name__,
-                     _run, my_hsmm, **bkw)
-        _validate(res, ref_path)
-
-    if args.cpp:
-        from tensor_viterbi.viterbi import decode_tensor_viterbi_cpp
-        def _run(h):
-            h.to_log_space()
-            return decode_tensor_viterbi_cpp(N, h.trans_mat, h.emission_probs,
-                                             h.duration_probs_linear, h.start_probs,
-                                             h.duration_probs, h.obs_seq)
-        res = _bench("Tensor Viterbi C++", decode_tensor_viterbi_cpp.__name__,
-                     _run, my_hsmm, **bkw)
-        _validate(res, ref_path)
-
-    if args.omp:
-        from tensor_viterbi.viterbi import decode_tensor_viterbi_omp
-        def _run(h):
-            h.to_log_space()
-            return decode_tensor_viterbi_omp(N, h.trans_mat, h.emission_probs,
-                                             h.duration_probs_linear, h.start_probs,
-                                             h.duration_probs, h.obs_seq)
-        res = _bench("Tensor Viterbi OMP", decode_tensor_viterbi_omp.__name__,
-                     _run, my_hsmm, **bkw)
-        _validate(res, ref_path)
-
-    if args.cuda:
-        from tensor_viterbi.viterbi import decode_tensor_viterbi_cuda
-        def _run(h):
-            h.to_log_space()
-            return decode_tensor_viterbi_cuda(N, h.trans_mat, h.emission_probs,
-                                              h.duration_probs_linear, h.start_probs,
-                                              h.duration_probs, h.obs_seq)
-        res = _bench("Tensor Viterbi CUDA", decode_tensor_viterbi_cuda.__name__,
-                     _run, my_hsmm, **bkw)
-        _validate(res, ref_path)
-
-    ref_path.unlink(missing_ok=True)
+    # acc_omp  = float(np.mean(np.asarray(result_py) == np.asarray(result_omp)))
+    # acc_cuda = float(np.mean(np.asarray(result_py) == np.asarray(result_cuda)))
+    # print(f"\n  python vs omp:  {acc_omp:.2%} match")
+    # print(f"  python vs cuda: {acc_cuda:.2%} match")
 
 
 if __name__ == "__main__":
-    main()
+    run()
