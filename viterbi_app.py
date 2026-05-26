@@ -1,72 +1,80 @@
 #!/usr/bin/env python3
-import copy
+
+from pdb import run
 import time
 from pathlib import Path
-
+import argparse
+import requests
+import textwrap
+import sys
+from pathlib import Path
 import numpy as np
 
 from tensor_viterbi import HSMM, FastaReader
 from tensor_viterbi.viterbi import decode_tensor_viterbi_omp, decode_tensor_viterbi_cuda
 
-OBS_LIMIT = 100_000   # max observations read from FASTA (None = whole file)
+OBS_LIMIT = None   # max observations read from FASTA (None = whole file)
+N_ITERATIONS = 1
 
 # Dinucleotide alphabet: 5 bases (A C G T N) → 25 ordered pairs
 # Case-insensitive: FastaReader uppercases every character before lookup
-_BASES = ["A", "C", "G", "T", "N"]
-DINUCLEOTIDES = [a + b for a in _BASES for b in _BASES]  # 25 symbols
-_DINU_INDEX   = {d: i for i, d in enumerate(DINUCLEOTIDES)}  # "CG" → 6, "NN" → 24
+_BASES = ["A", "T", "C", "G"]
+
+# Approximate euchromatic MSY boundaries.
+# PAR1 end  -> start of euchromatic MSY
+# Yq12 het. -> end of euchromatic MSY
+# NOTE: the centromere lies inside this interval; in hg19 it is a gap (Ns),
+# in T2T it is fully assembled satellite DNA. Adjust if you want to exclude it.
+REGIONS = {
+    "hs1": {            # T2T-CHM13 v2.0
+        "chrom": "chrY",
+        "start": 2_458_320,   # end of PAR1 (Rhie et al. 2023)
+        "end":   26_673_214,  # start of Yq12 heterochromatin
+        "label": "T2T-CHM13v2.0_chrY_euchromatic_MSY",
+    },
+    "hg19": {           # GRCh37
+        "chrom": "chrY",
+        "start": 2_649_520,   # end of PAR1
+        "end":   28_800_000,  # approx. start of Yq12 heterochromatin
+        "label": "GRCh37_chrY_euchromatic_MSY",
+    },
+}
+
+API_URL = "https://api.genome.ucsc.edu/getData/sequence"
 
 
-def _read_obs(fasta_path: Path, limit: int | None = None) -> np.ndarray:
-    """Read dinucleotide observation indices from a FASTA file.
-
-    Every pair is kept (including those with N). Slides one base at a time.
-    """
+def _read_obs_gene(fasta_path: Path, limit: int | None = None) -> np.ndarray:
     reader = FastaReader(fasta_path, symbols=_BASES)
-    obs = []
-    for window in reader.iter_windows(k=2):
-        dinu = _BASES[window[0]] + _BASES[window[1]]
-        obs.append(_DINU_INDEX[dinu])
-        if limit is not None and len(obs) >= limit:
-            break
-    return np.array(obs, dtype=float)
+    obs = reader.read()
+    if limit is not None:
+        obs = obs[:limit]
+    return obs.astype(int)
 
 
-def cpg_hsmm_loader(fasta_path: Path, N: int = 2, D: int = 50,
-             limit: int | None = OBS_LIMIT, seed: int = 42) -> HSMM:
-    """Build a CpG-island HSMM from a FASTA file.
+def gene_hsmm_loader(fasta_path: Path, N: int = 2, D: int = 1000,
+                     limit: int | None = OBS_LIMIT) -> HSMM:
 
-    Observations are dinucleotide indices (16 symbols, sliding by 1 base).
-    Model parameters are initialised randomly — replace with learned values
-    for real use.
+    print(f"Loading Chromosome: {fasta_path}")
 
-    Parameters
-    ----------
-    fasta_path: path to the .fa file
-    N:          number of hidden states (default 2: CpG island / background)
-    D:          max segment duration
-    limit:      cap on the number of observations (None = whole file)
-    seed:       RNG seed for random parameter initialisation
-    """
-    obs_seq = _read_obs(fasta_path, limit=limit)
-    O = len(DINUCLEOTIDES)  # 25
+    obs_seq = _read_obs_gene(fasta_path, limit=limit)
 
-    rng = np.random.default_rng(seed)
+    trans_mat = np.full((N, N), 1.0 / N)
 
-    def _norm_rows(m): return m / m.sum(axis=1, keepdims=True)
-    def _norm_cols(m): return m / m.sum(axis=0, keepdims=True)
+    # Emission probs (O x N): order follows _BASES = ["A", "T", "C", "G"]
+    # Intron: AT-rich (A=0.30, T=0.30, C=0.20, G=0.20)
+    # Exon:   GC-rich (A=0.20, T=0.20, C=0.30, G=0.30)
+    intron_emit = np.array([0.30, 0.30, 0.20, 0.20])
+    exon_emit   = np.array([0.20, 0.20, 0.30, 0.30])
+    emission_probs = np.column_stack([intron_emit, exon_emit])
 
-    trans_mat      = _norm_rows(rng.random((N, N)))
-    emission_probs = _norm_cols(rng.random((O, N)))
-    duration_probs = _norm_cols(rng.random((D, N)))
-    start_probs    = rng.random(N)
-    start_probs   /= start_probs.sum()
+    duration_probs = np.full((D, N), 1.0 / D)
+    start_probs = np.full(N, 1.0 / N)
 
-    states = ["background", "CpG island"]
+    states = ["Intron", "Exon"]
 
     return (
         HSMM(states)
-        .set_emissions(DINUCLEOTIDES, emission_probs)
+        .set_emissions(_BASES, emission_probs)
         .set_transitions(trans_mat)
         .set_duration_probs(duration_probs)
         .set_start_probs(start_probs)
@@ -74,65 +82,98 @@ def cpg_hsmm_loader(fasta_path: Path, N: int = 2, D: int = 50,
     )
 
 
-def write_cpg(states: np.ndarray, fasta_path: Path, out_path: Path) -> None:
-    """Write decoded states to a .cpg file in FASTA-like format.
 
-    Header line contains a description and the source FASTA name.
-    State integers (0=background, 1=CpG island) are written 30 per line.
+def write_gene(states: np.ndarray, fasta_path: Path, out_path: Path) -> None:
+    """Write decoded intron/exon states to a .gene file.
+
+    Header line contains description and source FASTA name.
+    State integers (0=Intron, 1=Exon) are written 30 per line.
     """
     with open(out_path, "w") as f:
-        f.write(f"# CpG island predictions | source: {fasta_path.name} | generated by tensor-viterbi\n")
+        f.write(f"# Intron/Exon predictions | source: {fasta_path.name} | generated by tensor-viterbi\n")
         flat = states.astype(int)
         for i in range(0, len(flat), 30):
             f.write("".join(str(s) for s in flat[i:i + 30]) + "\n")
 
 
-def run() -> None:
-    fasta_path = Path(__file__).parent / "data" / "chr22.fa"
-    cpg_hsmm = cpg_hsmm_loader(fasta_path, N=2, D=50, limit=OBS_LIMIT)
+def run_gene(fasta_path: Path) -> None:
+    gene_hsmm = gene_hsmm_loader(fasta_path, N=2, D=1000, limit=OBS_LIMIT)
 
-    N = len(cpg_hsmm.states)
-    print(f"  states (N)={N}  timesteps (T)={len(cpg_hsmm.obs_seq)}  max duration (D)={cpg_hsmm.duration_probs.shape[0]}\n")
+    N = len(gene_hsmm.states)
+    T = len(gene_hsmm.obs_seq)
+    D = gene_hsmm.duration_probs.shape[0]
+    print(f"  states (N)={N}, timesteps (T)={T},  max duration (D)={D}\n")
 
-    # # --- Python backend ---
-    # t0 = time.perf_counter()
-    # result_py = hsmm.decode()
-    # elapsed_py = time.perf_counter() - t0
-    # print(f"[python]  time={elapsed_py:.4f} s  states={result_py[:10]} ...")
-
-
-    # --- OpenMP backend ---
-    cpg_hsmm.to_log_space()
+    gene_hsmm.to_log_space()
 
     t0 = time.perf_counter()
-    result_omp = decode_tensor_viterbi_omp(
-        N, cpg_hsmm.trans_mat, cpg_hsmm.emission_probs,
-        cpg_hsmm.duration_probs_linear, cpg_hsmm.start_probs, cpg_hsmm.duration_probs, cpg_hsmm.obs_seq,
+    result = decode_tensor_viterbi_omp(
+        N, gene_hsmm.trans_mat, gene_hsmm.emission_probs,
+        gene_hsmm.duration_probs_linear, gene_hsmm.start_probs,
+        gene_hsmm.duration_probs, gene_hsmm.obs_seq,
     )
-    elapsed_omp = time.perf_counter() - t0
+    elapsed = time.perf_counter() - t0
 
-    print(f"[omp]     time={elapsed_omp:.4f} s  states={result_omp[:10]} ...")
+    n_exon = int(np.sum(result == 1))
+    print(f"  time={elapsed:.4f} s  Exon positions={n_exon} ({100 * n_exon / T:.2f}%)  states[:10]={result[:10]}")
 
-    out_path = fasta_path.with_suffix(".cpg")
-    write_cpg(result_omp, fasta_path, out_path)
-    print(f"  written → {out_path}")
+    out_path = fasta_path.with_suffix(".gene")
+    write_gene(result, fasta_path, out_path)
+    print(f"\nFinal result written → {out_path}")
 
-    # # --- CUDA backend ---
-    # cpg_hsmm = copy.copy(cpg_hsmm)
-    # cpg_hsmm.to_log_space()
-    # t0 = time.perf_counter()
-    # result_cuda = decode_tensor_viterbi_cuda(
-    #     N, cpg_hsmm.trans_mat, cpg_hsmm.emission_probs,
-    #     cpg_hsmm.duration_probs_linear, cpg_hsmm.start_probs, cpg_hsmm.duration_probs, cpg_hsmm.obs_seq,
-    # )
-    # elapsed_cuda = time.perf_counter() - t0
-    # print(f"[cuda]    time={elapsed_cuda:.4f} s  states={result_cuda[:10]} ...")
 
-    # acc_omp  = float(np.mean(np.asarray(result_py) == np.asarray(result_omp)))
-    # acc_cuda = float(np.mean(np.asarray(result_py) == np.asarray(result_cuda)))
-    # print(f"\n  python vs omp:  {acc_omp:.2%} match")
-    # print(f"  python vs cuda: {acc_cuda:.2%} match")
+def fetch_sequence(genome: str, chrom: str, start: int, end: int) -> str:
+    """Query the UCSC REST API and return the DNA string.
+
+    UCSC uses 0-based half-open coordinates here, matching BED.
+    """
+    params = {"genome": genome, "chrom": chrom, "start": start, "end": end}
+    print(f"[info] Requesting {chrom}:{start}-{end} from {genome} ...",
+          file=sys.stderr)
+    r = requests.get(API_URL, params=params, timeout=300)
+    r.raise_for_status()
+    data = r.json()
+    if "dna" not in data:
+        raise RuntimeError(f"Unexpected response: {data}")
+    return data["dna"]
+
+
+def write_fasta(path: Path, header: str, sequence: str, width: int = 60) -> None:
+    """Write a single-record FASTA, wrapping the sequence at `width` columns."""
+    with path.open("w") as fh:
+        fh.write(f">{header}\n")
+        for line in textwrap.wrap(sequence, width=width):
+            fh.write(line + "\n")
 
 
 if __name__ == "__main__":
-    run()
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--assembly", choices=REGIONS.keys(), required=True,
+                    help="Which assembly to fetch (hs1=T2T, hg19=GRCh37).")
+    ap.add_argument("--outdir", default=".", help="Output directory.")
+    args = ap.parse_args()
+
+    region = REGIONS[args.assembly]
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    out_path = outdir / f"{region['label']}.fa"
+
+    if out_path.exists():
+        print(f"[skip] {out_path} already exists, skipping download.", file=sys.stderr)
+    else:
+        seq = fetch_sequence(args.assembly,
+                             region["chrom"], region["start"], region["end"])
+        header = (f"{region['label']} "
+                  f"{region['chrom']}:{region['start']}-{region['end']} "
+                  f"len={len(seq)}")
+        write_fasta(out_path, header, seq)
+
+        n_count = seq.upper().count("N")
+        print(f"[done] Wrote {out_path}", file=sys.stderr)
+        print(f"[stats] length = {len(seq):,} bp", file=sys.stderr)
+        print(f"[stats] Ns     = {n_count:,} ({100*n_count/len(seq):.2f}%)",
+              file=sys.stderr)
+
+    fasta_path = Path(__file__).parent / "T2T-CHM13v2.0_chrY_euchromatic_MSY.fa"
+    run_gene(fasta_path)
