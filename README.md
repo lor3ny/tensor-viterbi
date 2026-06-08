@@ -1,6 +1,20 @@
 # tensor-viterbi
 
-Tensor Hidden Semi-Markov Model (HSMM) Viterbi decoding implemented in Python, C++, OpenMP, and CUDA/ROCm, with a full benchmarking suite for HPC clusters and local machines.
+Python library for Hidden Semi-Markov Model (HSMM) Viterbi decoding with CPU and GPU backends, plus a genomic gene-structure prediction application built on top of it.
+
+---
+
+## Table of Contents
+
+- [Implemented Backends](#implemented-backends)
+- [Repository Structure](#repository-structure)
+- [The `tensor_viterbi` Library](#the-tensor_viterbi-library)
+  - [HSMM Class](#hsmm-class)
+  - [FastaReader Class](#fastareader-class)
+  - [Viterbi Decoders](#viterbi-decoders)
+- [Gene Prediction Application](#gene-prediction-application)
+- [Requirements](#requirements)
+- [Installation](#installation)
 
 ---
 
@@ -23,51 +37,236 @@ Tensor Hidden Semi-Markov Model (HSMM) Viterbi decoding implemented in Python, C
 
 ```
 tensor-viterbi/
-├── tensor_viterbi/              # Python package
+├── tensor_viterbi/              # Python library package
 │   ├── __init__.py
-│   ├── hsmm.py                  # HSMM class
+│   ├── hsmm.py                  # HSMM model class
+│   ├── fasta.py                 # FASTA file reader
+│   ├── metrics.py               # Hardware metrics collectors (Cray PM)
 │   └── viterbi/
-│       ├── tensor.py            # Python tensor implementations
-│       ├── vanilla.py
+│       ├── tensor.py            # Vectorized Python Viterbi (primary)
+│       ├── vanilla.py           # Reference triple-loop implementation
 │       ├── native.py            # Lazy wrappers for C++/CUDA/OMP extensions
-│       ├── _native.pyi          # type stubs
-│       └── <system>/<toolchain>/  # per-system compiled .so
-│           └── _native.so
+│       ├── _native.pyi          # Type stubs
+│       └── <system>/<toolchain>/
+│           └── _native.so       # Per-system compiled extension
 ├── src/                         # C++ / CUDA / ROCm sources
-│   ├── bindings.cpp             # pybind11 module
+│   ├── bindings.cpp             # pybind11 module definition
 │   ├── hsmm.cu / hsmm.hpp       # CPU and GPU Viterbi implementations
 │   └── kernels.cu / kernels.cuh # CUDA/HIP GPU kernels
-├── data/                        # JSON model files
-├── results/                     # benchmark outputs (gitignored)
-│   └── <system>/<toolchain>/
-│       ├── <Ns>s_<D>d_<T>t_<function>.csv
-│       ├── <Ns>s_<D>d_<T>t.out
-│       └── <Ns>s_<D>d_<T>t.err
-├── build/                       # CMake build dirs (gitignored)
-│   └── <system>/<toolchain>/
-├── .venv/                       # per-toolchain virtual environments (gitignored)
-│   └── <system>/<toolchain>/
-├── validation/                  # validation scripts against hsmmlearn
-├── hsmmlearn/                   # bundled hsmmlearn (CPU baseline)
-├── hsmmlearn_omp/               # bundled hsmmlearn with OMP support
-├── systems.json                 # System descriptors (scheduler, partitions, modules, GPU arch)
-├── compile.py                   # Build native extension for a given system/toolchain
-├── run_benchmark.py             # Job submitter: sbatch (SLURM) or direct (local)
-├── viterbi_app.py               # Benchmark executor: runs backends, writes CSVs, validates
-├── requirements.txt             # Python dependencies
+├── viterbi_app.py               # Gene structure prediction application
+├── gff3_downloader.py           # Genomic annotation downloader
+├── requirements.txt
 └── CMakeLists.txt
 ```
+
+---
+
+## The `tensor_viterbi` Library
+
+### HSMM Class
+
+`tensor_viterbi.HSMM` is a builder-style class that holds all model parameters and exposes decoding and parameter re-estimation.
+
+```python
+from tensor_viterbi import HSMM
+import numpy as np
+
+hsmm = (
+    HSMM(states=["Sleep", "Wake"])
+    .set_emissions(["low", "high"], emission_probs)   # shape (O, N)
+    .set_transitions(trans_mat)                        # shape (N, N)
+    .set_duration_probs(duration_probs)                # shape (D, N)
+    .set_start_probs(start_probs)                      # shape (N,)
+    .set_observations(obs_seq)                         # shape (T,) integer indices
+)
+```
+
+#### Builder Methods
+
+| Method | Shape | Description |
+|---|---|---|
+| `set_emissions(symbols, probs)` | probs: (O, N) | Emission symbol list and probability matrix |
+| `set_transitions(trans_mat)` | (N, N) | State-to-state transition probabilities, rows sum to 1 |
+| `set_duration_probs(probs)` | (D, N) | Duration distribution per state (linear space), columns sum to 1 |
+| `set_start_probs(probs)` | (N,) | Initial state distribution, sums to 1 |
+| `set_observations(obs_seq)` | (T,) | Integer observation sequence (indices into the symbols list) |
+
+#### Key Methods
+
+**`decode() → np.ndarray`**
+
+Runs Viterbi decoding using the vectorized Python backend. Converts to log space internally and returns the most-likely state sequence of shape (T,).
+
+```python
+path = hsmm.decode()
+```
+
+---
+
+**`to_log_space()`**
+
+Converts `trans_mat`, `emission_probs`, `start_probs`, and `duration_probs` to log space in-place (adds a small smoothing term of 1e-30 before taking the log). `duration_probs_linear` is left unchanged — the native backends need it in linear space.
+
+Call this before passing the model to any native decoder:
+
+```python
+hsmm.to_log_space()
+result = decode_tensor_viterbi_omp(
+    N, hsmm.trans_mat, hsmm.emission_probs,
+    hsmm.duration_probs_linear, hsmm.start_probs,
+    hsmm.duration_probs, hsmm.obs_seq,
+)
+```
+
+---
+
+**`reestimate(result: np.ndarray) → HSMM`**
+
+Re-estimates all model parameters from a Viterbi-decoded state path using hard-assignment EM (Viterbi training). Returns a **new** `HSMM` object in linear probability space, ready for the next iteration.
+
+Parameter updates:
+
+- **Emissions** — counts how many times each symbol is emitted by each state, then normalizes per state.
+- **Transitions** — counts consecutive state pairs at segment boundaries, then normalizes per source state.
+- **Durations** — builds a histogram of observed segment lengths per state, then applies a uniform ±3-bin neighbourhood smoothing kernel before normalizing. This prevents zero probability mass on durations close to — but not exactly equal to — observed lengths.
+- **Start probabilities** — set deterministically to place all mass on the first decoded state.
+
+```python
+for _ in range(n_iterations):
+    hsmm.to_log_space()
+    result = decode_tensor_viterbi_omp(...)
+    hsmm = hsmm.reestimate(result)   # returns new HSMM with updated linear-space parameters
+```
+
+---
+
+**`print_model()`**
+
+Prints a diagnostic summary of the model dimensions, states, start probabilities, transition matrix, emission matrix, and duration distributions. Call this **before** `to_log_space()` to display meaningful linear-space values.
+
+---
+
+**`load_model(json_path) → HSMM`** *(static)*
+
+Loads a model from a JSON configuration file. See [Data Format](#data-format) for the expected schema.
+
+---
+
+### FastaReader Class
+
+`tensor_viterbi.FastaReader` reads a FASTA file and converts the sequence to an integer index array.
+
+```python
+from tensor_viterbi import FastaReader
+
+reader = FastaReader("sequence.fa", symbols=["A", "T", "C", "G"])
+obs = reader.read()          # np.ndarray, dtype int64, shape (T,)
+```
+
+Symbol matching is case-insensitive; characters not in `symbols` are silently skipped.
+
+---
+
+### Viterbi Decoders
+
+All decoders return a (T,) integer array of the decoded state sequence.
+
+#### Python Backends
+
+```python
+from tensor_viterbi import decode_log_tensor_viterbi_cached, decode_vanilla_viterbi
+
+# Both require the HSMM to be in log space already
+path = decode_log_tensor_viterbi_cached(hsmm)   # vectorized, sliding-window emission cache
+path = decode_vanilla_viterbi(hsmm)             # O(T·N²·D) reference, naive nested loops
+```
+
+#### Native Backends (C++ / OMP / CUDA)
+
+```python
+from tensor_viterbi import (
+    decode_tensor_viterbi_cpp,
+    decode_tensor_viterbi_omp,
+    decode_tensor_viterbi_cuda,
+)
+
+# Shared signature for all three:
+path = decode_tensor_viterbi_omp(
+    N,                          # int   — number of states
+    trans_mat,                  # (N, N) log-space
+    emission_probs,             # (O, N) log-space
+    duration_probs_linear,      # (D, N) linear space
+    start_probs,                # (N,)   log-space
+    duration_probs,             # (D, N) log-space
+    obs_seq,                    # (T,)   integer indices
+)
+```
+
+Native backends raise `RuntimeError` if the extension has not been compiled (see [Installation](#installation)).
+
+---
+
+## Gene Prediction Application
+
+`viterbi_app.py` demonstrates the library on a real genomics task: annotating a nucleotide sequence with a three-state gene-structure model (Intergenic / Exon / Intron) via iterative Viterbi training.
+
+### Model
+
+Three states with biologically motivated emission probabilities:
+
+| State | Character | A | T | C | G |
+|---|---|---|---|---|---|
+| Intergenic | very AT-rich | 0.35 | 0.35 | 0.15 | 0.15 |
+| Exon | GC-rich | 0.20 | 0.20 | 0.30 | 0.30 |
+| Intron | AT-rich | 0.30 | 0.30 | 0.20 | 0.20 |
+
+Initial transition and duration distributions are uniform (max duration D = 1000 bp). Parameters are refined over 5 Viterbi-training iterations.
+
+### Data
+
+The application targets the euchromatic MSY region of chrY in the T2T-CHM13 v2.0 assembly (coordinates 2 458 320 – 26 673 214), fetched automatically from the UCSC REST API on first run.
+
+### Usage
+
+```bash
+python viterbi_app.py [--outdir <directory>]
+```
+
+| Argument | Default | Description |
+|---|---|---|
+| `--outdir` | `.` | Directory for downloaded FASTA and output annotation |
+
+### Workflow
+
+1. **Download** — fetches `chrY:2458320-26673214` from the UCSC Genome Browser API and writes `T2T-CHM13v2.0_chrY_euchromatic_MSY.fa` (skipped if the file already exists).
+2. **Load** — reads up to 10 000 nucleotides and initialises the HSMM.
+3. **Iterate** — runs 5 rounds of Viterbi decode → `reestimate()`, printing the fraction of bases assigned to each state per round.
+4. **Write** — saves the final decoded annotation as `<input>.gene`.
+
+### Output `.gene` Format
+
+Plain text, 30 state-index characters per line:
+
+```
+# Gene structure predictions | source: T2T-CHM13v2.0_chrY_euchromatic_MSY.fa | generated by tensor-viterbi
+000000000001111111111222222222200
+000000001111111111112222222222222
+...
+```
+
+`0` = Intergenic, `1` = Exon, `2` = Intron.
 
 ---
 
 ## Requirements
 
 - Python >= 3.10
-- CMake >= 3.18
-- A C++ compiler (GCC, Clang, Intel ICX, Cray CC, Fujitsu FCC)
-- For GPU backends: CUDA toolkit >= 12.0 or ROCm
+- CMake >= 3.18 *(only for native C++/OMP/CUDA backends)*
+- A C++ compiler: GCC, Clang, Intel ICX, Cray CC, or Fujitsu FCC *(native backends only)*
+- CUDA >= 12.0 or ROCm *(GPU backend only)*
 
-Python packages (see `requirements.txt`):
+Python packages:
+
 ```
 numpy >= 2.4
 pandas >= 3.0
@@ -77,340 +276,34 @@ pybind11 >= 3.0
 Cython >= 3.2
 ```
 
+```bash
+pip install -r requirements.txt
+```
+
 ---
 
-## Setup
+## Installation
 
-### 1 — Clone the repository
+### Python-only (no native backends)
 
 ```bash
 git clone https://github.com/lor3ny/tensor-viterbi.git
 cd tensor-viterbi
-```
-
-### 2 — Configure your system in `systems.json`
-
-Every system (laptop, HPC node, cloud VM) must have an entry in `systems.json`.
-The `"scheduler"` field controls how `run_benchmark.py` dispatches jobs:
-
-| Value | Behaviour |
-|---|---|
-| `"local"` | Calls `python viterbi_app.py` directly in the current shell |
-| `"slurm"` | Generates a `.slrm` script and submits it via `sbatch` |
-
-A minimal local CPU entry:
-
-```json
-"workstation": {
-  "scheduler": "local",
-  "type": "cpu",
-  "cpus": 8,
-  "toolchains": {
-    "gnu": {
-      "modules": "",
-      "modules_build": ""
-    }
-  }
-}
-```
-
-For SLURM clusters add `partition`, `account`, and the module names to load:
-
-```json
-"my-cluster-cpu": {
-  "scheduler": "slurm",
-  "type": "cpu",
-  "partition": "compute",
-  "account": "myproject",
-  "cpus": 128,
-  "toolchains": {
-    "gnu": {
-      "modules": "Python/3.11:GCC/12",
-      "modules_build": "Python/3.11:GCC/12"
-    }
-  }
-}
-```
-
-For GPU nodes add `gpu_arch` (CUDA SM string or ROCm GFX target) instead of `cpus`:
-
-```json
-"my-cluster-gpu": {
-  "scheduler": "slurm",
-  "type": "gpu",
-  "partition": "gpu",
-  "account": "myproject",
-  "gpu_arch": "80",
-  "toolchains": {
-    "cuda": {
-      "modules": "CUDA/12:Python/3.11",
-      "modules_build": "CUDA/12:Python/3.11"
-    }
-  }
-}
-```
-
-All pre-configured systems are already in `systems.json`. Run `python compile.py --help`
-to print the list of available systems and toolchains.
-
-**Optional fields** (add inside the system or toolchain dict only when needed):
-
-| Field | Scope | Description |
-|---|---|---|
-| `qos` | system | SLURM QOS string (`--qos`) |
-| `uenv` | toolchain | uenv image name (Alps/CSCS only) |
-| `metrics_backend` | toolchain | Energy/power metrics collector token |
-| `omp_bind` | system | `OMP_PROC_BIND` override |
-| `omp_places` | system | `OMP_PLACES` override |
-| `cc` / `cxx` | toolchain | Explicit compiler path override |
-
-### 3 — Create and activate a virtual environment
-
-You manage your own virtual environment. Create it, activate it, and install
-dependencies before running any script:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate          # Linux / macOS
-# .venv\Scripts\activate           # Windows
-
-pip install -r requirements.txt
-```
-
-On HPC systems, activate the same environment **before** submitting jobs.
-`run_benchmark.py` passes the current `PATH` (including the active venv) to
-each SLURM job via `--export=ALL`, so no venv re-activation is needed inside
-the batch script.
-
-### 4 — Build the native extension
-
-`compile.py` verifies requirements and compiles the C++/CUDA extension via CMake
-using the Python interpreter that is currently active. It does not create or
-modify any virtual environment.
-
-```bash
-python compile.py --system <system> --toolchain <toolchain>
-```
-
-Examples:
-```bash
-# Workstation (no modules)
-python compile.py --system workstation --toolchain gnu
-
-# Intel Xeon on Leonardo (CINECA)
-python compile.py --system xeon8480 --toolchain intel
-
-# A100 GPU on Leonardo (CINECA)
-python compile.py --system a100 --toolchain cuda
-
-# Build all toolchains for a system at once
-python compile.py --system epyc-7763-bigmem --toolchain all
-```
-
-Both `compile.py` and `run_benchmark.py` must be run from the repository root.
-
----
-
-## Running Benchmarks
-
-The benchmark workflow is split across two scripts:
-
-| Script | Role |
-|---|---|
-| `run_benchmark.py` | Dispatches jobs — sbatch for SLURM systems, direct call for local systems |
-| `viterbi_app.py` | Executes one benchmark: runs backends, writes CSVs, validates results |
-
-
-### Running the benchmark grid
-
-```bash
-python run_benchmark.py --system <system> --toolchain <toolchain> [backend flags]
-```
-
-**Backend flags** (CPU systems — pick one or more; GPU runs `--cuda` automatically):
-
-| Flag | Backend |
-|---|---|
-| `--cpp` | C++ single-threaded |
-| `--omp` | C++ OpenMP |
-| `--omp-opt` | C++ OpenMP optimized |
-| `--py` | Python vectorized |
-| `--cuda` | CUDA / ROCm (GPU only) |
-| `--baseline` | HSMMLearn C++ + OMP reference |
-| `--baseline-cpp` | HSMMLearn C++ only |
-| `--baseline-omp` | HSMMLearn OMP only |
-
-**Other flags:**
-
-| Flag | Default | Description |
-|---|---|---|
-| `--iterations N` | 6 | Benchmark repetitions per job (capped at 2 for T ≥ 1M) |
-| `--toolchain all` | — | Run every toolchain defined for the system |
-
-Examples:
-```bash
-# SLURM — CPU node, C++, OpenMP and baselines
-python run_benchmark.py --system xeon8480 --toolchain intel --cpp --omp --baseline
-
-# SLURM — GPU node (CUDA selected automatically)
-python run_benchmark.py --system a100 --toolchain cuda
-
-# SLURM — all toolchains for a node
-python run_benchmark.py --system epyc-7763-bigmem --toolchain all --cpp --omp
-
-# Local machine (scheduler: local in systems.json)
-python run_benchmark.py --system workstation --toolchain gnu --cpp --omp
-```
-
-### Running a single file directly
-
-`viterbi_app.py` can also be called directly to benchmark one data file without
-going through the sweep. This is useful for quick checks on a login node.
-
-```bash
-python viterbi_app.py --system <system> --toolchain <toolchain> \
-    --cpp --omp --baseline --iterations 3 \
-    --data-path data/10states_1000steps_100dur.json
-```
-
-Validation against the reference (saved as `<data>_reference.npy`) runs
-automatically on the last iteration of each backend.
-
----
-
-## Customising the Parameter Sweep
-
-The grid of jobs submitted by `run_benchmark.py` is controlled by three lists
-near the top of that file:
-
-```python
-STATES    = [10, 15, 25, 50, 75]
-DURATIONS = [100, 250, 500, 1000]
-TIMESTEPS = [1000000]
-```
-
-One job is submitted for every combination. Edit these lists before running to
-change the sweep:
-
-```python
-# Single large configuration
-STATES    = [100]
-DURATIONS = [10000]
-TIMESTEPS = [10000000]
-
-# Add an intermediate timestep
-TIMESTEPS = [100000, 1000000]
-```
-
-Each combination requires a pre-generated model file at
-`data/<N>states_<T>steps_<D>dur.json`. If you add new parameter values,
-generate the corresponding files first:
-
-```bash
-python data/data_generator.py
-```
-
----
-
-## Reproducing the Results
-
-The full sequence to reproduce the benchmark results from scratch on an HPC system:
-
-**HPC cluster (SLURM):**
-
-```bash
-# 1. Clone and enter the repo
-git clone https://github.com/lor3ny/tensor-viterbi.git
-cd tensor-viterbi
-
-# 2. Create and activate your environment, install dependencies
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+```
 
-# 3. Build — run once per system/toolchain pair
-#    (also compiles hsmmlearn baselines with the correct toolchain compiler)
+The pure-Python backends (`decode_log_tensor_viterbi_cached`, `decode_vanilla_viterbi`) work immediately. Native backends will raise `RuntimeError` until compiled.
+
+### With native backends (C++ / OMP / CUDA)
+
+```bash
+# Build for your system and toolchain
 python compile.py --system <system> --toolchain <toolchain>
 
-# 4. Submit the full benchmark grid (venv must still be active)
-#    scheduler: slurm in systems.json → generates .tmp_benchmark.slrm and sbatches it
-python run_benchmark.py --system <system> --toolchain <toolchain>
-
-# 5. Results land in results/<system>/<toolchain>/
-#    <Ns>s_<D>d_<T>t_<function>.csv
-#    Columns: function, n_states, timesteps, max_duration, iteration, elapsed_s
-```
-
-**Local machine / workstation:**
-
-```bash
-# 1. Add your system to systems.json with "scheduler": "local"
-#    (see "Configure your system" above)
-
-# 2. Create and activate your environment
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-# 3. Build (also compiles hsmmlearn baselines)
+# Examples
 python compile.py --system workstation --toolchain gnu
-
-# 4. Run the benchmark grid
-#    scheduler: local in systems.json → calls viterbi_app.py directly
-python run_benchmark.py --system workstation --toolchain gnu --cpp --omp
-
-# 5. Quick single-file check
-python viterbi_app.py --system workstation --toolchain gnu \
-    --cpp --omp --iterations 3 -dp data/10states_1000steps_100dur.json
+python compile.py --system a100        --toolchain cuda
 ```
 
----
-
-## Output Format
-
-Results land in `results/<system>/<toolchain>/`. For each job:
-
-| File | Description |
-|---|---|
-| `<Ns>s_<D>d_<T>t_<function>.csv` | Timing rows, one per iteration |
-| `<Ns>s_<D>d_<T>t_<function>_metrics.csv` | Energy/power metrics (if collector configured) |
-| `<Ns>s_<D>d_<T>t.out` | stdout (hardware diagnostics + benchmark output) |
-| `<Ns>s_<D>d_<T>t.err` | stderr |
-
-CSV columns: `function, n_states, timesteps, max_duration, iteration, elapsed_s`
-
----
-
-## Data Format
-
-Model files are JSON with the following fields:
-
-```json
-{
-  "n_steps": 1000,
-  "M": 20,
-  "n_bins": 13,
-  "seed": 42,
-  "pi": [...],
-  "trans_mat": [[...]],
-  "obs_seq": [...],
-  "states": [
-    { "name": "S0", "emission_probs": [...], "duration_probs": [...] }
-  ]
-}
-```
-
-Generate new data files with:
-
-```bash
-python data/data_generator.py
-```
-
----
-
-## Known Issues
-
-- **Leonardo (CINECA)**: mixing GCC versions can cause runtime crashes. Using the
-  default GCC 8.5.0 (no explicit compiler module) is stable; loading GCC 12.2 compiles
-  but links against the wrong runtime.
-- **GPU venvs**: built with `--system-site-packages` and only install `numpy` and
-  `pybind11` directly. All other packages (`pandas`, `scipy`, etc.) must be available
-  via the system Python module loaded in `systems.json`.
+Run `python compile.py --help` for available systems and toolchains. Both `compile.py` and the library must be run from the repository root.

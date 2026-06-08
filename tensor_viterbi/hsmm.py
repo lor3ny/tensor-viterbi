@@ -97,6 +97,70 @@ class HSMM:
         self.start_probs = np.log(self.start_probs + smoothness)
         self.duration_probs = np.log(self.duration_probs + smoothness)
 
+    def reestimate(self, result: np.ndarray) -> "HSMM":
+        """Re-estimate parameters from a Viterbi-decoded state sequence.
+
+        Computes new emission, transition, and duration probabilities by counting
+        statistics directly from the decoded path, then normalizing. Duration
+        probabilities are smoothed with a uniform ±3 neighbourhood kernel.
+        Returns a new HSMM in linear probability space ready for the next iteration.
+        """
+        N       = len(self.states)
+        O       = len(self.emissions)
+        D       = self.duration_probs_linear.shape[0]
+        obs_seq = self.obs_seq.astype(int)
+        T       = len(obs_seq)
+
+        # Parse decoded path into (state, start_t, length) segments
+        segments: list[tuple[int, int, int]] = []
+        t = 0
+        while t < T:
+            s = int(result[t])
+            length = 1
+            while t + length < T and int(result[t + length]) == s:
+                length += 1
+            segments.append((s, t, length))
+            t += length
+
+        # Emission counts
+        emit_counts = np.zeros((O, N), dtype=float)
+        for t in range(T):
+            emit_counts[int(obs_seq[t]), int(result[t])] += 1
+        col_sums = emit_counts.sum(axis=0, keepdims=True)
+        col_sums[col_sums == 0] = 1.0
+        new_emission_probs = emit_counts / col_sums
+
+        # Transition counts
+        trans_counts = np.zeros((N, N), dtype=float)
+        for idx in range(len(segments) - 1):
+            trans_counts[segments[idx][0], segments[idx + 1][0]] += 1
+        row_sums = trans_counts.sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1.0
+        new_trans_mat = trans_counts / row_sums
+
+        # Duration counts with uniform ±3 neighbourhood smoothing
+        dur_counts = np.zeros((D, N), dtype=float)
+        for s, _, length in segments:
+            dur_counts[min(length, D) - 1, s] += 1
+        kernel = np.ones(7)
+        for n in range(N):
+            dur_counts[:, n] = np.convolve(dur_counts[:, n], kernel, mode='same')
+        col_sums = dur_counts.sum(axis=0, keepdims=True)
+        col_sums[col_sums == 0] = 1.0
+        new_duration_probs = dur_counts / col_sums
+
+        # Start probs: deterministic from the first decoded segment
+        new_start_probs = np.zeros(N, dtype=float)
+        new_start_probs[segments[0][0]] = 1.0
+
+        new_hsmm = copy.copy(self)
+        new_hsmm.trans_mat             = new_trans_mat
+        new_hsmm.emission_probs        = new_emission_probs
+        new_hsmm.duration_probs        = new_duration_probs
+        new_hsmm.duration_probs_linear = new_duration_probs
+        new_hsmm.start_probs           = new_start_probs
+        return new_hsmm
+
     def print_model(self):
         N = len(self.states)
         O = len(self.emissions) if self.emissions is not None else "?"

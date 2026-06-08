@@ -7,13 +7,12 @@ import requests
 import textwrap
 import sys
 import numpy as np
-import copy
 
 from tensor_viterbi import HSMM, FastaReader
 from tensor_viterbi.viterbi import decode_tensor_viterbi_omp
 
 API_URL = "https://api.genome.ucsc.edu/getData/sequence" # UCSC REST API for fetching genomic sequences
-OBS_LIMIT = None                                         # max observations read from FASTA (None = whole file)
+OBS_LIMIT = None                                      # max observations read from FASTA (None = whole file)
 _BASES = ["A", "T", "C", "G"]
 
 # Approximate euchromatic MSY boundaries.
@@ -117,67 +116,6 @@ def gene_hsmm_loader(fasta_path: Path, N: int = 2, D: int = 1000,
 
 
 
-def reestimate_hsmm(gene_hsmm: HSMM, result: np.ndarray) -> HSMM:
-    """Re-estimate HSMM parameters from a Viterbi-decoded state sequence.
-
-    Computes new emission, transition, and duration probabilities by counting
-    statistics directly from the decoded path, then normalizing.
-    Returns a new HSMM in linear probability space ready for the next iteration.
-    """
-
-    N       = len(gene_hsmm.states)
-    O       = len(gene_hsmm.emissions)
-    D       = gene_hsmm.duration_probs_linear.shape[0]
-    obs_seq = gene_hsmm.obs_seq.astype(int)
-    T       = len(obs_seq)
-
-    # Parse decoded path into (state, start_t, length) segments
-    segments: list[tuple[int, int, int]] = []
-    t = 0
-    while t < T:
-        s = int(result[t])
-        length = 1
-        while t + length < T and int(result[t + length]) == s:
-            length += 1
-        segments.append((s, t, length))
-        t += length
-
-    # Emission counts: how many nucleotides of symbol o are in state n
-    emit_counts = np.zeros((O, N), dtype=float)
-    for t in range(T):
-        emit_counts[int(obs_seq[t]), int(result[t])] += 1
-    col_sums = emit_counts.sum(axis=0, keepdims=True)
-    col_sums[col_sums == 0] = 1.0
-    new_emission_probs = emit_counts / col_sums
-
-    # Transition counts: how many times state i is followed by state j
-    trans_counts = np.zeros((N, N), dtype=float)
-    for idx in range(len(segments) - 1):
-        trans_counts[segments[idx][0], segments[idx + 1][0]] += 1
-    row_sums = trans_counts.sum(axis=1, keepdims=True)
-    row_sums[row_sums == 0] = 1.0
-    new_trans_mat = trans_counts / row_sums
-
-    # Duration counts: histogram of segment lengths per state, capped at D
-    dur_counts = np.zeros((D, N), dtype=float)
-    for s, _, length in segments:
-        dur_counts[min(length, D) - 1, s] += 1
-    col_sums = dur_counts.sum(axis=0, keepdims=True)
-    col_sums[col_sums == 0] = 1.0
-    new_duration_probs = dur_counts / col_sums
-
-    # Start probs: deterministic from the first decoded segment
-    new_start_probs = np.zeros(N, dtype=float)
-    new_start_probs[segments[0][0]] = 1.0
-
-    new_hsmm = copy.copy(gene_hsmm)
-    new_hsmm.trans_mat              = new_trans_mat
-    new_hsmm.emission_probs         = new_emission_probs
-    new_hsmm.duration_probs         = new_duration_probs
-    new_hsmm.duration_probs_linear  = new_duration_probs
-    new_hsmm.start_probs            = new_start_probs
-    return new_hsmm
-
 
 def run_gene(gene_hsmm: HSMM, fasta_path: Path) -> None:
 
@@ -186,12 +124,11 @@ def run_gene(gene_hsmm: HSMM, fasta_path: Path) -> None:
     D = gene_hsmm.duration_probs.shape[0]
     print(f"  states (N)={N}, timesteps (T)={T},  max duration (D)={D}\n")
 
-    gene_hsmm.print_model()
-
-    LEARNING_ITERATIONS = 1
+    LEARNING_ITERATIONS = 5
     result = None
-    for _ in range(LEARNING_ITERATIONS):
+    for it in range(LEARNING_ITERATIONS):
 
+        gene_hsmm.print_model()
         gene_hsmm.to_log_space()
 
         t0 = time.perf_counter()
@@ -205,10 +142,11 @@ def run_gene(gene_hsmm: HSMM, fasta_path: Path) -> None:
         n_intergenic = int(np.sum(result == 0))
         n_exon       = int(np.sum(result == 1))
         n_intron     = int(np.sum(result == 2))
-        print(f"  time={elapsed:.4f} s  Intergenic={n_intergenic} ({100*n_intergenic/T:.2f}%)  Exon={n_exon} ({100*n_exon/T:.2f}%)  Intron={n_intron} ({100*n_intron/T:.2f}%)")
-        print(f"  states[:10]={result[:10]}")
+        print(f"-> iteration {it} time={elapsed:.4f} s  Intergenic={n_intergenic} ({100*n_intergenic/T:.2f}%)  Exon={n_exon} ({100*n_exon/T:.2f}%)  Intron={n_intron} ({100*n_intron/T:.2f}%)")
 
-        gene_hsmm = reestimate_hsmm(gene_hsmm, result)
+        # MAYBE AN ADJUSTEMENT IS NEEDED
+
+        gene_hsmm = gene_hsmm.reestimate(result)
 
     if result is not None:
         out_path = fasta_path.with_suffix(".gene")
