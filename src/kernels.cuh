@@ -8,67 +8,62 @@
     #define WARP_SIZE 32
 #endif
 
-// ── Initialization kernel ────────────────────────────────────────────────────────────── //
+// ── Constant-memory dimensions — set once before any kernel launch ────────
+void set_kernel_constants(int N, int D, int T);
 
+// ── Initialization kernel ─────────────────────────────────────────────────
 __global__ void kernel_initialization(
         const double* __restrict__ start_probs,
-        const double* __restrict__ duration_probs,         // N×D log-space
-        const double* __restrict__ duration_probs_linear,  // N×D linear-space
+        const double* __restrict__ duration_probs,
+        const double* __restrict__ duration_probs_linear,
         const double* __restrict__ emission_probs,
         const int*    __restrict__ obs_seq,
         double* delta, int* psi_dur,
-        double* survival_probs,
-        int N, int D, int T);
+        double* survival_probs);
 
-
-// ── Induction kernel ─────────────────────────────────────────────────────── //
+// ── Induction kernel ──────────────────────────────────────────────────────
 __global__ void kernel_induction(
-    int                           obs_t,         // obs_seq[t] — valore diretto
-    const double* __restrict__ emission_probs,
+    const double* __restrict__ em_t,      // emission_probs + obs_seq[t]*N (host-offset)
     const double* __restrict__ trans_mat,
     const double* __restrict__ duration_probs,
     const double* __restrict__ delta,
-    const double* __restrict__ em_cur,   // D×N — emissions iterazione precedente
-    double*                    em_nxt,   // D×N — emissions iterazione corrente
-    double* best_val_ji,   // N×N output
-    int*    best_d_ji,     // N×N output
-    int N, int D, int T, int tau, int t);
+    const double* __restrict__ em_cur,
+    double*                    em_nxt,
+    double* psi_state_ji,
+    int*    psi_dur_ji,
+    int tau, int t);
 
-
-// ── Reduction kernel su i (argmax) ─────────────────────────────────────── //
+// ── Reduction kernel su i (argmax) ────────────────────────────────────────
 __global__ void kernel_reduce_i(
-    const double* __restrict__ best_val_ji,   // N×N
-    const int*    __restrict__ best_d_ji,     // N×N
-    double*                    delta,       // T×N
-    int*                       psi_state, // T×N
-    int*                       psi_dur,   // T×N
-    int N, int D, int T, int t);
+    const double* __restrict__ psi_state_ji,
+    const int*    __restrict__ psi_dur_ji,
+    double*                    delta,
+    int*                       psi_state,
+    int*                       psi_dur,
+    int t);
 
-
-// ── Persistent kernel (induction + reduction) ───────────────────────────── //
+// ── Persistent kernel (induction + reduction) ─────────────────────────────
 __global__ void kernel_persistent(
     const int*    __restrict__ obs_seq,
     const double* __restrict__ emission_probs,
-    double*                    delta,        // T×N — lettura e scrittura
+    double*                    delta,
     const double* __restrict__ trans_mat,
     const double* __restrict__ duration_probs,
-    double*                    em0,        // doppio buffer emissions
+    double*                    em0,
     double*                    em1,
-    double*                    best_state_ji,  // N×N — buffer intermedio
-    int*                       best_d_ji,    // N×N — buffer intermedio
-    int*                       psi_state,  // T×N
-    int*                       psi_dur,    // T×N
-    int N, int D, int T);
+    double*                    psi_state_ji,
+    int*                       psi_dur_ji,
+    int*                       psi_state,
+    int*                       psi_dur);
 
-// ── Tail Adjustment kernel ─────────────────────────────────────────────── //
+// ── Tail Adjustment kernel ────────────────────────────────────────────────
 __global__ void kernel_tail_adjustment(
     const double* __restrict__ trans_mat,
-    const double* __restrict__ survival_probs,  // N×D — log P(dur > d)
-    const double* __restrict__ d_em_last,       // D×N — emissions t=T-1
-    double*                    delta,           // N×T — lettura past delta
-    double*                    psi_state_ji,    // N×N — output per kernel_reduce_i
-    int*                       psi_dur_ji,      // N×N — output per kernel_reduce_i
-    int N, int D, int T);
+    const double* __restrict__ survival_probs,
+    const double* __restrict__ d_em_last,
+    double*                    delta,
+    double*                    psi_state_ji,
+    int*                       psi_dur_ji);
 
 __global__ void kernel_tail_reduce_i(
     const double* __restrict__ psi_state_ji,
@@ -76,4 +71,4 @@ __global__ void kernel_tail_reduce_i(
     double*                    delta,
     int*                       psi_state,
     int*                       psi_dur,
-    int N, int D, int T, int t);
+    int t);

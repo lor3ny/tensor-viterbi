@@ -647,6 +647,8 @@ std::vector<int> decode_tensor_viterbi_cuda(
     CUDA_CHECK(cudaMalloc(&d_em[0], D * N * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_em[1], D * N * sizeof(double)));
 
+    set_kernel_constants(N, D, T);
+
     //* ── PHASE 1 — Initialization ───────────────────────────────────────────── *//
     int bs_init = min(next_pow2(D), 1024);
     const int    num_warps_init = bs_init / 32;
@@ -655,8 +657,7 @@ std::vector<int> decode_tensor_viterbi_cuda(
         d_start_probs, d_duration_probs,
         d_duration_probs_linear, d_emission_probs,
         d_obs_seq, d_delta, d_psi_dur,
-        d_survival_probs,
-        N, D, T);
+        d_survival_probs);
     CUDA_CHECK(cudaGetLastError());
 
     //* ── PHASE 2 — Induction ─────────────────────────────────────────────────── *//
@@ -684,8 +685,7 @@ std::vector<int> decode_tensor_viterbi_cuda(
         d_trans_mat, d_survival_probs,
         d_em[cur_final],
         d_delta,
-        d_psi_state_ji, d_psi_dur_ji,
-        N, D, T);
+        d_psi_state_ji, d_psi_dur_ji);
     CUDA_CHECK(cudaGetLastError());
 
     int bs_N = next_pow2(N);
@@ -693,7 +693,7 @@ std::vector<int> decode_tensor_viterbi_cuda(
     kernel_tail_reduce_i<<<N, bs_N, sm_reduce>>>(
         d_psi_state_ji, d_psi_dur_ji,
         d_delta, d_psi_state, d_psi_dur,
-        N, D, T, T - 1);
+        T - 1);
     CUDA_CHECK(cudaGetLastError());
     
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -748,8 +748,7 @@ static void run_induction(
             &d_trans_mat, &d_duration_probs,
             &d_em[0], &d_em[1],
             &d_psi_state_ji, &d_psi_dur_ji,
-            &d_psi_state, &d_psi_dur,
-            &N, &D, &T
+            &d_psi_state, &d_psi_dur
         };
 
         cudaLaunchCooperativeKernel(
@@ -773,15 +772,16 @@ static void run_induction(
                             : 0;
 
             kernel_induction<<<dim3(N, N), dim3(bs), sm>>>(
-                h_obs_seq[t], d_emission_probs, d_trans_mat, d_duration_probs,
+                d_emission_probs + (size_t)h_obs_seq[t] * N,
+                d_trans_mat, d_duration_probs,
                 d_delta, d_em[cur], d_em[nxt],
-                d_psi_state_ji, d_psi_dur_ji, N, D, T, tau, t);
+                d_psi_state_ji, d_psi_dur_ji, tau, t);
             CUDA_CHECK(cudaGetLastError());
 
             kernel_reduce_i<<<N, bs_N, sm_reduce>>>(
                 d_psi_state_ji, d_psi_dur_ji,
                 d_delta, d_psi_state, d_psi_dur,
-                N, D, T, t);
+                t);
             CUDA_CHECK(cudaGetLastError());
 
             cur = nxt;

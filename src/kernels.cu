@@ -5,6 +5,14 @@
 
 namespace cg = cooperative_groups;
 
+__constant__ int N, D, T;
+
+void set_kernel_constants(int n, int d, int t) {
+    cudaMemcpyToSymbol(N, &n, sizeof(int));
+    cudaMemcpyToSymbol(D, &d, sizeof(int));
+    cudaMemcpyToSymbol(T, &t, sizeof(int));
+}
+
 #ifdef __HIP_PLATFORM_AMD__
     #define WARP_SHFL_UP(val, stride)   __shfl_up(val, stride)
     #define WARP_SHFL_DOWN(val, stride) __shfl_down(val, stride)
@@ -23,8 +31,7 @@ __global__ void kernel_initialization(
     const double* __restrict__ emission_probs,
     const int*    __restrict__ obs_seq,
     double* delta, int* psi_dur,
-    double* survival_probs,
-    int N, int D, int T)
+    double* survival_probs)
 {
     const int j = blockIdx.x;
     const int d = threadIdx.x;
@@ -118,8 +125,7 @@ __global__ void kernel_initialization(
 
 
 __global__ void kernel_induction(
-    int obs_t,
-    const double* __restrict__ emission_probs,
+    const double* __restrict__ em_t,      // emission_probs + obs_seq[t]*N (host-offset)
     const double* __restrict__ trans_mat,
     const double* __restrict__ duration_probs,
     const double* __restrict__ delta,
@@ -127,7 +133,7 @@ __global__ void kernel_induction(
     double*                    em_nxt,
     double* psi_state_ji,
     int*    psi_dur_ji,
-    int N, int D, int T, int tau, int t)
+    int tau, int t)
 {
     const int j = blockIdx.x;
     const int i = blockIdx.y;
@@ -146,7 +152,7 @@ __global__ void kernel_induction(
     int*    sh_d   = reinterpret_cast<int*>(sh_val + num_warps);
 
     //* Broadcast emission — tutti i thread leggono lo stesso indirizzo (L1 broadcast) *//
-    const double new_em  = emission_probs[obs_t * N + j];
+    const double new_em   = em_t[j];
     const double trans_ji = trans_mat[j * N + i];
 
     // ── Thread coarsening ──────────────────────────────────────────────────────
@@ -222,7 +228,7 @@ __global__ void kernel_reduce_i(
     double*                    delta,
     int*                       psi_state,
     int*                       psi_dur,
-    int N, int D, int T, int t)
+    int t)
 {
     const int j = blockIdx.x;
     const int i = threadIdx.x;
@@ -302,8 +308,7 @@ __global__ void kernel_persistent(
     double*                    psi_state_ji,
     int*                       psi_dur_ji,
     int*                       psi_state,
-    int*                       psi_dur,
-    int N, int D, int T)
+    int*                       psi_dur)
 {
     cg::grid_group grid = cg::this_grid();
 
@@ -420,8 +425,7 @@ __global__ void kernel_tail_adjustment(
     const double* __restrict__ d_em_last,
     double*                    delta,
     double*                    psi_state_ji,
-    int*                       psi_dur_ji,
-    int N, int D, int T)
+    int*                       psi_dur_ji)
 {
     const int j = blockIdx.x;
     const int i = blockIdx.y;
@@ -499,7 +503,7 @@ __global__ void kernel_tail_reduce_i(
     double*                    delta,
     int*                       psi_state,
     int*                       psi_dur,
-    int N, int D, int T, int t)
+    int t)
 {
     const int j = blockIdx.x;
     const int i = threadIdx.x;
