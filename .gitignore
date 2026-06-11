@@ -56,9 +56,6 @@ build/
 
 src/tensor-viterbi
 
-# scripts
-my_run.slurm
-
 # results
 #results/
 
