@@ -765,8 +765,7 @@ static void run_induction(
             const int tau = std::min(t, D);
             const int nxt = 1 - cur;
 
-            int bs = min(next_pow2(tau), 1024);
-            // smem solo per cross-warp (num_warps entry); zero se bs <= WARP_SIZE
+            int bs = min(next_pow2(tau), 128);
             const size_t sm = (bs > WARP_SIZE)
                             ? (bs / WARP_SIZE) * (sizeof(double) + sizeof(int))
                             : 0;
