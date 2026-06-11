@@ -421,7 +421,7 @@ std::vector<int> decode_tensor_viterbi_omp(
     {   
         #ifdef LIKWID_PERFMON
             LIKWID_MARKER_THREADINIT;
-            #pragma omp master
+            #pragma omp barrier
             LIKWID_MARKER_START("viterbi_omp_opt");
         #endif
 
@@ -587,7 +587,6 @@ std::vector<int> decode_tensor_viterbi_omp(
         }
         
         #ifdef LIKWID_PERFMON
-            #pragma omp master
             LIKWID_MARKER_STOP("viterbi_omp_opt");
         #endif
     } // omp parallel
