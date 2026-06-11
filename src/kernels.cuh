@@ -17,18 +17,17 @@ __global__ void kernel_initialization(
         const double* __restrict__ emission_probs,
         const int*    __restrict__ obs_seq,
         double* delta, int* psi_dur,
-        const double* __restrict__ trans_mat,
-        double* AP,
-        double* AP_tail,
+        double* survival_probs,
         int N, int D, int T);
 
-    
+
 // ── Induction kernel ─────────────────────────────────────────────────────── //
 __global__ void kernel_induction(
     int                           obs_t,         // obs_seq[t] — valore diretto
     const double* __restrict__ emission_probs,
+    const double* __restrict__ trans_mat,
+    const double* __restrict__ duration_probs,
     const double* __restrict__ delta,
-    const double* __restrict__ AP,
     const double* __restrict__ em_cur,   // D×N — emissions iterazione precedente
     double*                    em_nxt,   // D×N — emissions iterazione corrente
     double* best_val_ji,   // N×N output
@@ -51,7 +50,8 @@ __global__ void kernel_persistent(
     const int*    __restrict__ obs_seq,
     const double* __restrict__ emission_probs,
     double*                    delta,        // T×N — lettura e scrittura
-    const double* __restrict__ AP,
+    const double* __restrict__ trans_mat,
+    const double* __restrict__ duration_probs,
     double*                    em0,        // doppio buffer emissions
     double*                    em1,
     double*                    best_state_ji,  // N×N — buffer intermedio
@@ -62,7 +62,8 @@ __global__ void kernel_persistent(
 
 // ── Tail Adjustment kernel ─────────────────────────────────────────────── //
 __global__ void kernel_tail_adjustment(
-    const double* __restrict__ AP_tail,         // N×N×D — trans_mat + log_surv
+    const double* __restrict__ trans_mat,
+    const double* __restrict__ survival_probs,  // N×D — log P(dur > d)
     const double* __restrict__ d_em_last,       // D×N — emissions t=T-1
     double*                    delta,           // N×T — lettura past delta
     double*                    psi_state_ji,    // N×N — output per kernel_reduce_i

@@ -23,14 +23,12 @@ __global__ void kernel_initialization(
     const double* __restrict__ emission_probs,
     const int*    __restrict__ obs_seq,
     double* delta, int* psi_dur,
-    const double* __restrict__ trans_mat,
-    double* AP, double* AP_tail,
+    double* survival_probs,
     int N, int D, int T)
 {
     const int j = blockIdx.x;
-    const int i = blockIdx.y;
     const int d = threadIdx.x;
-    if (i >= N || j >= N) return;
+    if (j >= N) return;
 
     const int warp_id   = d / WARP_SIZE;
     const int lane      = d % WARP_SIZE;
@@ -41,14 +39,13 @@ __global__ void kernel_initialization(
     double* sh_scan      = sh;
     double* sh_warp_sums = sh + blockDim.x;
 
-    // ── Step 1+2: survival prefix sum (chunked) + AP / AP_tail ────────────
+    // ── Step 1: survival prefix sum (chunked) → survival_probs ───────────
     {
         double running_offset = 0.0;
 
         for (int base = 0; base < D; base += blockDim.x) {
             const int dg = d + base;
 
-            // ── intra-warp prefix sum ──
             double v = (dg < D) ? duration_probs_linear[j*D + (D-1-dg)] : 0.0;
             for (int stride = 1; stride < WARP_SIZE; stride <<= 1) {
                 double u = WARP_SHFL_UP(v, stride);
@@ -58,7 +55,6 @@ __global__ void kernel_initialization(
             if (lane == WARP_SIZE-1) sh_warp_sums[warp_id] = v;
             __syncthreads();
 
-            // ── cross-warp prefix sum ──
             if (d < WARP_SIZE) {
                 double ws = (d < num_warps) ? sh_warp_sums[d] : 0.0;
                 for (int stride = 1; stride < WARP_SIZE; stride <<= 1) {
@@ -69,25 +65,18 @@ __global__ void kernel_initialization(
             }
             __syncthreads();
 
-            // ── valore inclusivo globale alla posizione dg ──
             v = (warp_id > 0 ? sh_scan[d] + sh_warp_sums[warp_id-1] : sh_scan[d])
                 + running_offset;
 
-            if (dg < D) {
-                AP     [j*N*D + i*D + dg]       = trans_mat[j*N + i] + duration_probs[j*D + dg];
-                AP_tail[j*N*D + i*D + (D-1-dg)] = trans_mat[j*N + i] + log(v);
-            }
+            if (dg < D)
+                survival_probs[j*D + (D-1-dg)] = log(v);
 
-            // chunk total = sh_warp_sums[num_warps-1] (leggibile da tutti dopo __syncthreads)
             running_offset += sh_warp_sums[num_warps-1];
-            __syncthreads();   // prima della prossima iterazione
+            __syncthreads();
         }
     }
 
-    // ── Step 3: emission prefix sum (chunked) + delta / psi_dur ───────────
-    // i è costante a livello di blocco: tutti i thread del blocco tornano insieme
-    if (i != 0) return;
-
+    // ── Step 2: emission prefix sum (chunked) + delta / psi_dur ───────────
     {
         double running_offset = 0.0;
 
@@ -131,8 +120,9 @@ __global__ void kernel_initialization(
 __global__ void kernel_induction(
     int obs_t,
     const double* __restrict__ emission_probs,
+    const double* __restrict__ trans_mat,
+    const double* __restrict__ duration_probs,
     const double* __restrict__ delta,
-    const double* __restrict__ AP,
     const double* __restrict__ em_cur,
     double*                    em_nxt,
     double* psi_state_ji,
@@ -156,7 +146,8 @@ __global__ void kernel_induction(
     int*    sh_d   = reinterpret_cast<int*>(sh_val + num_warps);
 
     //* Broadcast emission — tutti i thread leggono lo stesso indirizzo (L1 broadcast) *//
-    const double new_em = emission_probs[obs_t * N + j];
+    const double new_em  = emission_probs[obs_t * N + j];
+    const double trans_ji = trans_mat[j * N + i];
 
     // ── Thread coarsening ──────────────────────────────────────────────────────
     // Ogni thread copre dg = d, d+blockDim.x, d+2*blockDim.x, …
@@ -174,7 +165,7 @@ __global__ void kernel_induction(
             if (i == 0)
                 em_nxt[j * D + dg] = em_val_dg;
 
-            const double v = em_val_dg + delta[i*T + (t-1-dg)] + AP[j*N*D + i*D + dg];
+            const double v = em_val_dg + delta[i*T + (t-1-dg)] + trans_ji + duration_probs[j*D + dg];
             if (v > val || (v == val && dg < dd)) { val = v; dd = dg; }
         }
     }
@@ -304,7 +295,8 @@ __global__ void kernel_persistent(
     const int*    __restrict__ obs_seq,
     const double* __restrict__ emission_probs,
     double*                    delta,
-    const double* __restrict__ AP,
+    const double* __restrict__ trans_mat,
+    const double* __restrict__ duration_probs,
     double*                    d_em0,
     double*                    d_em1,
     double*                    psi_state_ji,
@@ -323,6 +315,7 @@ __global__ void kernel_persistent(
     double* sh_val = reinterpret_cast<double*>(shmem);
     int*    sh_d   = reinterpret_cast<int*>(sh_val + blockDim.x);
 
+    const double trans_ji = trans_mat[j * N + i];
     int cur = 0;
 
     for (int t = 1; t < T; ++t) {
@@ -344,7 +337,7 @@ __global__ void kernel_persistent(
         if (d < tau) {
             sh_val[d] = em_val
                       + delta[i*T + (t-1-d)]
-                      + AP[j*N*D + i*D + d];
+                      + trans_ji + duration_probs[j*D + d];
             sh_d[d] = d;
         } else {
             sh_val[d] = -1e300;
@@ -422,7 +415,8 @@ __global__ void kernel_persistent(
 
 
 __global__ void kernel_tail_adjustment(
-    const double* __restrict__ AP_tail,
+    const double* __restrict__ trans_mat,
+    const double* __restrict__ survival_probs,
     const double* __restrict__ d_em_last,
     double*                    delta,
     double*                    psi_state_ji,
@@ -443,6 +437,8 @@ __global__ void kernel_tail_adjustment(
     double* sh_val = reinterpret_cast<double*>(shmem);
     int*    sh_d   = reinterpret_cast<int*>(sh_val + num_warps);
 
+    const double trans_ji = trans_mat[j * N + i];
+
     // ── Thread coarsening: accumulo argmax locale in registro ─────────────
     double val = -1e300;
     int    dd  = 0;
@@ -452,7 +448,7 @@ __global__ void kernel_tail_adjustment(
         if (dg < tau) {
             const double v = d_em_last[j * D + dg]
                            + delta[i * T + (T - 2 - dg)]
-                           + AP_tail[j * N*D + i*D + dg];
+                           + trans_ji + survival_probs[j*D + dg];
             if (v > val || (v == val && dg < dd)) { val = v; dd = dg; }
         }
     }

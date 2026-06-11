@@ -66,8 +66,9 @@ inline int next_pow2(int x) {
 
 // forward declaration — defined after decode_tensor_viterbi_cuda
 static void run_induction(
-    double* d_delta, const double* d_AP,
-    const double* d_emission_probs, const double* duration_probs_linear,
+    double* d_delta,
+    const double* d_trans_mat, const double* d_duration_probs,
+    const double* d_emission_probs,
     const int* d_obs_seq, const int* h_obs_seq,
     double** d_em,
     double* d_psi_state_ji, int* d_psi_dur_ji,
@@ -630,42 +631,39 @@ std::vector<int> decode_tensor_viterbi_cuda(
                 d_trans_mat, d_emission_probs, d_duration_probs_linear, d_start_probs, d_duration_probs, d_obs_seq);
 
     double* d_delta          = nullptr;
-    double* d_AP             = nullptr;
-    double* d_AP_tail        = nullptr;
-    double* d_emissions      = nullptr;
+    double* d_survival_probs = nullptr;
     double* d_psi_state_ji  = nullptr;
     int*    d_psi_dur_ji      = nullptr;
     int*    d_psi_state      = nullptr;
     int*    d_psi_dur        = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_delta,         N * T     * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_AP,            D * N * N * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_AP_tail,       D * N * N * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_emissions,     D * N     * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_psi_state_ji, N * N     * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_psi_dur_ji,     N * N     * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_psi_state,     N * T     * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_psi_dur,       N * T     * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_delta,          N * T * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_survival_probs, N * D * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_psi_state_ji,  N * N * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_psi_dur_ji,    N * N * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_psi_state,     N * T * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_psi_dur,       N * T * sizeof(int)));
 
     double* d_em[2] = {nullptr, nullptr};
     CUDA_CHECK(cudaMalloc(&d_em[0], D * N * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_em[1], D * N * sizeof(double)));
 
-    //* ── PHASE 1 — Initialization & AP ──────────────────────────────────────── *//
+    //* ── PHASE 1 — Initialization ───────────────────────────────────────────── *//
     int bs_init = min(next_pow2(D), 1024);
     const int    num_warps_init = bs_init / 32;
-    const size_t sm_init = (2*bs_init + num_warps_init) * sizeof(double);
-    kernel_initialization<<<dim3(N, N), dim3(bs_init), sm_init>>>(
+    const size_t sm_init = (bs_init + num_warps_init) * sizeof(double);
+    kernel_initialization<<<dim3(N), dim3(bs_init), sm_init>>>(
         d_start_probs, d_duration_probs,
         d_duration_probs_linear, d_emission_probs,
         d_obs_seq, d_delta, d_psi_dur,
-        d_trans_mat, d_AP, d_AP_tail,
+        d_survival_probs,
         N, D, T);
     CUDA_CHECK(cudaGetLastError());
 
     //* ── PHASE 2 — Induction ─────────────────────────────────────────────────── *//
     run_induction(
-        d_delta, d_AP,
-        d_emission_probs, d_duration_probs_linear,
+        d_delta,
+        d_trans_mat, d_duration_probs,
+        d_emission_probs,
         d_obs_seq, obs_seq.data(),
         d_em,
         d_psi_state_ji, d_psi_dur_ji,
@@ -683,7 +681,8 @@ std::vector<int> decode_tensor_viterbi_cuda(
                      : 0;
 
     kernel_tail_adjustment<<<dim3(N, N), dim3(bs_tail), sm_tail>>>(
-        d_AP_tail, d_em[cur_final],
+        d_trans_mat, d_survival_probs,
+        d_em[cur_final],
         d_delta,
         d_psi_state_ji, d_psi_dur_ji,
         N, D, T);
@@ -706,9 +705,7 @@ std::vector<int> decode_tensor_viterbi_cuda(
 
     hsmm_free_gpu(d_trans_mat, d_emission_probs, d_duration_probs_linear, d_start_probs, d_duration_probs, d_obs_seq);
     CUDA_CHECK(cudaFree(d_delta));
-    CUDA_CHECK(cudaFree(d_AP));
-    CUDA_CHECK(cudaFree(d_AP_tail));
-    CUDA_CHECK(cudaFree(d_emissions));
+    CUDA_CHECK(cudaFree(d_survival_probs));
     CUDA_CHECK(cudaFree(d_psi_state_ji));
     CUDA_CHECK(cudaFree(d_psi_dur_ji));
     CUDA_CHECK(cudaFree(d_psi_state));
@@ -729,8 +726,9 @@ std::vector<int> decode_tensor_viterbi_cuda(
 // because it is used only by that function)
 // ============================================================
 static void run_induction(
-    double* d_delta, const double* d_AP,
-    const double* d_emission_probs, const double* duration_probs_linear,
+    double* d_delta,
+    const double* d_trans_mat, const double* d_duration_probs,
+    const double* d_emission_probs,
     const int* d_obs_seq, const int* h_obs_seq,
     double** d_em,
     double* d_psi_state_ji, int* d_psi_dur_ji,
@@ -746,7 +744,8 @@ static void run_induction(
         const size_t shmem = block_size * (sizeof(double) + sizeof(int));
 
         void* args[] = {
-            &d_obs_seq, &d_emission_probs, &d_delta, &d_AP,
+            &d_obs_seq, &d_emission_probs, &d_delta,
+            &d_trans_mat, &d_duration_probs,
             &d_em[0], &d_em[1],
             &d_psi_state_ji, &d_psi_dur_ji,
             &d_psi_state, &d_psi_dur,
@@ -774,8 +773,8 @@ static void run_induction(
                             : 0;
 
             kernel_induction<<<dim3(N, N), dim3(bs), sm>>>(
-                h_obs_seq[t], d_emission_probs, d_delta, d_AP,
-                d_em[cur], d_em[nxt],
+                h_obs_seq[t], d_emission_probs, d_trans_mat, d_duration_probs,
+                d_delta, d_em[cur], d_em[nxt],
                 d_psi_state_ji, d_psi_dur_ji, N, D, T, tau, t);
             CUDA_CHECK(cudaGetLastError());
 
