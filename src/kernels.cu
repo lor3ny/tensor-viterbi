@@ -24,6 +24,7 @@ void set_kernel_constants(int n, int d, int t) {
 #endif
 
 
+// Initializes delta[j,0..D-1] and survival_probs[j,d]=log P(dur_j>d) via chunked parallel prefix sums.
 __global__ void kernel_initialization(
     const double* __restrict__ start_probs,
     const double* __restrict__ duration_probs,
@@ -124,8 +125,9 @@ __global__ void kernel_initialization(
 }
 
 
+// Per (j,i) block: finds the best duration d for a transition i→j ending at time t; writes psi_state_ji/psi_dur_ji.
 __global__ void kernel_induction(
-    const double* __restrict__ em_t,      // emission_probs + obs_seq[t]*N (host-offset)
+    const double* __restrict__ em_t,      // emission_probs + obs_seq[t]*N (pre-offset on host)
     const double* __restrict__ trans_mat,
     const double* __restrict__ duration_probs,
     const double* __restrict__ delta,
@@ -145,19 +147,15 @@ __global__ void kernel_induction(
     const int lane      = d % WARP_SIZE;
     const int num_warps = (blockDim.x + WARP_SIZE - 1) / WARP_SIZE;
 
-    // smem: solo num_warps entry per la riduzione cross-warp.
-    // Quando num_warps == 1 (bs <= WARP_SIZE) non viene usata.
+    // smem: num_warps slots for cross-warp reduction (unused when num_warps == 1).
     extern __shared__ char shmem[];
     double* sh_val = reinterpret_cast<double*>(shmem);
     int*    sh_d   = reinterpret_cast<int*>(sh_val + num_warps);
 
-    //* Broadcast emission — tutti i thread leggono lo stesso indirizzo (L1 broadcast) *//
-    const double new_em   = em_t[j];
+    const double new_em   = em_t[j];  // L1 broadcast: all threads in the block read the same address
     const double trans_ji = trans_mat[j * N + i];
 
-    // ── Thread coarsening ──────────────────────────────────────────────────────
-    // Ogni thread copre dg = d, d+blockDim.x, d+2*blockDim.x, …
-    // Accumula argmax locale; dd è già l'indice globale (0..tau-1).
+    // Thread coarsening: each thread strides over dg = d, d+blockDim.x, ... accumulating a local argmax.
     double val = -1e300;
     int    dd  = 0;
 
@@ -167,7 +165,7 @@ __global__ void kernel_induction(
             const double em_val_dg = (dg == 0) ? new_em
                                                 : new_em + em_cur[j * D + dg - 1];
 
-            // em_nxt: scritto una volta per dg, solo dal blocco i==0
+            // Only one (j,i) block writes em_nxt to avoid N-way write conflict on the same (j,dg) entry.
             if (i == 0)
                 em_nxt[j * D + dg] = em_val_dg;
 
@@ -176,7 +174,7 @@ __global__ void kernel_induction(
         }
     }
 
-    //* Intra-warp argmax (shuffle, zero syncthreads) *//
+    // Intra-warp argmax reduction using shuffle (no __syncthreads needed).
     for (int s = min(WARP_SIZE >> 1, (int)(blockDim.x >> 1)); s > 0; s >>= 1) {
         double ov = WARP_SHFL_DOWN(val, s);
         int    od = WARP_SHFL_DOWN(dd,  s);
@@ -186,7 +184,7 @@ __global__ void kernel_induction(
         }
     }
 
-    //* Fast path: blocco a warp singolo — risultato già in lane 0 *//
+    // Fast path: single-warp block — result already in lane 0, skip smem.
     if (num_warps == 1) {
         if (lane == 0) {
             psi_state_ji[j * N + i] = val;
@@ -195,7 +193,7 @@ __global__ void kernel_induction(
         return;
     }
 
-    //* Cross-warp: lane 0 di ogni warp scrive in smem, poi warp 0 riduce *//
+    // Cross-warp reduction: each warp's lane 0 writes to smem, then warp 0 reduces.
     if (lane == 0) {
         sh_val[warp_id] = val;
         sh_d  [warp_id] = dd;
@@ -222,6 +220,7 @@ __global__ void kernel_induction(
 }
 
 
+// Per-j block: reduces psi_state_ji over all i to find the best predecessor state for delta[j,t].
 __global__ void kernel_reduce_i(
     const double* __restrict__ psi_state_ji,
     const int*    __restrict__ psi_dur_ji,
@@ -297,6 +296,7 @@ __global__ void kernel_reduce_i(
 }
 
 
+// Cooperative-groups variant: fuses induction+reduce for all t in one launch, reusing trans_ji across steps.
 __global__ void kernel_persistent(
     const int*    __restrict__ obs_seq,
     const double* __restrict__ emission_probs,
@@ -329,7 +329,7 @@ __global__ void kernel_persistent(
         double* em_cur = (cur == 0) ? d_em0 : d_em1;
         double* em_nxt = (cur == 0) ? d_em1 : d_em0;
 
-        //* Cached Emissions *//
+        // Compute cumulative emission for durations 1..tau, double-buffered in em_cur/em_nxt.
         double em_val = -1e300;
         if (d < tau) {
             const double new_em = emission_probs[obs_seq[t] * N + j];
@@ -338,7 +338,7 @@ __global__ void kernel_persistent(
                 em_nxt[j * D + d] = em_val;
         }
 
-        //* Brick *//
+        //* Viterbi score: delta[i,t-1-d] + trans(i→j) + emission(j,t-d..t) + dur_prob(j,d) for each d *//
         if (d < tau) {
             sh_val[d] = em_val
                       + delta[i*T + (t-1-d)]
@@ -350,7 +350,7 @@ __global__ void kernel_persistent(
         }
         __syncthreads();
 
-        //* Argmax *//
+        //* Duration argmax: find d* = argmax_d score[j,i,d] for this (j,i) pair *//
         // ── cross-warp ───────────────────────────────────────────────────── //
         for (int stride = blockDim.x >> 1; stride >= WARP_SIZE; stride >>= 1) {
             if (d < stride) {
@@ -389,7 +389,7 @@ __global__ void kernel_persistent(
             psi_dur_ji  [j * N + i] = sh_d[0];
         }
 
-        grid.sync();
+        grid.sync();  // wait for all (j,i) blocks to finish writing psi_state_ji before the reduce
 
         if (i == 0 && d == 0) {
             double best_val = psi_state_ji[j * N + 0];
@@ -413,12 +413,13 @@ __global__ void kernel_persistent(
             }
         }
 
-        grid.sync();
+        grid.sync();  // wait for delta[j,t] to be committed before the next induction reads it
         cur = nxt;
     }
 }
 
 
+// Right-censored tail: replaces duration_prob with survival_prob for the last (possibly partial) segment.
 __global__ void kernel_tail_adjustment(
     const double* __restrict__ trans_mat,
     const double* __restrict__ survival_probs,
@@ -443,7 +444,7 @@ __global__ void kernel_tail_adjustment(
 
     const double trans_ji = trans_mat[j * N + i];
 
-    // ── Thread coarsening: accumulo argmax locale in registro ─────────────
+    // Thread coarsening: each thread accumulates a local argmax over its assigned durations.
     double val = -1e300;
     int    dd  = 0;
 
@@ -464,7 +465,7 @@ __global__ void kernel_tail_adjustment(
         if (ov > val || (ov == val && od < dd)) { val = ov; dd = od; }
     }
 
-    // ── Fast path: blocco a warp singolo ─────────────────────────────────
+    // Fast path: single-warp block — result already in lane 0, skip smem.
     if (num_warps == 1) {
         if (lane == 0) {
             psi_state_ji[j * N + i] = val;
@@ -473,7 +474,7 @@ __global__ void kernel_tail_adjustment(
         return;
     }
 
-    // ── Cross-warp: lane 0 scrive in smem, warp 0 riduce ─────────────────
+    // Cross-warp reduction: each warp's lane 0 writes to smem, then warp 0 reduces.
     if (lane == 0) {
         sh_val[warp_id] = val;
         sh_d  [warp_id] = dd;
@@ -497,6 +498,7 @@ __global__ void kernel_tail_adjustment(
     }
 }
 
+// Same reduce-over-i as kernel_reduce_i but unconditionally overwrites delta[j,t] (no initialization guard).
 __global__ void kernel_tail_reduce_i(
     const double* __restrict__ psi_state_ji,
     const int*    __restrict__ psi_dur_ji,
