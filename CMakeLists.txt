@@ -107,7 +107,7 @@ if(BUILD_GPU)
 else()
     message(STATUS "Building CPU/OpenMP backend only")
     set(NATIVE_SOURCES "src/hsmm.cu")
-    set_source_files_properties(src/hsmm.cu PROPERTIES LANGUAGE CXX)
+    set_source_files_properties(src/hsmm.cu PROPERTIES LANGUAGE CXX COMPILE_OPTIONS "-x;c++")
     add_definitions(-DNO_GPU)
 endif()
 
@@ -132,7 +132,10 @@ target_compile_options(_native PRIVATE
     # CXX Logic (Host Code)
     $<$<COMPILE_LANGUAGE:CXX>:
         $<$<CXX_COMPILER_ID:NVHPC>:-O3 -Ofast -tp=native -Wall>
-        $<$<NOT:$<CXX_COMPILER_ID:NVHPC>>:-O3 -march=native -mtune=native -ffast-math -Wall -Wextra -Wno-unused-parameter>
+        # Intel classic (icc/icpc) and oneAPI (icx/icpx): -axCORE-AVX512 targets AVX-512 explicitly with fallback;
+        # -qopt-zmm-usage=high forces ZMM register use (Intel defaults to YMM to avoid throttling).
+        $<$<OR:$<CXX_COMPILER_ID:Intel>,$<CXX_COMPILER_ID:IntelLLVM>>:-O3 -axCORE-AVX512 -qopt-zmm-usage=high -ffast-math -Wall -Wextra -Wno-unused-parameter>
+        $<$<NOT:$<OR:$<CXX_COMPILER_ID:NVHPC>,$<CXX_COMPILER_ID:Intel>,$<CXX_COMPILER_ID:IntelLLVM>>>:-O3 -march=native -mtune=native -ffast-math -Wall -Wextra -Wno-unused-parameter>
     >
 
     # HIP Logic
@@ -147,6 +150,14 @@ target_compile_options(_native PRIVATE
         -Xcompiler=-Wall,-Wextra,-Wno-unused-parameter,-fopenmp
     >
 )
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
+    message(STATUS "CXX flags: -O3 -Ofast -tp=native -Wall  [NVHPC]")
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Intel" OR CMAKE_CXX_COMPILER_ID STREQUAL "IntelLLVM")
+    message(STATUS "CXX flags: -O3 -xCORE-AVX512 -qopt-zmm-usage=high -ffast-math -Wall -Wextra -Wno-unused-parameter  [${CMAKE_CXX_COMPILER_ID}]")
+else()
+    message(STATUS "CXX flags: -O3 -march=native -mtune=native -ffast-math -Wall -Wextra -Wno-unused-parameter  [${CMAKE_CXX_COMPILER_ID}]")
+endif()
 
 if(BUILD_GPU AND GPU_PLATFORM STREQUAL "ROCM")
     target_include_directories(_native BEFORE PRIVATE ${HIPIFY_OUT_DIR})
