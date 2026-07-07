@@ -1,0 +1,100 @@
+
+# LOCAL: Execution without SLURM
+
+workstation:
+  type: cpu
+  cpus: 8
+  toolchains:
+    gnu: {}
+
+
+# CPU SLURM BASED:
+
+xeon8480:
+  type: cpu
+  cpus: 112
+  toolchains:
+    intel: {}
+    gnu: {}
+
+epyc-7a53:
+  type: cpu
+  cpus: 56
+  toolchains:
+    cray: {}
+
+epyc-7763-bigmem:
+  type: cpu
+  cpus: 128
+  toolchains:
+    cray: {}
+    aocc: {}
+    gnu: {}
+
+epyc-9474f:
+  type: cpu
+  cpus: 96
+  python: python3.11
+  toolchains:
+    amd: {}
+
+
+gh200-grace:
+  type: cpu
+  cpus: 72
+  toolchains:
+    gnu: {}
+    gnu14: {}
+
+gh200-hopper:
+  type: gpu
+  gpu_arch: "90"
+  toolchains:
+    gnu: {}
+
+
+
+# GPUs SLURM BASED
+
+a100:
+  type: gpu
+  gpu_arch: "80"
+  toolchains:
+    cuda: {}
+
+
+h100:
+  type: gpu
+  gpu_arch: "90"
+  toolchains:
+    cuda: {}
+
+
+h200:
+  type: gpu
+  gpu_arch: "90"
+  toolchains:
+    cuda: {}
+
+
+b200:
+  type: gpu
+  gpu_arch: "100"
+  toolchains:
+    cuda: {}
+
+
+mi250x:
+  type: gpu
+  gpu_arch: gfx90a
+  toolchains:
+    cray: {}
+    amd: {}
+    gnu: {}
+
+
+mi300x:
+  type: gpu
+  gpu_arch: gfx942
+  toolchains:
+    amd: {}

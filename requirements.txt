@@ -5,3 +5,4 @@ scipy>=1.17
 pybind11>=3.0
 Cython>=3.2
 wheel>=0.47.0
+PyYAML>=6.0

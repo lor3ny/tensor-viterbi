@@ -1,0 +1,92 @@
+
+# SLURM-only fields: partition/account/qos and the environment (modules/uenv)
+# needed to build+run each toolchain. Systems/toolchains not listed here have
+# no SLURM footprint (e.g. purely local systems) and fall back to defaults.
+
+xeon8480:
+  partition: dcgp_usr_prod
+  account: IscrC_FOCAL_0
+  toolchains:
+    intel:
+      modules: "python/3.11.7:intel-oneapi-compilers"
+      modules_build: "python/3.11.7:intel-oneapi-compilers"
+    gnu:
+      modules: "python/3.11.7"
+      modules_build: "python/3.11.7"
+
+epyc-7a53:
+  partition: standard-g
+  account: project_465002776
+  toolchains:
+    cray:
+      modules: "LUMI/25.03:partition/G:cray-python"
+      modules_build: "LUMI/25.03:partition/G:cray-python"
+      metrics_backend: cray_pm
+
+epyc-7763-bigmem:
+  partition: small
+  account: project_465002776
+  toolchains:
+    cray:
+      modules: "LUMI/25.03:partition/C:cray-python"
+      modules_build: "LUMI/25.03:partition/C:cray-python"
+      metrics_backend: cray_pm
+    aocc:
+      modules: "LUMI/25.03:partition/C:cray-python:PrgEnv-aocc"
+      modules_build: "LUMI/25.03:partition/C:cray-python:PrgEnv-aocc"
+    gnu:
+      modules: "LUMI/25.03:partition/C:cray-python:PrgEnv-gnu"
+      modules_build: "LUMI/25.03:partition/C:cray-python:PrgEnv-gnu"
+
+gh200-grace:
+  partition: normal
+  account: g34
+  toolchains:
+    gnu:
+      uenv: prgenv-gnu
+      modules: "cuda:python:cmake"
+      modules_build: "cuda:python:cmake"
+    gnu14:
+      uenv: prgenv-gnu
+      modules: "cuda:python:cmake:gcc/14.2.0"
+      modules_build: "cuda:python:cmake:gcc/14.2.0"
+
+gh200-hopper:
+  partition: normal
+  account: g34
+  toolchains:
+    gnu:
+      uenv: prgenv-gnu
+      modules: "cuda:python:cmake"
+      modules_build: "cuda:python:cmake"
+
+a100:
+  partition: boost_usr_prod
+  account: IscrC_FOCAL
+  toolchains:
+    cuda:
+      modules: "cuda:python/3.11.7"
+      modules_build: "cuda:python/3.11.7"
+
+h100:
+  qos: acc_ehpc
+  account: ehpc633
+  toolchains:
+    cuda:
+      modules: "hdf5:nvidia-hpc-sdk:python/3.12.1:cmake"
+      modules_build: "hdf5:nvidia-hpc-sdk:python/3.12.1:cmake"
+
+mi250x:
+  partition: standard-g
+  account: project_465002776
+  toolchains:
+    cray:
+      modules: "LUMI/25.03:partition/G:cray-python"
+      modules_build: "LUMI/25.03:partition/G:rocm:cray-python"
+      metrics_backend: cray_pm
+    amd:
+      modules: "LUMI/25.03:partition/G:cray-python:PrgEnv-AMD"
+      modules_build: "LUMI/25.03:partition/G:rocm:cray-python:PrgEnv-AMD"
+    gnu:
+      modules: "LUMI/25.03:partition/G:cray-python:PrgEnv-gnu"
+      modules_build: "LUMI/25.03:partition/G:rocm:cray-python:PrgEnv-gnu"

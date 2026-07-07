@@ -68,9 +68,9 @@ fi
         tmp.unlink(missing_ok=True)
 
 
-def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, likwid: bool = False) -> None:
+def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict,
+                    scheduler: str, likwid: bool = False) -> None:
     sys_type      = sys_conf["type"]
-    scheduler     = sys_conf.get("scheduler", "slurm")
     gpu_arch      = sys_conf.get("gpu_arch", "")
     modules_build = tc_conf.get("modules_build", "")
     uenv          = tc_conf.get("uenv", "")

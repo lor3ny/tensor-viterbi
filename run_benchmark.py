@@ -8,26 +8,27 @@ systems, direct call for local systems).
 (states, duration, timesteps) grid to run (see PACKS below).
 
 Usage:
-  ./run_benchmark.py --system <sys> --toolchain <tc> --pack <pack> [backend flags]
+  ./run_benchmark.py --system <sys> --toolchain <tc> --scheduler <local|slurm> --pack <pack> [backend flags]
 
 Examples:
-  ./run_benchmark.py --system xeon8480 --toolchain intel --pack 1h --cpp --omp --baseline
-  ./run_benchmark.py --system a100 --toolchain cuda --pack 2h
-  ./run_benchmark.py --system epyc-9474f --toolchain amd --pack 4-8h
-  ./run_benchmark.py --system epyc-7763-bigmem --toolchain all --pack 10-20h
+  ./run_benchmark.py --system xeon8480 --toolchain intel --scheduler slurm --pack 1h --cpp --omp --baseline
+  ./run_benchmark.py --system a100 --toolchain cuda --scheduler slurm --pack 2h
+  ./run_benchmark.py --system epyc-9474f --toolchain amd --scheduler local --pack 4-8h
+  ./run_benchmark.py --system epyc-7763-bigmem --toolchain all --scheduler slurm --pack 10-20h
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib.metadata
-import json
 import os
 import re
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+import yaml
 
 from compile import compile_system
 
@@ -113,8 +114,27 @@ def get_available_likwid_groups() -> set[str]:
 # ── Config ───────────────────────────────────────────────────────────────────
 
 def load_systems() -> dict:
-    with open(SCRIPT_DIR / "systems.json") as f:
-        return json.load(f)
+    """Merge architectures.yaml (machine descriptors) with slurm_system.yaml
+    (SLURM partition/account/qos and per-toolchain modules/uenv) into one
+    system-config dict, keyed and shaped exactly as the rest of the script expects."""
+    with open(SCRIPT_DIR / "architectures.yaml") as f:
+        architectures = yaml.safe_load(f) or {}
+    with open(SCRIPT_DIR / "slurm_system.yaml") as f:
+        slurm = yaml.safe_load(f) or {}
+
+    systems: dict = {}
+    for name, arch_conf in architectures.items():
+        slurm_conf = slurm.get(name, {})
+        conf = {**arch_conf, **{k: v for k, v in slurm_conf.items() if k != "toolchains"}}
+
+        arch_toolchains  = arch_conf.get("toolchains", {}) or {}
+        slurm_toolchains = slurm_conf.get("toolchains", {}) or {}
+        conf["toolchains"] = {
+            tc: {**(arch_toolchains.get(tc) or {}), **(slurm_toolchains.get(tc) or {})}
+            for tc in {**arch_toolchains, **slurm_toolchains}
+        }
+        systems[name] = conf
+    return systems
 
 
 # ── Walltime ─────────────────────────────────────────────────────────────────
@@ -370,7 +390,6 @@ def _build_job_env(sys_info: dict, vflags: str, iters: int, data_path: str) -> d
 
 # ── Submission helpers ────────────────────────────────────────────────────────
 
-
 def submit_slurm(
     stem: str, vflags: str, iters: int, walltime: str, data_path: str,
     sbatch_flags: list, sys_info: dict, results_dir: Path,
@@ -523,7 +542,7 @@ def run_sweep(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, args) 
     sys_info  = _build_sys_info(system, toolchain, sys_conf, tc_conf)
     sys_name  = sys_info["sys_name"]
     sys_type  = sys_info["type"]
-    scheduler = sys_conf.get("scheduler", "slurm")
+    scheduler = args.scheduler
 
     flag_map = [
         ("py",           args.py),
@@ -582,14 +601,13 @@ def run_sweep(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, args) 
 
 
 def run_likwid_profiling(system: str, toolchain: str, sys_conf: dict, tc_conf: dict,
-                         cpu_flags: list[str] | None = None) -> None:
+                         scheduler: str, cpu_flags: list[str] | None = None) -> None:
     if sys_conf["type"] != "cpu":
         print(f"Warning: LIKWID profiling is CPU-only (system type={sys_conf['type']}). "
               f"Skipping {system}/{toolchain}.")
         return
 
     sys_info  = _build_sys_info(system, toolchain, sys_conf, tc_conf)
-    scheduler = sys_conf.get("scheduler", "slurm")
 
     results_dir = SCRIPT_DIR / "results" / sys_info["sys_name"]
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -602,7 +620,13 @@ def run_likwid_profiling(system: str, toolchain: str, sys_conf: dict, tc_conf: d
         submit_likwid_slurm(sys_info, _build_sbatch_flags(sys_conf, "cpu"), results_dir)
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+
+
+
+# ---------------------------
+# ENTRY POINT
+# ---------------------------
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -610,9 +634,12 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--system",    "-s", required=True,
-                        help="System key from systems.json")
+                        help="System key from architectures.yaml")
     parser.add_argument("--toolchain", "-t", required=True,
                         help="Toolchain key, or 'all' to build every toolchain for the system")
+    parser.add_argument("--scheduler", choices=["local", "slurm"], required=True,
+                        help="'local' calls viterbi_app.py directly; 'slurm' generates a "
+                             ".slrm script and submits it via sbatch")
     parser.add_argument("--py",           action="store_true")
     parser.add_argument("--cpp",          action="store_true")
     parser.add_argument("--omp",          action="store_true")
@@ -670,7 +697,7 @@ def main() -> None:
     ]
     selected_cpu_flags = [f for f, enabled in cpu_flag_map if enabled] or None
 
-    if sys_conf.get("scheduler", "slurm") == "slurm":
+    if args.scheduler == "slurm":
         generate_slrm()
         if args.likwid:
             generate_likwid_slrm(selected_cpu_flags)
@@ -681,10 +708,10 @@ def main() -> None:
             sys.exit(1)
         for tc in sorted(toolchains):
             print(f"=== Compiling {args.system} / {tc} ===")
-            compile_system(args.system, tc, sys_conf, toolchains[tc], args.likwid)
+            compile_system(args.system, tc, sys_conf, toolchains[tc], args.scheduler, args.likwid)
             print(f"=== Submitting {args.system} / {tc} ===")
             if args.likwid:
-                run_likwid_profiling(args.system, tc, sys_conf, toolchains[tc], selected_cpu_flags)
+                run_likwid_profiling(args.system, tc, sys_conf, toolchains[tc], args.scheduler, selected_cpu_flags)
             else:
                 run_sweep(args.system, tc, sys_conf, toolchains[tc], args)
         return
@@ -695,9 +722,9 @@ def main() -> None:
         sys.exit(1)
 
     print(f"=== Compiling {args.system} / {args.toolchain} ===")
-    compile_system(args.system, args.toolchain, sys_conf, toolchains[args.toolchain], args.likwid)
+    compile_system(args.system, args.toolchain, sys_conf, toolchains[args.toolchain], args.scheduler, args.likwid)
     if args.likwid:
-        run_likwid_profiling(args.system, args.toolchain, sys_conf, toolchains[args.toolchain], selected_cpu_flags)
+        run_likwid_profiling(args.system, args.toolchain, sys_conf, toolchains[args.toolchain], args.scheduler, selected_cpu_flags)
     else:
         run_sweep(args.system, args.toolchain, sys_conf, toolchains[args.toolchain], args)
 

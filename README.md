@@ -50,7 +50,8 @@ tensor-viterbi/
 ├── validation/                  # validation scripts against hsmmlearn
 ├── hsmmlearn/                   # bundled hsmmlearn (CPU baseline)
 ├── hsmmlearn_omp/               # bundled hsmmlearn with OMP support
-├── systems.json                 # System descriptors (scheduler, partitions, modules, GPU arch)
+├── architectures.yaml           # System descriptors (type, cpus/gpu_arch, toolchains)
+├── slurm_system.yaml            # SLURM-only info (partition, account, qos, modules, uenv)
 ├── compile.py                   # Library: compiles the native extension (no CLI, imported by run_benchmark.py)
 ├── run_benchmark.py             # Entry point: compiles, then submits jobs — sbatch (SLURM) or direct (local)
 ├── viterbi_app.py               # Benchmark executor: runs backends, writes CSVs, validates
@@ -75,6 +76,7 @@ matplotlib >= 3.10
 scipy >= 1.17
 pybind11 >= 3.0
 Cython >= 3.2
+wheel >= 0.47.0
 ```
 
 ---
@@ -88,80 +90,70 @@ git clone https://github.com/lor3ny/tensor-viterbi.git
 cd tensor-viterbi
 ```
 
-### 2 — Configure your system in `systems.json`
+### 2 — Configure your system in `architectures.yaml` (+ `slurm_system.yaml`)
 
-Every system (laptop, HPC node, cloud VM) must have an entry in `systems.json`.
-The `"scheduler"` field controls how `run_benchmark.py` dispatches jobs:
+Every system (laptop, HPC node, cloud VM) must have an entry in
+`architectures.yaml`. This file only describes the machine itself — it has no
+SLURM-specific fields. How `run_benchmark.py` dispatches jobs is controlled by
+the `--scheduler` CLI flag, not by either config file:
 
-| Value | Behaviour |
+| `--scheduler` value | Behaviour |
 |---|---|
-| `"local"` | Calls `python viterbi_app.py` directly in the current shell |
-| `"slurm"` | Generates a `.slrm` script and submits it via `sbatch` |
+| `local` | Calls `python viterbi_app.py` directly in the current shell |
+| `slurm` | Generates a `.slrm` script and submits it via `sbatch` |
 
-A minimal local CPU entry:
+A minimal local CPU entry (`architectures.yaml`):
 
-```json
-"workstation": {
-  "scheduler": "local",
-  "type": "cpu",
-  "cpus": 8,
-  "toolchains": {
-    "gnu": {
-      "modules": "",
-      "modules_build": ""
-    }
-  }
-}
-```
-
-For SLURM clusters add `partition`, `account`, and the module names to load:
-
-```json
-"my-cluster-cpu": {
-  "scheduler": "slurm",
-  "type": "cpu",
-  "partition": "compute",
-  "account": "myproject",
-  "cpus": 128,
-  "toolchains": {
-    "gnu": {
-      "modules": "Python/3.11:GCC/12",
-      "modules_build": "Python/3.11:GCC/12"
-    }
-  }
-}
+```yaml
+workstation:
+  type: cpu
+  cpus: 8
+  toolchains:
+    gnu: {}
 ```
 
 For GPU nodes add `gpu_arch` (CUDA SM string or ROCm GFX target) instead of `cpus`:
 
-```json
-"my-cluster-gpu": {
-  "scheduler": "slurm",
-  "type": "gpu",
-  "partition": "gpu",
-  "account": "myproject",
-  "gpu_arch": "80",
-  "toolchains": {
-    "cuda": {
-      "modules": "CUDA/12:Python/3.11",
-      "modules_build": "CUDA/12:Python/3.11"
-    }
-  }
-}
+```yaml
+my-cluster-gpu:
+  type: gpu
+  gpu_arch: "80"
+  toolchains:
+    cuda: {}
 ```
 
-All pre-configured systems are already in `systems.json`.
+If the system is submitted through SLURM, add a matching entry in
+`slurm_system.yaml` with the partition/account and the module names to load —
+systems/toolchains not listed there simply have no SLURM footprint:
+
+```yaml
+my-cluster-gpu:
+  partition: gpu
+  account: myproject
+  toolchains:
+    cuda:
+      modules: "CUDA/12:Python/3.11"
+      modules_build: "CUDA/12:Python/3.11"
+```
+
+At load time `run_benchmark.py` merges the two files by system name (and by
+toolchain name within `toolchains`), so a system can live only in
+`architectures.yaml` (purely local) or in both files (SLURM-submitted).
+
+All pre-configured systems are already in these two files. Remember to pass
+the matching `--scheduler local` or `--scheduler slurm` when running
+`run_benchmark.py`.
 
 **Optional fields** (add inside the system or toolchain dict only when needed):
 
-| Field | Scope | Description |
-|---|---|---|
-| `qos` | system | SLURM QOS string (`--qos`) |
-| `uenv` | toolchain | uenv image name (Alps/CSCS only) |
-| `metrics_backend` | toolchain | Energy/power metrics collector token |
-| `omp_bind` | system | `OMP_PROC_BIND` override |
-| `omp_places` | system | `OMP_PLACES` override |
-| `cc` / `cxx` | toolchain | Explicit compiler path override |
+| Field | Scope | File | Description |
+|---|---|---|---|
+| `qos` | system | `slurm_system.yaml` | SLURM QOS string (`--qos`) |
+| `uenv` | toolchain | `slurm_system.yaml` | uenv image name (Alps/CSCS only) |
+| `metrics_backend` | toolchain | `slurm_system.yaml` | Energy/power metrics collector token |
+| `omp_bind` | system | `architectures.yaml` | `OMP_PROC_BIND` override |
+| `omp_places` | system | `architectures.yaml` | `OMP_PLACES` override |
+| `cc` / `cxx` | toolchain | `architectures.yaml` | Explicit compiler path override |
 
 ### 3 — Create and activate a virtual environment
 
@@ -202,9 +194,10 @@ CLI of its own — it cannot be invoked standalone to "only compile".
 ### Running the benchmark grid
 
 ```bash
-python run_benchmark.py --system <system> --toolchain <toolchain> --pack <pack> [backend flags]
+python run_benchmark.py --system <system> --toolchain <toolchain> --scheduler <local|slurm> --pack <pack> [backend flags]
 ```
 
+`--scheduler` is **always required** — it is no longer read from the config files.
 `--pack` is **required unless `--likwid` is given** — see
 [Walltime packs](#walltime-packs) below for the available values and what
 they select.
@@ -226,6 +219,7 @@ they select.
 
 | Flag | Default | Description |
 |---|---|---|
+| `--scheduler {local,slurm}` | **required** | `local` calls `viterbi_app.py` directly; `slurm` generates a `.slrm` script and submits it via `sbatch` |
 | `--iterations N` | 6 | Benchmark repetitions per job (capped at 2 for T ≥ 1M) |
 | `--toolchain all` | — | Run every toolchain defined for the system |
 | `--pack {1h,2h,4-8h,10-20h}` | **required unless `--likwid`** | Only submit jobs whose estimated walltime falls in this bucket |
@@ -233,19 +227,19 @@ they select.
 Examples:
 ```bash
 # SLURM — CPU node, C++, OpenMP and baselines
-python run_benchmark.py --system xeon8480 --toolchain intel --pack 2h --cpp --omp --baseline
+python run_benchmark.py --system xeon8480 --toolchain intel --scheduler slurm --pack 2h --cpp --omp --baseline
 
 # SLURM — GPU node (CUDA selected automatically)
-python run_benchmark.py --system a100 --toolchain cuda --pack 1h
+python run_benchmark.py --system a100 --toolchain cuda --scheduler slurm --pack 1h
 
 # SLURM — all toolchains for a node
-python run_benchmark.py --system epyc-7763-bigmem --toolchain all --pack 4-8h --cpp --omp
+python run_benchmark.py --system epyc-7763-bigmem --toolchain all --scheduler slurm --pack 4-8h --cpp --omp
 
-# Local machine (scheduler: local in systems.json)
-python run_benchmark.py --system workstation --toolchain gnu --pack 1h --cpp --omp
+# Local machine
+python run_benchmark.py --system workstation --toolchain gnu --scheduler local --pack 1h --cpp --omp
 
 # The expensive jobs (10-20 hours each)
-python run_benchmark.py --system xeon8480 --toolchain intel --pack 10-20h --cpp --omp
+python run_benchmark.py --system xeon8480 --toolchain intel --scheduler slurm --pack 10-20h --cpp --omp
 ```
 
 ### Walltime packs
@@ -342,11 +336,11 @@ pip install -r requirements.txt
 # 3. Compile + submit a pack (venv must still be active)
 #    run_benchmark.py always compiles first (also builds the hsmmlearn
 #    baselines with the correct toolchain compiler), then dispatches.
-#    scheduler: slurm in systems.json → generates .tmp_benchmark.slrm and sbatches it
-python run_benchmark.py --system <system> --toolchain <toolchain> --pack <pack>
+#    --scheduler slurm → generates .tmp_benchmark.slrm and sbatches it
+python run_benchmark.py --system <system> --toolchain <toolchain> --scheduler slurm --pack <pack>
 
 # 4. Repeat step 3 with a different --pack to cover more of the grid
-python run_benchmark.py --system <system> --toolchain <toolchain> --pack <pack>
+python run_benchmark.py --system <system> --toolchain <toolchain> --scheduler slurm --pack <pack>
 
 # 5. Results land in results/<system>/<toolchain>/
 #    <Ns>s_<D>d_<T>t_<function>.csv
@@ -356,7 +350,7 @@ python run_benchmark.py --system <system> --toolchain <toolchain> --pack <pack>
 **Local machine / workstation:**
 
 ```bash
-# 1. Add your system to systems.json with "scheduler": "local"
+# 1. Add your system to architectures.yaml
 #    (see "Configure your system" above)
 
 # 2. Create and activate your environment
@@ -366,11 +360,13 @@ pip install -r requirements.txt
 # 3. Compile + run a pack
 #    run_benchmark.py always compiles first (also builds the hsmmlearn
 #    baselines), then calls viterbi_app.py directly for each job
-python run_benchmark.py --system workstation --toolchain gnu --pack 1h --cpp --omp
+python run_benchmark.py --system workstation --toolchain gnu --scheduler local --pack 1h --cpp --omp
 
 # 4. Quick single-file check (uses the extension already built in step 3)
+#    --baseline generates the HSMMLearn reference and validates the other
+#    backends against it (prints a "100.00% match" line per backend)
 python viterbi_app.py --system workstation --toolchain gnu \
-    --cpp --omp --iterations 3 -dp data/10states_1000steps_100dur.json
+    --cpp --omp --baseline --iterations 3 -dp data/10states_1000steps_100dur.json
 ```
 
 ---
@@ -424,4 +420,4 @@ python data/data_generator.py
   but links against the wrong runtime.
 - **GPU venvs**: built with `--system-site-packages` and only install `numpy` and
   `pybind11` directly. All other packages (`pandas`, `scipy`, etc.) must be available
-  via the system Python module loaded in `systems.json`.
+  via the system Python module loaded in `slurm_system.yaml`.
