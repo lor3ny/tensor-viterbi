@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """
-run_benchmark.py — SLURM job submitter for tensor-viterbi benchmarks.
+run_benchmark.py — sole entry point for tensor-viterbi: compiles the native
+extension (via compile.py) then dispatches benchmark jobs (sbatch for SLURM
+systems, direct call for local systems).
 
-Generates a temporary .slrm script and submits a grid of jobs (or runs locally).
+--pack is required: it selects which walltime bucket of the
+(states, duration, timesteps) grid to run (see PACKS below).
 
 Usage:
-  ./run_benchmark.py --system <sys> --toolchain <tc> [backend flags]
+  ./run_benchmark.py --system <sys> --toolchain <tc> --pack <pack> [backend flags]
 
 Examples:
-  ./run_benchmark.py --system xeon8480 --toolchain intel --cpp --omp --baseline
-  ./run_benchmark.py --system a100 --toolchain cuda
-  ./run_benchmark.py --system epyc-9474f --toolchain amd
-  ./run_benchmark.py --system epyc-7763-bigmem --toolchain all
+  ./run_benchmark.py --system xeon8480 --toolchain intel --pack 1h --cpp --omp --baseline
+  ./run_benchmark.py --system a100 --toolchain cuda --pack 2h
+  ./run_benchmark.py --system epyc-9474f --toolchain amd --pack 4-8h
+  ./run_benchmark.py --system epyc-7763-bigmem --toolchain all --pack 10-20h
 """
+
+from __future__ import annotations
 
 import argparse
 import importlib.metadata
@@ -140,6 +145,33 @@ def get_walltime(s: int, d: int, t: int) -> str:
             return {100: "05:00:00", 250: "10:00:00", 500: "20:00:00"}.get(d, "20:00:00")
         return "02:00:00"
     return "20:00:00"
+
+
+# ── Walltime packs ───────────────────────────────────────────────────────────
+# Buckets the (states, duration, timesteps) grid by get_walltime() so an
+# evaluator can pick how much wall-clock budget to spend. Boundaries follow
+# the actual value set get_walltime() produces (30m/1h/2h/4h/5h/6h/8h/10h/
+# 14h/16h/20h) — there's a natural gap between 8h and 10h, so "4-8h" and
+# "10-20h" don't overlap or leave holes.
+PACKS: dict[str, tuple[int, int]] = {
+    "1h":     (0,             1 * 3600),
+    "2h":     (1 * 3600 + 1,  2 * 3600),
+    "4-8h":   (2 * 3600 + 1,  8 * 3600),
+    "10-20h": (8 * 3600 + 1, 20 * 3600),
+}
+
+
+def _hms_to_seconds(hms: str) -> int:
+    h, m, s = (int(x) for x in hms.split(":"))
+    return h * 3600 + m * 60 + s
+
+
+def _pack_of_walltime(walltime: str) -> str | None:
+    seconds = _hms_to_seconds(walltime)
+    for name, (lo, hi) in PACKS.items():
+        if lo <= seconds <= hi:
+            return name
+    return None
 
 
 # ── SLURM script generation ───────────────────────────────────────────────────
@@ -512,6 +544,10 @@ def run_sweep(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, args) 
     results_dir = SCRIPT_DIR / "results" / sys_name
     results_dir.mkdir(parents=True, exist_ok=True)
 
+    pack = args.pack
+    print(f"Pack selected: {pack} "
+          f"({PACKS[pack][0] // 3600}h–{PACKS[pack][1] // 3600}h walltime range)")
+
     sbatch_flags = _build_sbatch_flags(sys_conf, sys_type) if scheduler == "slurm" else []
 
     def submit(job_stem: str, flags: str, job_iters: int, walltime: str, config_file: str) -> None:
@@ -522,10 +558,15 @@ def run_sweep(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, args) 
             submit_slurm(job_stem, flags, job_iters, walltime, config_file,
                          sbatch_flags, sys_info, results_dir, nsys=args.nsys, ncu=args.ncu)
 
+    skipped = 0
+
     for s in STATES:
         for d in DURATIONS:
             for t in TIMESTEPS:
-                walltime    = get_walltime(s, d, t)
+                walltime = get_walltime(s, d, t)
+                if _pack_of_walltime(walltime) != pack:
+                    skipped += 1
+                    continue
                 stem        = f"{s}s_{d}d_{t}t"
                 config_file = str(SCRIPT_DIR / f"data/{s}states_{t}steps_{d}dur.json")
                 print(f"Submitting: System={system}, States={s}, Duration={d}, "
@@ -536,6 +577,8 @@ def run_sweep(system: str, toolchain: str, sys_conf: dict, tc_conf: dict, args) 
                     iters = 2
 
                 submit(stem, viterbi_flags, iters, walltime, config_file)
+
+    print(f"Pack '{pack}': skipped {skipped} job(s) outside the selected walltime range.")
 
 
 def run_likwid_profiling(system: str, toolchain: str, sys_conf: dict, tc_conf: dict,
@@ -566,8 +609,10 @@ def _build_parser() -> argparse.ArgumentParser:
         description="tensor-viterbi SLURM job submitter.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--system",       required=True, help="System key from systems.json")
-    parser.add_argument("--toolchain",    required=True, help="Toolchain key, or 'all'")
+    parser.add_argument("--system",    "-s", required=True,
+                        help="System key from systems.json")
+    parser.add_argument("--toolchain", "-t", required=True,
+                        help="Toolchain key, or 'all' to build every toolchain for the system")
     parser.add_argument("--py",           action="store_true")
     parser.add_argument("--cpp",          action="store_true")
     parser.add_argument("--omp",          action="store_true")
@@ -580,13 +625,26 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Wrap runs with nsys profile (CUDA timeline tracing)")
     parser.add_argument("--ncu", action="store_true",
                         help="Wrap runs with ncu (Nsight Compute kernel profiling; overrides --nsys)")
+    parser.add_argument("--pack", choices=list(PACKS), default=None,
+                        help="Required unless --likwid is given. Only submit jobs whose "
+                             f"estimated walltime falls in this pack ({', '.join(PACKS)}). "
+                             "Ignored for --likwid runs.")
     parser.add_argument("--likwid", action="store_true",
                         help="Run LIKWID hardware-counter profiling (CPU only, fixed data file, 1 iteration)")
     return parser
 
 
 def main() -> None:
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+    args = parser.parse_args()
+
+    if not args.likwid and args.pack is None:
+        parser.error("--pack is required unless --likwid is given")
+
+    if sys.version_info < (3, 10):
+        print(f"Error: Python >= 3.10 required, found {sys.version.split()[0]}.")
+        print("Activate a Python 3.10+ environment before running run_benchmark.py.")
+        sys.exit(1)
 
     if Path.cwd().resolve() != SCRIPT_DIR:
         print("Error: must be run from the repository root.")

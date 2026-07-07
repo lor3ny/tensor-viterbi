@@ -1,72 +1,19 @@
 #!/usr/bin/env python3
 """
-compile.py — build the native extension for a given system/toolchain pair.
-Reads system configuration from systems.json.
+compile.py — builds the native extension for a given system/toolchain pair.
 
-Activate your virtual environment and install dependencies before running:
-    pip install -r requirements.txt
-    python compile.py --system <system> --toolchain <toolchain>
-
-Usage:
-    python compile.py --system <system> --toolchain <toolchain>
-    python compile.py --system <system> --toolchain all
+Library module only: it has no CLI of its own. `compile_system()` is called
+by run_benchmark.py, which always compiles before dispatching benchmark jobs.
+There is no standalone "compile only" entry point.
 """
 
-import argparse
-import importlib.metadata
-import json
 import os
-import re
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-
-
-def _ver(v: str) -> tuple[int, ...]:
-    return tuple(int(x) for x in re.split(r"[.+]", v) if x.isdigit())
-
-
-def check_requirements() -> None:
-    """Verify requirements.txt against the active Python environment. Exit on failure."""
-    ops = {
-        ">=": lambda a, b: a >= b,
-        "<=": lambda a, b: a <= b,
-        "==": lambda a, b: a == b,
-        "!=": lambda a, b: a != b,
-        ">":  lambda a, b: a > b,
-        "<":  lambda a, b: a < b,
-    }
-    req_file = SCRIPT_DIR / "requirements.txt"
-    missing: list[str] = []
-    for line in req_file.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        m = re.fullmatch(r"([A-Za-z0-9_.-]+)\s*([><=!]{1,2})\s*([0-9][0-9.]*)", line)
-        pkg     = m.group(1) if m else line
-        op      = m.group(2) if m else None
-        req_ver = m.group(3) if m else None
-        try:
-            installed = importlib.metadata.version(pkg)
-        except importlib.metadata.PackageNotFoundError:
-            missing.append(f"  {pkg}: not installed")
-            continue
-        if op and req_ver and not ops[op](_ver(installed), _ver(req_ver)):
-            missing.append(f"  {pkg}: need {op}{req_ver}, got {installed}")
-
-    if missing:
-        print("Error: missing or outdated requirements:")
-        print("\n".join(missing))
-        print(f"Install them with: pip install -r {req_file}")
-        sys.exit(1)
-
-
-def load_systems() -> dict:
-    with open(SCRIPT_DIR / "systems.json") as f:
-        return json.load(f)
 
 
 def _compiler_for_toolchain(toolchain: str) -> tuple[str, str]:
@@ -234,63 +181,3 @@ cmake --build "{build_dir}" -j 1
         result = subprocess.run(["bash", "-c", script], cwd=str(SCRIPT_DIR))
         if result.returncode != 0:
             sys.exit(result.returncode)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Build the tensor-viterbi native extension for a given system/toolchain.\n"
-            "Activate your virtual environment and install requirements.txt first."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("--system",    "-s", required=True,
-                        help="System key from systems.json")
-    parser.add_argument("--toolchain", "-t", required=True,
-                        help="Toolchain key, or 'all' to build every toolchain for the system")
-    parser.add_argument("--likwid", action="store_true", default=False,
-                        help="Enable LIKWID marker API instrumentation (-DUSE_LIKWID=ON)")
-    args = parser.parse_args()
-
-    # Python version gate
-    if sys.version_info < (3, 10):
-        print(f"Error: Python >= 3.10 required, found {sys.version.split()[0]}.")
-        print("Activate a Python 3.10+ environment before running compile.py.")
-        sys.exit(1)
-
-    check_requirements()
-
-    if Path.cwd().resolve() != SCRIPT_DIR:
-        print("Error: must be run from the repository root.")
-        print(f"  cd {SCRIPT_DIR} && python {Path(__file__).name} {' '.join(sys.argv[1:])}")
-        sys.exit(1)
-
-    systems = load_systems()
-
-    if args.system not in systems:
-        print(f"Error: Unknown system '{args.system}'.")
-        print(f"Available systems: {', '.join(systems)}")
-        sys.exit(1)
-
-    sys_conf   = systems[args.system]
-    toolchains = sys_conf.get("toolchains", {})
-
-    if args.toolchain == "all":
-        if not toolchains:
-            print(f"Error: No toolchains defined for system '{args.system}'.")
-            sys.exit(1)
-        for tc in sorted(toolchains):
-            print(f"=== Compiling {args.system} / {tc} ===")
-            compile_system(args.system, tc, sys_conf, toolchains[tc], args.likwid)
-        return
-
-    if args.toolchain not in toolchains:
-        print(f"Error: Toolchain '{args.toolchain}' not defined for system '{args.system}'.")
-        print(f"Known toolchains: {', '.join(toolchains)}")
-        sys.exit(1)
-
-    compile_system(args.system, args.toolchain, sys_conf, toolchains[args.toolchain], args.likwid)
-
-
-if __name__ == "__main__":
-    main()

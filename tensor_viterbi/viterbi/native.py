@@ -33,7 +33,8 @@ def configure(system: str, toolchain: str) -> None:
     except ImportError as e:
         raise RuntimeError(
             f"[native] Could not load _native extension from '{_so_dir}'.\n"
-            f"Run: ./compile.py --system {system} --toolchain {toolchain}\n"
+            f"Run: ./run_benchmark.py --system {system} --toolchain {toolchain} --pack <pack> "
+            f"(it compiles automatically before submitting jobs)\n"
             f"Original error: {e}"
         ) from e
 
