@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+"""
+bench — orchestration entry point for tensor-viterbi.
+
+Subcommands:
+  bench plan   --pack <pack> --system <name> [backend flags] [--iterations N]
+  bench run    --system <name> [--pack <pack>] [--only-failed] [--jobs A-B]
+               [--max-hours H] [--force] [--nsys|--ncu]
+  bench status --system <name>
+  bench check  --system <name>
+  bench likwid --system <name> [backend flags]
+
+There is no auto-detection of scheduler/system/toolchain anywhere: --system
+always names (or points to) a systems/*.yaml file you wrote yourself. See
+systems/TEMPLATE.yaml and REPRODUCING.md.
+"""
+
+from __future__ import annotations
+
+from benchlib.cli import main
+
+if __name__ == "__main__":
+    main()

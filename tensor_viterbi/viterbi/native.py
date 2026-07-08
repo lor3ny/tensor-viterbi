@@ -33,8 +33,8 @@ def configure(system: str, toolchain: str) -> None:
     except ImportError as e:
         raise RuntimeError(
             f"[native] Could not load _native extension from '{_so_dir}'.\n"
-            f"Run: ./run_benchmark.py --system {system} --toolchain {toolchain} --pack <pack> "
-            f"(it compiles automatically before submitting jobs)\n"
+            f"Run: ./bench run --system {system} --toolchain {toolchain} --pack <pack> "
+            f"(it compiles automatically before dispatching jobs)\n"
             f"Original error: {e}"
         ) from e
 
@@ -43,7 +43,7 @@ def _ensure_configured() -> None:
     if _native is None:
         raise RuntimeError(
             "[native] Native extension not loaded.\n"
-            "Pass --system and --toolchain to run_benchmark.py, or call "
+            "Pass --system and --toolchain to bench, or call "
             "tensor_viterbi.viterbi.native.configure(system, toolchain) directly."
         )
 

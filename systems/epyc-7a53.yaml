@@ -1,0 +1,12 @@
+name: epyc-7a53
+type: cpu
+toolchain: cray
+scheduler: slurm
+
+cpus: 56
+metrics_backend: cray_pm
+
+slurm:
+  account: project_465002776
+  partition: standard-g
+  modules: [LUMI/25.03, "partition/G", cray-python]

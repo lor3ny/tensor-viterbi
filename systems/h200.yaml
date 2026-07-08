@@ -1,0 +1,10 @@
+name: h200
+type: gpu
+gpu_arch: "90"
+toolchain: cuda
+scheduler: slurm
+
+# No slurm account/partition configured yet for this system (matches the
+# state of the old slurm_system.yaml, which never listed h200 either).
+# `bench check` will warn until this is filled in.
+slurm: {}

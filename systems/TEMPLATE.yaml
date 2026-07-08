@@ -1,0 +1,68 @@
+# ─────────────────────────────────────────────────────────────────────────
+# Template for describing YOUR machine to `bench`.
+#
+# There is no auto-detection anywhere in this project: `bench` only ever
+# learns about a system from the YAML file you point it at with --system.
+#
+# QUICK START for a local (non-SLURM) machine:
+#   1. Copy this file:      cp systems/TEMPLATE.yaml systems/my-machine.yaml
+#   2. Fill in the first four fields below (name, type, toolchain, scheduler).
+#   3. Delete the whole `slurm:` block (it's only for scheduler: slurm).
+#   4. Run:                 bench check --system my-machine
+#   Done — everything else has a safe default.
+# ─────────────────────────────────────────────────────────────────────────
+
+# Required — results are written to results/<name>/<toolchain>/
+name: my-machine
+
+# Required — cpu | gpu
+type: cpu
+
+# Required — the compiler suite used to build the native extension.
+#   cpu systems: gnu | intel | amd | cray | llvm | fujitsu  (anything else
+#                falls back to gcc/g++, see compile.py:_compiler_for_toolchain)
+#   gpu systems: cuda | hip
+toolchain: gnu
+
+# Required — local | slurm
+#   local: bench invokes run_one.sh directly as a subprocess
+#   slurm: bench submits run_one.slurm via sbatch (needs the slurm: block below)
+scheduler: local
+
+# ── SLURM users only — delete this entire block for scheduler: local ──────
+# slurm:
+#   account: proj123               # required for scheduler: slurm
+#   partition: normal               # strongly recommended (sbatch --partition)
+#   qos: normal                     # optional (sbatch --qos)
+#   modules: [gcc/12.2]             # optional, `module load`-ed before build+run
+#   modules_build: []               # optional — only set this if the modules
+#                                    # needed to COMPILE differ from `modules`
+#                                    # (rare; e.g. a ROCm module only needed to
+#                                    # build HIP kernels, not to run them)
+#   uenv: ""                        # optional uenv image name (Alps/CSCS only)
+
+# ── Optional tuning — all have safe defaults ───────────────────────────────
+# cpus: 64                # default: physical core count at run time
+# omp_bind: close         # default: close   (OMP_PROC_BIND)
+# omp_places: cores       # default: cores   (OMP_PLACES)
+# metrics_backend: ""     # optional energy/power metrics collector token
+# gpu_arch: ""            # required for type: gpu — CUDA compute cap ("90")
+#                         # or ROCm gfx code ("gfx90a")
+# cc: ""                  # optional explicit C compiler override
+# cxx: ""                 # optional explicit C++ compiler override
+
+# ── Multi-toolchain systems ─────────────────────────────────────────────
+# If your machine can build with more than one compiler suite, replace the
+# single `toolchain:` key above with a `toolchains:` map instead, e.g.:
+#
+# toolchains:
+#   gnu:
+#     modules: [gcc/12.2]
+#   intel:
+#     modules: [intel-oneapi-compilers]
+#
+# `bench --toolchain <tc>|all` then selects within it (defaults to the
+# single entry when only one exists). modules/modules_build/uenv/
+# metrics_backend can be set per-toolchain this way; account/partition/qos
+# stay in the single top-level `slurm:` block since they don't vary by
+# toolchain.

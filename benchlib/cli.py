@@ -1,0 +1,202 @@
+"""bench — argparse subparsers wiring for plan/run/status/check/likwid."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+
+from . import compileflow, execution, flags as flagslib, likwid as likwidlib, manifest, params, status
+from .paths import RUNS_DIR, require_python_version, require_repo_root
+from .requirements import check_requirements
+from .systemsconf import SystemConfigError, load_system, select_toolchains
+
+
+def _add_system_arg(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--system", "-s", required=True,
+                    help="System name (systems/<name>.yaml) or a path to a system YAML file")
+
+
+def _add_toolchain_arg(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--toolchain", "-t", default=None,
+                    help="Toolchain key, or 'all' for every toolchain the system defines "
+                         "(defaults to the system's single toolchain if it only has one)")
+
+
+def _add_backend_flag_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--py",           action="store_true")
+    p.add_argument("--cpp",          action="store_true")
+    p.add_argument("--omp",          action="store_true")
+    p.add_argument("--cuda",         action="store_true")
+    p.add_argument("--baseline",     action="store_true")
+    p.add_argument("--baseline-cpp", action="store_true", dest="baseline_cpp")
+    p.add_argument("--baseline-omp", action="store_true", dest="baseline_omp")
+
+
+def _add_profiler_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--nsys", action="store_true",
+                    help="Wrap runs with nsys profile (CUDA timeline tracing)")
+    p.add_argument("--ncu", action="store_true",
+                    help="Wrap runs with ncu (Nsight Compute kernel profiling; overrides --nsys)")
+
+
+def _load_or_die(system_arg: str) -> dict:
+    try:
+        conf, warnings = load_system(system_arg)
+    except SystemConfigError as e:
+        print(str(e))
+        sys.exit(1)
+    for w in warnings:
+        print(f"Warning in {conf['path']}: {w}")
+    return conf
+
+
+def _resolve_toolchains_or_die(conf: dict, toolchain_arg: str | None) -> list[str]:
+    try:
+        return select_toolchains(conf, toolchain_arg)
+    except SystemConfigError as e:
+        print(str(e))
+        sys.exit(1)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="bench",
+        description="tensor-viterbi benchmark orchestration.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_plan = sub.add_parser("plan", help="Build the job manifest and print a preview; runs nothing")
+    _add_system_arg(p_plan)
+    _add_toolchain_arg(p_plan)
+    p_plan.add_argument("--pack", required=True,
+                         help="small|medium|large|extra (old names 1h/2h/4-8h/10-20h still accepted)")
+    _add_backend_flag_args(p_plan)
+    p_plan.add_argument("--iterations", type=int, default=6, metavar="N")
+
+    p_run = sub.add_parser("run", help="Execute a manifest already produced by `bench plan`")
+    _add_system_arg(p_run)
+    p_run.add_argument("--pack", default=None,
+                        help="Pack to run; if omitted, runs every pack already planned for this system")
+    p_run.add_argument("--only-failed", action="store_true",
+                        help="Re-run only jobs whose outputs exist but are incomplete/failed")
+    p_run.add_argument("--jobs", default=None, metavar="A-B",
+                        help="1-indexed inclusive slice of the manifest to run")
+    p_run.add_argument("--max-hours", type=float, default=None, metavar="H",
+                        help="Local only: stop once the cumulative walltime estimate would exceed H")
+    p_run.add_argument("--force", action="store_true",
+                        help="Re-run jobs even if their output is already complete")
+    _add_profiler_args(p_run)
+
+    p_status = sub.add_parser("status", help="Report done/running/pending/failed per job")
+    _add_system_arg(p_status)
+
+    p_check = sub.add_parser("check", help="Validate the system YAML and probe the environment; runs nothing")
+    _add_system_arg(p_check)
+    _add_toolchain_arg(p_check)
+
+    p_likwid = sub.add_parser("likwid", help="LIKWID hardware-counter profiling (CPU-only, fixed data file)")
+    _add_system_arg(p_likwid)
+    _add_toolchain_arg(p_likwid)
+    _add_backend_flag_args(p_likwid)
+
+    return parser
+
+
+def _plan(args) -> tuple[dict, str, list[dict]]:
+    """Builds and writes the manifest for `bench plan`. Returns (conf, pack, jobs)."""
+    conf = _load_or_die(args.system)
+    toolchains = _resolve_toolchains_or_die(conf, args.toolchain)
+    pack = params.resolve_pack_name(args.pack)
+    viterbi_flags = flagslib.compute_viterbi_flags(args, conf["type"])
+
+    orphans = params.validate_grid_covered_by_packs(viterbi_flags, args.iterations)
+    if orphans:
+        print("Error: the following grid points have a walltime that falls outside every pack:")
+        for s, d, t, wt in orphans:
+            print(f"  states={s} duration={d} timesteps={t} walltime={wt}")
+        print("Fix walltimes.yaml or the PACKS boundaries in benchlib/params.py.")
+        sys.exit(1)
+
+    jobs, skipped = manifest.build_jobs(conf["name"], toolchains, pack, viterbi_flags, args.iterations)
+    manifest.write_manifest(conf["name"], pack, jobs)
+    manifest.print_preview(conf["name"], pack, jobs, conf["scheduler"])
+    print(f"Pack '{pack}': skipped {skipped} job(s) outside the selected walltime range.")
+    return conf, pack, jobs
+
+
+def cmd_plan(args) -> None:
+    conf, pack, jobs = _plan(args)
+    path = manifest.manifest_path(conf["name"], pack)
+    print(f"Manifest written to {path}")
+
+
+def cmd_run(args) -> None:
+    conf = _load_or_die(args.system)
+    scheduler = conf["scheduler"]
+
+    if args.pack:
+        pack_names = [params.resolve_pack_name(args.pack)]
+    else:
+        system_dir = RUNS_DIR / conf["name"]
+        pack_names = sorted(p.stem for p in system_dir.glob("*.jsonl")) if system_dir.exists() else []
+        if not pack_names:
+            print(f"No manifest found for system '{conf['name']}'. "
+                  f"Pass --pack, or run `bench plan --system {conf['name']} --pack <pack>` first.")
+            sys.exit(1)
+
+    def compile_fn(toolchain: str) -> None:
+        compileflow.compile_for(conf, toolchain, scheduler, likwid=False)
+
+    for pack in pack_names:
+        path = manifest.manifest_path(conf["name"], pack)
+        if not path.exists():
+            print(f"No manifest for pack '{pack}'. Run "
+                  f"`bench plan --system {conf['name']} --pack {pack} [flags]` first.")
+            sys.exit(1)
+        jobs = manifest.read_manifest(path)
+        execution.run_manifest(
+            jobs, conf, scheduler,
+            force=args.force, only_failed=args.only_failed,
+            jobs_slice=args.jobs, max_hours=args.max_hours,
+            nsys=args.nsys, ncu=args.ncu, compile_fn=compile_fn,
+        )
+
+
+def cmd_status(args) -> None:
+    conf = _load_or_die(args.system)
+    status.print_status(conf["name"], conf["scheduler"])
+
+
+def cmd_check(args) -> None:
+    from .check import run_check
+    sys.exit(run_check(args.system, args.toolchain))
+
+
+def cmd_likwid(args) -> None:
+    conf = _load_or_die(args.system)
+    if conf["type"] != "cpu":
+        print(f"Warning: LIKWID profiling is CPU-only (system type={conf['type']}). Skipping.")
+        return
+    toolchains = _resolve_toolchains_or_die(conf, args.toolchain)
+    cpu_flags = flagslib.selected_likwid_cpu_flags(args)
+    for tc in toolchains:
+        print(f"=== Compiling {conf['name']} / {tc} (likwid) ===")
+        compileflow.compile_for(conf, tc, conf["scheduler"], likwid=True)
+        likwidlib.run_likwid(conf, tc, conf["scheduler"], cpu_flags)
+
+
+def main() -> None:
+    require_python_version()
+    parser = _build_parser()
+    args = parser.parse_args()
+    require_repo_root("bench", sys.argv[1:])
+    check_requirements()
+
+    {
+        "plan":   cmd_plan,
+        "run":    cmd_run,
+        "status": cmd_status,
+        "check":  cmd_check,
+        "likwid": cmd_likwid,
+    }[args.command](args)

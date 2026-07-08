@@ -1,0 +1,15 @@
+name: xeon8480
+type: cpu
+scheduler: slurm
+
+cpus: 112
+
+toolchains:
+  intel:
+    modules: [python/3.11.7, intel-oneapi-compilers]
+  gnu:
+    modules: [python/3.11.7]
+
+slurm:
+  account: IscrC_FOCAL_0
+  partition: dcgp_usr_prod

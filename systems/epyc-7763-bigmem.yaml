@@ -1,0 +1,18 @@
+name: epyc-7763-bigmem
+type: cpu
+scheduler: slurm
+
+cpus: 128
+
+toolchains:
+  cray:
+    modules: [LUMI/25.03, "partition/C", cray-python]
+    metrics_backend: cray_pm
+  aocc:
+    modules: [LUMI/25.03, "partition/C", cray-python, PrgEnv-aocc]
+  gnu:
+    modules: [LUMI/25.03, "partition/C", cray-python, PrgEnv-gnu]
+
+slurm:
+  account: project_465002776
+  partition: small

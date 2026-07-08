@@ -1,0 +1,20 @@
+name: mi250x
+type: gpu
+gpu_arch: gfx90a
+scheduler: slurm
+
+toolchains:
+  cray:
+    modules: [LUMI/25.03, "partition/G", cray-python]
+    modules_build: [LUMI/25.03, "partition/G", rocm, cray-python]
+    metrics_backend: cray_pm
+  amd:
+    modules: [LUMI/25.03, "partition/G", cray-python, PrgEnv-AMD]
+    modules_build: [LUMI/25.03, "partition/G", rocm, cray-python, PrgEnv-AMD]
+  gnu:
+    modules: [LUMI/25.03, "partition/G", cray-python, PrgEnv-gnu]
+    modules_build: [LUMI/25.03, "partition/G", rocm, cray-python, PrgEnv-gnu]
+
+slurm:
+  account: project_465002776
+  partition: standard-g

@@ -1,0 +1,6 @@
+name: epyc-9474f
+type: cpu
+toolchain: amd
+scheduler: local
+
+cpus: 96

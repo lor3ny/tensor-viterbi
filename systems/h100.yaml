@@ -1,0 +1,13 @@
+name: h100
+type: gpu
+gpu_arch: "90"
+toolchain: cuda
+scheduler: slurm
+
+# No `partition` on this cluster — jobs are routed by `qos` instead. `bench
+# check` treats this as valid: it only requires account plus at least one of
+# partition/qos.
+slurm:
+  account: ehpc633
+  qos: acc_ehpc
+  modules: [hdf5, nvidia-hpc-sdk, python/3.12.1, cmake]

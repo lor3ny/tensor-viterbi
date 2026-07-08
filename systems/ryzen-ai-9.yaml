@@ -1,0 +1,6 @@
+name: ryzenb-ai-9
+type: cpu
+toolchain: gnu
+scheduler: local
+
+cpus: 8

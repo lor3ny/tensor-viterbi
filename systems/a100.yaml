@@ -1,0 +1,10 @@
+name: a100
+type: gpu
+gpu_arch: "80"
+toolchain: cuda
+scheduler: slurm
+
+slurm:
+  account: IscrC_FOCAL
+  partition: boost_usr_prod
+  modules: [cuda, python/3.11.7]
