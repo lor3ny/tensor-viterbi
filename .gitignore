@@ -57,7 +57,7 @@ build/
 src/tensor-viterbi
 
 # results
-results/
+# results/
 
 # generated data
 data/
