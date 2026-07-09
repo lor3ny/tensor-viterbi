@@ -89,8 +89,8 @@ def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict,
         )
 
     default_cc, default_cxx = _compiler_for_toolchain(toolchain)
-    cc  = tc_conf.get("cc",  default_cc)
-    cxx = tc_conf.get("cxx", default_cxx)
+    cc  = tc_conf.get("cc")  or default_cc
+    cxx = tc_conf.get("cxx") or default_cxx
 
     # On Slurm, Python is resolved at runtime after modules load so that cmake
     # and pip target the same interpreter the benchmark will use. On local
