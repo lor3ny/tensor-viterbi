@@ -1,4 +1,4 @@
-"""Backend-flag selection (--py/--cpp/--omp/--cuda/--baseline*) shared by
+"""Backend-flag selection (--py/--cpp/--omp/--gpu/--baseline*) shared by
 plan and likwid, plus the flag -> output-CSV-stem mapping used by the
 resume/completeness check in execution.py. Mirrors viterbi_app.py exactly —
 do not change viterbi_app.py's flag names/semantics without updating this.
@@ -6,7 +6,7 @@ do not change viterbi_app.py's flag names/semantics without updating this.
 
 from __future__ import annotations
 
-BACKEND_FLAGS = ["py", "cpp", "omp", "cuda", "baseline", "baseline-cpp", "baseline-omp"]
+BACKEND_FLAGS = ["py", "cpp", "omp", "gpu", "baseline", "baseline-cpp", "baseline-omp"]
 
 LIKWID_CPU_FLAGS = ["--baseline", "--baseline-omp", "--cpp", "--omp"]
 LIKWID_PERF_GROUPS = ["FLOPS_DP", "MEM", "L3", "L2", "BRANCH", "TMA"]
@@ -26,7 +26,7 @@ _FNAME_FOR_FLAG = {
     "py":           ["decode_log_tensor_viterbi_cached"],
     "cpp":          ["decode_tensor_viterbi_cpp"],
     "omp":          ["decode_tensor_viterbi_omp"],
-    "cuda":         ["decode_tensor_viterbi_cuda"],
+    "gpu":          ["decode_tensor_viterbi_cuda"],
     "baseline":     ["HSMMLearn_CPP", "HSMMLearn_OMP"],
     "baseline-cpp": ["HSMMLearn_CPP"],
     "baseline-omp": ["HSMMLearn_OMP"],
@@ -38,7 +38,7 @@ _VERSIONS_FOR_FLAG = {
     "py":           ["py"],
     "cpp":          ["cpp"],
     "omp":          ["omp"],
-    "cuda":         ["cuda"],
+    "gpu":          ["gpu"],
     "baseline":     ["baseline-cpp", "baseline-omp"],
     "baseline-cpp": ["baseline-cpp"],
     "baseline-omp": ["baseline-omp"],
@@ -57,14 +57,14 @@ def compute_viterbi_flags(args, sys_type: str) -> str:
         ("py",           getattr(args, "py", False)),
         ("cpp",          getattr(args, "cpp", False)),
         ("omp",          getattr(args, "omp", False)),
-        ("cuda",         getattr(args, "cuda", False)),
+        ("gpu",          getattr(args, "gpu", False)),
         ("baseline",     getattr(args, "baseline", False)),
         ("baseline-cpp", getattr(args, "baseline_cpp", False)),
         ("baseline-omp", getattr(args, "baseline_omp", False)),
     ]
     viterbi_flags = ":".join(name for name, enabled in flag_map if enabled)
     if not viterbi_flags:
-        viterbi_flags = "cuda" if sys_type == "gpu" else "cpp:omp:baseline-cpp:baseline-omp"
+        viterbi_flags = "gpu" if sys_type == "gpu" else "cpp:omp:baseline-cpp:baseline-omp"
     return viterbi_flags
 
 

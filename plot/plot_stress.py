@@ -6,7 +6,7 @@ Only GPU data is available for T=10M (N=100, D=10000).
 Plots a simple horizontal bar chart with one bar per GPU system,
 showing mean elapsed time in seconds (with min/max error bars).
 
-Output: bars/stress/stress_100s_10000000t.pdf
+Output: bars/stress/stress_100s_10000000t.png
 
 Usage:
   python plot/plot_stress.py
@@ -150,7 +150,7 @@ def make_plot(data):
 
     fig.subplots_adjust(left=0.15, right=0.97, top=0.93, bottom=0.22)
     os.makedirs(OUT_DIR, exist_ok=True)
-    out_path = os.path.join(OUT_DIR, f"stress_{N}s_{T}t.pdf")
+    out_path = os.path.join(OUT_DIR, f"stress_{N}s_{T}t.png")
     fig.savefig(out_path)
     plt.close(fig)
     print(f"Saved: {out_path}")

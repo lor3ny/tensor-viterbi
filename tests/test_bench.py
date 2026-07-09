@@ -137,12 +137,12 @@ def test_write_and_read_manifest_roundtrip(tmp_path, monkeypatch):
 # ── backend flag selection ─────────────────────────────────────────────
 
 class _Args:
-    py = cpp = omp = cuda = baseline = baseline_cpp = baseline_omp = False
+    py = cpp = omp = gpu = baseline = baseline_cpp = baseline_omp = False
 
 
 def test_default_flags_cpu_vs_gpu():
     assert flagslib.compute_viterbi_flags(_Args(), "cpu") == "cpp:omp:baseline-cpp:baseline-omp"
-    assert flagslib.compute_viterbi_flags(_Args(), "gpu") == "cuda"
+    assert flagslib.compute_viterbi_flags(_Args(), "gpu") == "gpu"
 
 
 def test_explicit_flags_override_default():

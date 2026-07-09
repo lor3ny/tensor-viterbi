@@ -65,6 +65,10 @@ data/
 # old plots
 plot_old/
 
+# bench plot / plot_all.py output (generated PNGs, not source)
+plot/bars/
+plot/heatmaps/
+
 # bench plan manifests (local orchestration state, not source)
 runs/
 

@@ -99,18 +99,18 @@ GPU_COLORS = {
 
 FUNC_ORDER = [
     "HSMMLearn_OMP",
-    "decode_tensor_viterbi_omp_opt",
+    "decode_tensor_viterbi_omp",
     "decode_tensor_viterbi_cuda",
 ]
 FUNC_LABELS = {
-    "HSMMLearn_OMP":                 "Base-MC",
-    "decode_tensor_viterbi_omp_opt": "Tens-MC",
-    "decode_tensor_viterbi_cuda":    "Tens-GPU",
+    "HSMMLearn_OMP":              "Base-MC",
+    "decode_tensor_viterbi_omp":  "Tens-MC",
+    "decode_tensor_viterbi_cuda": "Tens-GPU",
 }
 FUNC_BASE_COLORS = {
-    "HSMMLearn_OMP":                 "#4C72B0",
-    "decode_tensor_viterbi_omp_opt": "#C44E52",
-    "decode_tensor_viterbi_cuda":    "#8172B2",
+    "HSMMLearn_OMP":              "#4C72B0",
+    "decode_tensor_viterbi_omp":  "#C44E52",
+    "decode_tensor_viterbi_cuda": "#8172B2",
 }
 
 _HATCH_PATTERNS = ["", "///", "...", "xxx", "|||", "---"]
@@ -478,7 +478,7 @@ def make_plot(N, T, all_systems, all_data, d_values):
               handlelength=1.5, handletextpad=0.5, columnspacing=1.0)
 
     os.makedirs(OUT_ROOT, exist_ok=True)
-    out_path = os.path.join(OUT_ROOT, f"mc_gpu_{N}s_{T}t.pdf")
+    out_path = os.path.join(OUT_ROOT, f"mc_gpu_{N}s_{T}t.png")
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {out_path}")

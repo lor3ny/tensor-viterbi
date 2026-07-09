@@ -78,15 +78,15 @@ CPU_FUNCTION_ORDER = [
     "HSMMLearn_CPP",
     "HSMMLearn_OMP",
     "decode_tensor_viterbi_cpp",
-    "decode_tensor_viterbi_omp_opt",
+    "decode_tensor_viterbi_omp",
 ]
 GPU_FUNCTION_ORDER = ["decode_tensor_viterbi_cuda"]
 FUNCTION_LABELS = {
-    "HSMMLearn_CPP":                 "Base-1C",
-    "HSMMLearn_OMP":                 "Base-MC",
-    "decode_tensor_viterbi_cpp":     "Tens-1C",
-    "decode_tensor_viterbi_omp_opt": "Tens-MC",
-    "decode_tensor_viterbi_cuda":    "Tens-GPU",
+    "HSMMLearn_CPP":              "Base-1C",
+    "HSMMLearn_OMP":              "Base-MC",
+    "decode_tensor_viterbi_cpp":  "Tens-1C",
+    "decode_tensor_viterbi_omp":  "Tens-MC",
+    "decode_tensor_viterbi_cuda": "Tens-GPU",
 }
 
 ACCEL_NAMES = [f"accel{i}_energy" for i in range(4)]
@@ -123,7 +123,7 @@ COMBINED_FUNC_ORDER = [
     "HSMMLearn_CPP",
     "HSMMLearn_OMP",
     "decode_tensor_viterbi_cpp",
-    "decode_tensor_viterbi_omp_opt",
+    "decode_tensor_viterbi_omp",
     "decode_tensor_viterbi_cuda",
 ]
 COMBINED_SYSTEM_COLORS = {
@@ -385,7 +385,7 @@ def make_plot(N, T, kind, all_systems, all_metric_data, d_values, metric):
     )
 
     out_dir  = os.path.join(OUT_ROOT, metric, kind)
-    out_path = os.path.join(out_dir, f"{kind}_{N}s_{T}t_{metric}.pdf")
+    out_path = os.path.join(out_dir, f"{kind}_{N}s_{T}t_{metric}.png")
     os.makedirs(out_dir, exist_ok=True)
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
@@ -584,7 +584,7 @@ def make_combined_plot(N, T, all_systems, all_metric_data, d_values, metric):
     )
 
     out_dir  = os.path.join(OUT_ROOT, metric, "combined")
-    out_path = os.path.join(out_dir, f"combined_{N}s_{T}t_{metric}.pdf")
+    out_path = os.path.join(out_dir, f"combined_{N}s_{T}t_{metric}.png")
     os.makedirs(out_dir, exist_ok=True)
     fig.subplots_adjust(left=0.15, right=0.97, top=0.93, bottom=0.22)
     fig.savefig(out_path)

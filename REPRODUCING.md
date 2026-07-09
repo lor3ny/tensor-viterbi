@@ -87,7 +87,7 @@ bench status --system my-machine                             # done/running/pend
 ```
 
 `bench plan` is where you fix the backend flags (`--py`/`--cpp`/`--omp`/
-`--cuda`/`--baseline`...) and `--iterations` — they're baked into each job's
+`--gpu`/`--baseline`...) and `--iterations` — they're baked into each job's
 manifest entry (including its walltime estimate), so `bench run` doesn't
 take them at all; it just executes whatever was planned.
 
@@ -136,7 +136,7 @@ scheduler: local
 
 ```bash
 bench check --system my-gpu-box
-bench plan --system my-gpu-box --pack small      # defaults to --cuda on GPU systems
+bench plan --system my-gpu-box --pack small      # defaults to --gpu on GPU systems
 bench run  --system my-gpu-box --pack small
 bench status --system my-gpu-box
 ```

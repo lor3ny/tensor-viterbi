@@ -129,7 +129,7 @@ def main():
     parser.add_argument("--py",           action="store_true")
     parser.add_argument("--cpp",          action="store_true")
     parser.add_argument("--omp",          action="store_true")
-    parser.add_argument("--cuda",         action="store_true")
+    parser.add_argument("--gpu",          action="store_true")
     parser.add_argument("--baseline",     action="store_true", help="Enable all baselines")
     parser.add_argument("--baseline-cpp", action="store_true", dest="baseline_cpp")
     parser.add_argument("--baseline-omp", action="store_true", dest="baseline_omp")
@@ -222,7 +222,7 @@ def main():
                      _run, my_hsmm, **bkw)
         _validate(res, ref_path)
 
-    if args.cuda:
+    if args.gpu:
         from tensor_viterbi.viterbi import decode_tensor_viterbi_cuda
         def _run(h):
             h.to_log_space()

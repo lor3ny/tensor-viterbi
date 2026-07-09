@@ -309,7 +309,7 @@ def main():
         oom = {}
         abs_times = {}
         for (n, dur, t, func), mean_s in d.items():
-            if func == "decode_tensor_viterbi_omp_opt" and mean_s > 0:
+            if func == "decode_tensor_viterbi_omp" and mean_s > 0:
                 ref = d.get((n, dur, t, "HSMMLearn_OMP"))
                 abs_times[(n, dur, t)] = mean_s
                 if ref and ref > 0:
@@ -323,7 +323,7 @@ def main():
             speedup_dict=speedup,
             cell_labels=oom,
             abs_times=abs_times,
-            out_path=os.path.join(OUT_ROOT, f"tens-mc-vs-base-mc_{slug}{_t_suffix}.pdf"),
+            out_path=os.path.join(OUT_ROOT, f"tens-mc-vs-base-mc_{slug}{_t_suffix}.png"),
             show_t=show_t,
         )
 
@@ -349,7 +349,7 @@ def main():
             speedup_dict=speedup,
             cell_labels=oom,
             abs_times=abs_times,
-            out_path=os.path.join(OUT_ROOT, f"tens-1c-vs-base-1c_{slug}{_t_suffix}.pdf"),
+            out_path=os.path.join(OUT_ROOT, f"tens-1c-vs-base-1c_{slug}{_t_suffix}.png"),
             show_t=show_t,
         )
 
@@ -378,7 +378,7 @@ def main():
                 speedup_dict=speedup,
                 cell_labels=oom,
                 abs_times=abs_times,
-                out_path=os.path.join(OUT_ROOT, f"tens-gpu-vs-base-mc_{gpu_slug}__{cpu_slug}{_t_suffix}.pdf"),
+                out_path=os.path.join(OUT_ROOT, f"tens-gpu-vs-base-mc_{gpu_slug}__{cpu_slug}{_t_suffix}.png"),
                 show_t=show_t,
             )
 
