@@ -9,6 +9,7 @@ Subcommands:
   bench status --system <name>
   bench check  --system <name>
   bench likwid --system <name> [backend flags]
+  bench plot   [--all-toolchains] [--system <name> --toolchain <tc>]
 
 There is no auto-detection of scheduler/system/toolchain anywhere: --system
 always names (or points to) a systems/*.yaml file you wrote yourself. See

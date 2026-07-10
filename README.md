@@ -11,7 +11,6 @@ Tensor Hidden Semi-Markov Model (HSMM) Viterbi decoding implemented in Python, C
 | `decode_log_tensor_viterbi_cached` | ✅ Active | Vectorized log-space tensor implementation with emission caching (Python) |
 | `decode_tensor_viterbi_cpp` | ✅ Active | C++ tensor implementation (via pybind11) |
 | `decode_tensor_viterbi_omp` | ✅ Active | OpenMP-parallelized C++ tensor implementation |
-| `decode_tensor_viterbi_omp_opt` | ✅ Active | Optimized OpenMP C++ tensor implementation |
 | `decode_tensor_viterbi_cuda` | ✅ Active | GPU tensor implementation (CUDA / ROCm via pybind11) |
 | `decode_vanilla_viterbi` | ✅ Active | Reference O(T·N²·D) triple-loop implementation |
 | `decode_log_tensor_viterbi_no_cache` | ⚠️ Deprecated | Log-space tensor without emission caching |
@@ -180,6 +179,7 @@ standalone to "only compile".
 | `bench status` | Reports done/running/pending/failed per job |
 | `bench check` | Validates the system YAML and probes the environment; runs nothing |
 | `bench likwid` | LIKWID hardware-counter profiling (CPU only, fixed data file) |
+| `bench plot` | Runs every plotter in `plot/` against `results/`, saving PNGs |
 | `viterbi_app.py` | Executes one benchmark: runs backends, writes CSVs, validates results |
 
 ### Running the benchmark grid
@@ -195,15 +195,14 @@ for a one-shot run `bench run --system <system> --pack <pack> [backend flags]`
 is enough. The scheduler (`local` or `slurm`) is never a CLI flag — it comes
 from `systems/<system>.yaml`.
 
-**Backend flags** (CPU systems — pick one or more; GPU runs `--cuda` automatically):
+**Backend flags** (CPU systems — pick one or more; GPU runs `--gpu` automatically):
 
 | Flag | Backend |
 |---|---|
 | `--cpp` | C++ single-threaded |
 | `--omp` | C++ OpenMP |
-| `--omp-opt` | C++ OpenMP optimized |
 | `--py` | Python vectorized |
-| `--cuda` | CUDA / ROCm (GPU only) |
+| `--gpu` | CUDA / ROCm (GPU only) |
 | `--baseline` | HSMMLearn C++ + OMP reference |
 | `--baseline-cpp` | HSMMLearn C++ only |
 | `--baseline-omp` | HSMMLearn OMP only |
@@ -225,7 +224,7 @@ Examples:
 # SLURM — CPU node, C++, OpenMP and baselines
 bench run --system xeon8480 --toolchain intel --pack medium --cpp --omp --baseline
 
-# SLURM — GPU node (CUDA selected automatically)
+# SLURM — GPU node (--gpu selected automatically)
 bench run --system a100 --pack small
 
 # SLURM — all toolchains for a node

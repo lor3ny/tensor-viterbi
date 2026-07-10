@@ -26,7 +26,7 @@ def _add_backend_flag_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--py",           action="store_true")
     p.add_argument("--cpp",          action="store_true")
     p.add_argument("--omp",          action="store_true")
-    p.add_argument("--cuda",         action="store_true")
+    p.add_argument("--gpu",          action="store_true")
     p.add_argument("--baseline",     action="store_true")
     p.add_argument("--baseline-cpp", action="store_true", dest="baseline_cpp")
     p.add_argument("--baseline-omp", action="store_true", dest="baseline_omp")
@@ -99,6 +99,15 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_system_arg(p_likwid)
     _add_toolchain_arg(p_likwid)
     _add_backend_flag_args(p_likwid)
+
+    p_plot = sub.add_parser("plot", help="Run every plotter in plot/ against results/, saving PNGs")
+    p_plot.add_argument("--all-toolchains", action="store_true",
+                         help="Include every toolchain found in results/, not just each "
+                              "system's default (see DEFAULT_TOOLCHAINS in each plot/*.py)")
+    p_plot.add_argument("--system", default=None,
+                         help="System key for plot_likwid.py, e.g. xeon8480 (requires --toolchain too)")
+    p_plot.add_argument("--toolchain", default=None,
+                         help="Toolchain key for plot_likwid.py, e.g. gnu (requires --system too)")
 
     return parser
 
@@ -186,6 +195,12 @@ def cmd_likwid(args) -> None:
         likwidlib.run_likwid(conf, tc, conf["scheduler"], cpu_flags)
 
 
+def cmd_plot(args) -> None:
+    from . import plotting
+    if not plotting.run_all(args.all_toolchains, args.system, args.toolchain):
+        sys.exit(1)
+
+
 def main() -> None:
     require_python_version()
     parser = _build_parser()
@@ -199,4 +214,5 @@ def main() -> None:
         "status": cmd_status,
         "check":  cmd_check,
         "likwid": cmd_likwid,
+        "plot":   cmd_plot,
     }[args.command](args)

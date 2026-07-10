@@ -363,7 +363,7 @@ def make_plot(T, cpu_systems, all_data, n_values, d_values):
               bbox_to_anchor=(0.5, 0.99), ncol=3, frameon=True, framealpha=0.85)
 
     os.makedirs(OUT_ROOT, exist_ok=True)
-    out_path = os.path.join(OUT_ROOT, f"sc_{T}t.pdf")
+    out_path = os.path.join(OUT_ROOT, f"sc_{T}t.png")
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {out_path}")

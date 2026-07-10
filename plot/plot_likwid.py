@@ -245,7 +245,7 @@ def plot_all(data_list, labels, metrics, output_dir: Path, output_stem: str):
         handletextpad=0.2,
     )
 
-    out = output_dir / f"{output_stem}_overview.pdf"
+    out = output_dir / f"{output_stem}_overview.png"
     fig.savefig(out, bbox_inches="tight")
     print(f"[✓] Salvato: {out}")
 
