@@ -1,0 +1,7 @@
+[!] Skipping group FLOPS_DP: not available on this CPU
+[!] Skipping group MEM: not available on this CPU
+[!] Skipping group L3: not available on this CPU
+[!] Skipping group L2: not available on this CPU
+[!] Skipping group BRANCH: not available on this CPU
+[!] Skipping group TMA: not available on this CPU
+[!] No requested LIKWID groups are available on this CPU.

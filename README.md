@@ -178,7 +178,7 @@ standalone to "only compile".
 | `bench run` | Executes the manifest — sbatch for SLURM systems, direct call for local systems; resumes by default |
 | `bench status` | Reports done/running/pending/failed per job |
 | `bench check` | Validates the system YAML and probes the environment; runs nothing |
-| `bench likwid` | LIKWID hardware-counter profiling (CPU only, fixed data file) |
+| `bench likwid` | LIKWID hardware-counter profiling (CPU only, fixed data file; see [known incompatibilities](REPRODUCING.md#6-likwid-and-nsysncu-profiling) for unsupported AMD CPUs) |
 | `bench plot` | Runs every plotter in `plot/` against `results/`, saving PNGs |
 | `viterbi_app.py` | Executes one benchmark: runs backends, writes CSVs, validates results |
 

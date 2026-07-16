@@ -7,7 +7,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
-from .paths import SCRIPT_DIR
+from .paths import RESULTS_DIR, SCRIPT_DIR
 
 PLOT_DIR = SCRIPT_DIR / "plot"
 
@@ -32,10 +32,23 @@ def _run(script_name: str, extra: list[str]) -> bool:
     return True
 
 
+def _discover_likwid_targets() -> list[tuple[str, str]]:
+    """Every results/<system>/<toolchain>/ dir that has LIKWID CSVs."""
+    if not RESULTS_DIR.is_dir():
+        return []
+    targets = []
+    for sys_dir in sorted(p for p in RESULTS_DIR.iterdir() if p.is_dir()):
+        for tc_dir in sorted(p for p in sys_dir.iterdir() if p.is_dir()):
+            if any(tc_dir.glob("likwid_*.csv")):
+                targets.append((sys_dir.name, tc_dir.name))
+    return targets
+
+
 def run_all(all_toolchains: bool = False, system: str | None = None,
             toolchain: str | None = None) -> bool:
-    """Runs every always-on plotter, plus plot_likwid.py if system+toolchain
-    are given. Returns True iff every invoked plotter exited 0."""
+    """Runs every always-on plotter, plus plot_likwid.py for each system/
+    toolchain with LIKWID data (all of them if all_toolchains, else just the
+    given system+toolchain). Returns True iff every invoked plotter exited 0."""
     extra = ["--all-toolchains"] if all_toolchains else []
 
     failed: list[str] = []
@@ -44,11 +57,20 @@ def run_all(all_toolchains: bool = False, system: str | None = None,
             failed.append(script_name)
 
     if system and toolchain:
-        likwid_extra = ["--system", system, "--toolchain", toolchain]
-        if not _run("plot_likwid.py", likwid_extra):
-            failed.append("plot_likwid.py")
+        likwid_targets = [(system, toolchain)]
+    elif all_toolchains:
+        likwid_targets = _discover_likwid_targets()
+        if not likwid_targets:
+            print("\n[plot_likwid.py] skipped — no LIKWID CSV data found under results/")
     else:
-        print("\n[plot_likwid.py] skipped — pass --system and --toolchain to include it")
+        likwid_targets = []
+        print("\n[plot_likwid.py] skipped — pass --system and --toolchain, "
+              "or --all-toolchains, to include it")
+
+    for sys_name, tc_name in likwid_targets:
+        likwid_extra = ["--system", sys_name, "--toolchain", tc_name]
+        if not _run("plot_likwid.py", likwid_extra):
+            failed.append(f"plot_likwid.py ({sys_name}/{tc_name})")
 
     print()
     if failed:

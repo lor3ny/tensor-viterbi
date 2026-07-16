@@ -253,6 +253,29 @@ and `likwid_<version>_<group>.csv` (one per hardware counter group). Groups
 unsupported by the CPU are skipped with a `[!]` message rather than failing
 the run.
 
+**Known LIKWID CPU incompatibilities:** LIKWID detects the microarchitecture
+from a hardcoded `(family, model)` whitelist in its own source
+(`topology_setName()`). If your CPU's family/model isn't in that table, every
+perf group is reported unavailable — `likwid-topology` shows `CPU type: nil`,
+`likwid-perfctr -a` prints `No groups defined for nil`, and `likwid_one.sh`
+skips every requested group (`[!] Skipping group ...: not available on this
+CPU`), leaving `likwid_<version>.txt` files but no `.csv` counter output.
+
+Confirmed affected: **AMD Zen5 client/mobile parts** — LIKWID 5.5.1 only
+whitelists `family 0x1A` (Zen5) `model 0x02` (EPYC) and `model 0x11`
+(EPYC-c); consumer/mobile models such as `0x24` (Ryzen AI 300 "Strix Point",
+e.g. Ryzen AI 9 HX 370) and `0x70` (Ryzen AI Max "Strix Halo", tracked
+upstream in [likwid#700](https://github.com/RRZE-HPC/likwid/issues/700)) are
+not recognized and fall through to the `nil` architecture. Check
+`cpu family`/`model` in `/proc/cpuinfo` against LIKWID's
+`ZEN5_FAMILY`/`ZEN5_EPYC`/`ZEN5C_EPYC` defines
+(`src/includes/topology.h`) before relying on `bench likwid` on a new AMD
+CPU. The perf-group definitions for Zen5 (`share/likwid/perfgroups/zen5/`)
+are otherwise present and correct — only the model-detection switch is
+missing the client model IDs, so a local patch adding the model to that
+switch (mapping it to the existing Zen5 name/groups) works as a stopgap
+until upstream adds support.
+
 **Nsight Systems / Nsight Compute** (GPU only, wraps `bench run`):
 
 ```bash
