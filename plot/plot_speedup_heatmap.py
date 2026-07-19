@@ -182,7 +182,7 @@ def make_heatmap(title, speedup_label, speedup_dict, out_path, cell_labels=None,
 
     # NaN cells (excluded rows) rendered as light gray.
     import copy
-    cmap_obj = copy.copy(plt.cm.get_cmap(cmap))
+    cmap_obj = copy.copy(matplotlib.colormaps[cmap])
     cmap_obj.set_bad(color="#d0d0d0")
 
     for ax, T in zip(axes, all_t):

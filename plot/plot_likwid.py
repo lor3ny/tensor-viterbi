@@ -304,8 +304,10 @@ def main():
 
     toolchain_flat = args.toolchain.replace("/", "_")
     output_stem    = args.stem or f"{args.system}_{toolchain_flat}"
+    output_dir     = Path(__file__).resolve().parent / "likwid" / f"{args.system}-{toolchain_flat}"
+    output_dir.mkdir(parents=True, exist_ok=True)
     metrics = [(k, *METRIC_CONFIG[k]) for k in args.metrics]
-    plot_all(data_list, labels, metrics=metrics, output_dir=base_path, output_stem=output_stem)
+    plot_all(data_list, labels, metrics=metrics, output_dir=output_dir, output_stem=output_stem)
     
 if __name__ == "__main__":
     main()
