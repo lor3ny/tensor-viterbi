@@ -1,0 +1,120 @@
+
+────────────────────────────────────────────────────
+  DATA SUMMARY
+────────────────────────────────────────────────────
+  data path  /leonardo/home/userexternal/lpiarull/tensor-viterbi/data/75states_1000steps_500dur.json
+  states (N)  75  ['s0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13', 's14', 's15', 's16', 's17', 's18', 's19', 's20', 's21', 's22', 's23', 's24', 's25', 's26', 's27', 's28', 's29', 's30', 's31', 's32', 's33', 's34', 's35', 's36', 's37', 's38', 's39', 's40', 's41', 's42', 's43', 's44', 's45', 's46', 's47', 's48', 's49', 's50', 's51', 's52', 's53', 's54', 's55', 's56', 's57', 's58', 's59', 's60', 's61', 's62', 's63', 's64', 's65', 's66', 's67', 's68', 's69', 's70', 's71', 's72', 's73', 's74']
+  steps  (T)  1000
+  max dur(D)  500
+────────────────────────────────────────────────────
+
+▶ HSMMLearn C++ (baseline)
+  HSMMLearn_CPP
+  avg 25.9532 s   min 25.9532 s   max 25.9532 s
+
+  reference  saved → /leonardo/home/userexternal/lpiarull/tensor-viterbi/results/xeon8480_likwid/gnu/75states_1000steps_500dur_reference.npy
+
+▶ HSMMLearn OMP (baseline)
+  HSMMLearn_OMP
+  avg 4.4356 s   min 4.4356 s   max 4.4356 s
+
+
+────────────────────────────────────────────────────
+  DATA SUMMARY
+────────────────────────────────────────────────────
+  data path  /leonardo/home/userexternal/lpiarull/tensor-viterbi/data/75states_1000steps_500dur.json
+  states (N)  75  ['s0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13', 's14', 's15', 's16', 's17', 's18', 's19', 's20', 's21', 's22', 's23', 's24', 's25', 's26', 's27', 's28', 's29', 's30', 's31', 's32', 's33', 's34', 's35', 's36', 's37', 's38', 's39', 's40', 's41', 's42', 's43', 's44', 's45', 's46', 's47', 's48', 's49', 's50', 's51', 's52', 's53', 's54', 's55', 's56', 's57', 's58', 's59', 's60', 's61', 's62', 's63', 's64', 's65', 's66', 's67', 's68', 's69', 's70', 's71', 's72', 's73', 's74']
+  steps  (T)  1000
+  max dur(D)  500
+────────────────────────────────────────────────────
+
+▶ HSMMLearn C++ (baseline)
+  HSMMLearn_CPP
+  avg 25.9242 s   min 25.9242 s   max 25.9242 s
+
+  reference  saved → /leonardo/home/userexternal/lpiarull/tensor-viterbi/results/xeon8480_likwid/gnu/75states_1000steps_500dur_reference.npy
+
+▶ HSMMLearn OMP (baseline)
+  HSMMLearn_OMP
+  avg 4.4069 s   min 4.4069 s   max 4.4069 s
+
+
+────────────────────────────────────────────────────
+  DATA SUMMARY
+────────────────────────────────────────────────────
+  data path  /leonardo/home/userexternal/lpiarull/tensor-viterbi/data/75states_1000steps_500dur.json
+  states (N)  75  ['s0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13', 's14', 's15', 's16', 's17', 's18', 's19', 's20', 's21', 's22', 's23', 's24', 's25', 's26', 's27', 's28', 's29', 's30', 's31', 's32', 's33', 's34', 's35', 's36', 's37', 's38', 's39', 's40', 's41', 's42', 's43', 's44', 's45', 's46', 's47', 's48', 's49', 's50', 's51', 's52', 's53', 's54', 's55', 's56', 's57', 's58', 's59', 's60', 's61', 's62', 's63', 's64', 's65', 's66', 's67', 's68', 's69', 's70', 's71', 's72', 's73', 's74']
+  steps  (T)  1000
+  max dur(D)  500
+────────────────────────────────────────────────────
+
+▶ HSMMLearn C++ (baseline)
+  HSMMLearn_CPP
+  avg 26.0072 s   min 26.0072 s   max 26.0072 s
+
+  reference  saved → /leonardo/home/userexternal/lpiarull/tensor-viterbi/results/xeon8480_likwid/gnu/75states_1000steps_500dur_reference.npy
+
+▶ HSMMLearn OMP (baseline)
+  HSMMLearn_OMP
+  avg 4.4273 s   min 4.4273 s   max 4.4273 s
+
+
+────────────────────────────────────────────────────
+  DATA SUMMARY
+────────────────────────────────────────────────────
+  data path  /leonardo/home/userexternal/lpiarull/tensor-viterbi/data/75states_1000steps_500dur.json
+  states (N)  75  ['s0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13', 's14', 's15', 's16', 's17', 's18', 's19', 's20', 's21', 's22', 's23', 's24', 's25', 's26', 's27', 's28', 's29', 's30', 's31', 's32', 's33', 's34', 's35', 's36', 's37', 's38', 's39', 's40', 's41', 's42', 's43', 's44', 's45', 's46', 's47', 's48', 's49', 's50', 's51', 's52', 's53', 's54', 's55', 's56', 's57', 's58', 's59', 's60', 's61', 's62', 's63', 's64', 's65', 's66', 's67', 's68', 's69', 's70', 's71', 's72', 's73', 's74']
+  steps  (T)  1000
+  max dur(D)  500
+────────────────────────────────────────────────────
+
+▶ HSMMLearn C++ (baseline)
+  HSMMLearn_CPP
+  avg 25.9410 s   min 25.9410 s   max 25.9410 s
+
+  reference  saved → /leonardo/home/userexternal/lpiarull/tensor-viterbi/results/xeon8480_likwid/gnu/75states_1000steps_500dur_reference.npy
+
+▶ HSMMLearn OMP (baseline)
+  HSMMLearn_OMP
+  avg 4.4144 s   min 4.4144 s   max 4.4144 s
+
+
+────────────────────────────────────────────────────
+  DATA SUMMARY
+────────────────────────────────────────────────────
+  data path  /leonardo/home/userexternal/lpiarull/tensor-viterbi/data/75states_1000steps_500dur.json
+  states (N)  75  ['s0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13', 's14', 's15', 's16', 's17', 's18', 's19', 's20', 's21', 's22', 's23', 's24', 's25', 's26', 's27', 's28', 's29', 's30', 's31', 's32', 's33', 's34', 's35', 's36', 's37', 's38', 's39', 's40', 's41', 's42', 's43', 's44', 's45', 's46', 's47', 's48', 's49', 's50', 's51', 's52', 's53', 's54', 's55', 's56', 's57', 's58', 's59', 's60', 's61', 's62', 's63', 's64', 's65', 's66', 's67', 's68', 's69', 's70', 's71', 's72', 's73', 's74']
+  steps  (T)  1000
+  max dur(D)  500
+────────────────────────────────────────────────────
+
+▶ HSMMLearn C++ (baseline)
+  HSMMLearn_CPP
+  avg 25.9706 s   min 25.9706 s   max 25.9706 s
+
+  reference  saved → /leonardo/home/userexternal/lpiarull/tensor-viterbi/results/xeon8480_likwid/gnu/75states_1000steps_500dur_reference.npy
+
+▶ HSMMLearn OMP (baseline)
+  HSMMLearn_OMP
+  avg 4.4459 s   min 4.4459 s   max 4.4459 s
+
+
+────────────────────────────────────────────────────
+  DATA SUMMARY
+────────────────────────────────────────────────────
+  data path  /leonardo/home/userexternal/lpiarull/tensor-viterbi/data/75states_1000steps_500dur.json
+  states (N)  75  ['s0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13', 's14', 's15', 's16', 's17', 's18', 's19', 's20', 's21', 's22', 's23', 's24', 's25', 's26', 's27', 's28', 's29', 's30', 's31', 's32', 's33', 's34', 's35', 's36', 's37', 's38', 's39', 's40', 's41', 's42', 's43', 's44', 's45', 's46', 's47', 's48', 's49', 's50', 's51', 's52', 's53', 's54', 's55', 's56', 's57', 's58', 's59', 's60', 's61', 's62', 's63', 's64', 's65', 's66', 's67', 's68', 's69', 's70', 's71', 's72', 's73', 's74']
+  steps  (T)  1000
+  max dur(D)  500
+────────────────────────────────────────────────────
+
+▶ HSMMLearn C++ (baseline)
+  HSMMLearn_CPP
+  avg 32.7099 s   min 32.7099 s   max 32.7099 s
+
+  reference  saved → /leonardo/home/userexternal/lpiarull/tensor-viterbi/results/xeon8480_likwid/gnu/75states_1000steps_500dur_reference.npy
+
+▶ HSMMLearn OMP (baseline)
+  HSMMLearn_OMP
+  avg 5.1780 s   min 5.1780 s   max 5.1780 s
+
