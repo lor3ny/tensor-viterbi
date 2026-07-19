@@ -1,6 +1,5 @@
 """benchmark_params.cfg grid + walltimes.yaml lookup + walltime packs."""
 
-from __future__ import annotations
 
 import sys
 

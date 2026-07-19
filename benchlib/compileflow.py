@@ -3,8 +3,6 @@
 interface, which is left untouched.
 """
 
-from __future__ import annotations
-
 from compile import compile_system
 
 

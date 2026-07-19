@@ -4,8 +4,6 @@ resume/completeness check in execution.py. Mirrors viterbi_app.py exactly —
 do not change viterbi_app.py's flag names/semantics without updating this.
 """
 
-from __future__ import annotations
-
 BACKEND_FLAGS = ["py", "cpp", "omp", "gpu", "baseline", "baseline-cpp", "baseline-omp"]
 
 LIKWID_CPU_FLAGS = ["--baseline", "--baseline-omp", "--cpp", "--omp"]

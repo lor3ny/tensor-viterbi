@@ -9,8 +9,6 @@ jobs. Exit policy:
     at all to plausibly supply it)
 """
 
-from __future__ import annotations
-
 import shutil
 
 from .systemsconf import SystemConfigError, load_system, select_toolchains

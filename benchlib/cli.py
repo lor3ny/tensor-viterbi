@@ -1,7 +1,5 @@
 """bench — argparse subparsers wiring for plan/run/status/check/likwid."""
 
-from __future__ import annotations
-
 import argparse
 import sys
 

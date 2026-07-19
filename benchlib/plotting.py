@@ -2,7 +2,6 @@
 plot/plot_all.py so there is a single list of "which plotters exist".
 """
 
-from __future__ import annotations
 
 import subprocess
 import sys

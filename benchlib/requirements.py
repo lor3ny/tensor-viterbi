@@ -1,6 +1,5 @@
 """Same requirements.txt version check the old run_benchmark.py ran."""
 
-from __future__ import annotations
 
 import importlib.metadata
 import re

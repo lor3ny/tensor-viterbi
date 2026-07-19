@@ -2,7 +2,6 @@
 SLURM) `squeue` output into a done/running/pending/failed report.
 """
 
-from __future__ import annotations
 
 import subprocess
 

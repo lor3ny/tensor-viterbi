@@ -1,7 +1,5 @@
 """Shared paths and the repo-root working-directory check."""
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 

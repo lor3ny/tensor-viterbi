@@ -20,7 +20,6 @@ that run_one.sh / compile.py already expect, regardless of whether the YAML
 author wrote a list or a string.
 """
 
-from __future__ import annotations
 
 import os
 from pathlib import Path

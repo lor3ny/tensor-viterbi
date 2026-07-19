@@ -4,7 +4,6 @@ likwid_one.sh/likwid_one.slurm) instead of the old duplicated
 generate_likwid_slrm()/run_likwid_local() pair.
 """
 
-from __future__ import annotations
 
 import os
 import subprocess

@@ -4,8 +4,6 @@ invoke run_one.sh — see run_one.sh/run_one.slurm), resume/skip detection,
 and the `bench run` manifest driver.
 """
 
-from __future__ import annotations
-
 import subprocess
 import sys
 import time
