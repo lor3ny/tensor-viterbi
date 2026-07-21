@@ -29,12 +29,17 @@ def _query_squeue() -> dict[str, str]:
 
 
 def all_manifests(system: str) -> list[tuple[str, list[dict]]]:
+    """Finds every manifest under runs/<system>/, at any depth — flat
+    <pack>.jsonl for single-toolchain systems, or nested
+    <toolchain>/<pack>.jsonl for multi-toolchain ones (see
+    manifest.manifest_dir)."""
     system_dir = RUNS_DIR / system
     if not system_dir.exists():
         return []
     out = []
-    for path in sorted(system_dir.glob("*.jsonl")):
-        out.append((path.stem, read_manifest(path)))
+    for path in sorted(system_dir.glob("**/*.jsonl")):
+        label = str(path.relative_to(system_dir).with_suffix(""))
+        out.append((label, read_manifest(path)))
     return out
 
 
@@ -59,8 +64,8 @@ def print_status(system: str, scheduler: str) -> None:
 
     squeue = _query_squeue() if scheduler == "slurm" else {}
     counts = {"done": 0, "running": 0, "pending": 0, "failed": 0}
-    for pack, jobs in manifests:
-        print(f"\n=== pack: {pack} ({len(jobs)} job(s)) ===")
+    for label, jobs in manifests:
+        print(f"\n=== manifest: {label} ({len(jobs)} job(s)) ===")
         for job in jobs:
             status, detail = job_status(job, scheduler, squeue)
             counts[status] += 1

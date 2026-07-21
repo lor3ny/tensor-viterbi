@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from . import compileflow, execution, flags as flagslib, likwid as likwidlib, manifest, params, status
-from .paths import RUNS_DIR, require_python_version, require_repo_root
+from .paths import require_python_version, require_repo_root
 from .requirements import check_requirements
 from .systemsconf import SystemConfigError, load_system, select_toolchains
 
@@ -68,12 +68,14 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_system_arg(p_plan)
     _add_toolchain_arg(p_plan)
     p_plan.add_argument("--pack", required=True,
-                         help="small|medium|large|extra (old names 1h/2h/4-8h/10-20h still accepted)")
+                         help="small|medium|large|extra|stress (stress is GPU-only and always "
+                              "uses --gpu)")
     _add_backend_flag_args(p_plan)
     p_plan.add_argument("--iterations", type=int, default=6, metavar="N")
 
     p_run = sub.add_parser("run", help="Execute a manifest already produced by `bench plan`")
     _add_system_arg(p_run)
+    _add_toolchain_arg(p_run)
     p_run.add_argument("--pack", default=None,
                         help="Pack to run; if omitted, runs every pack already planned for this system")
     p_run.add_argument("--only-failed", action="store_true",
@@ -110,64 +112,104 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _plan(args) -> tuple[dict, str, list[dict]]:
-    """Builds and writes the manifest for `bench plan`. Returns (conf, pack, jobs)."""
+def _plan(args) -> tuple[dict, str, list[dict], list]:
+    """Builds and writes the manifest(s) for `bench plan`. Returns (conf, pack, jobs, paths)."""
     conf = _load_or_die(args.system)
     toolchains = _resolve_toolchains_or_die(conf, args.toolchain)
+    multi_toolchain = len(conf["toolchains"]) > 1
     pack = params.resolve_pack_name(args.pack)
-    viterbi_flags = flagslib.compute_viterbi_flags(args, conf["type"])
 
-    orphans = params.validate_grid_covered_by_packs(viterbi_flags, args.iterations)
-    if orphans:
-        print("Error: the following grid points have a walltime that falls outside every pack:")
-        for s, d, t, wt in orphans:
-            print(f"  states={s} duration={d} timesteps={t} walltime={wt}")
-        print("Fix walltimes.yaml or the PACKS boundaries in benchlib/params.py.")
-        sys.exit(1)
+    if pack == params.STRESS_PACK:
+        if conf["type"] != "gpu":
+            print(f"Error: pack 'stress' requires a GPU system "
+                  f"(system '{conf['name']}' is type '{conf['type']}').")
+            sys.exit(1)
+        other_flags = any(getattr(args, f, False) for f in
+                           ("py", "cpp", "omp", "baseline", "baseline_cpp", "baseline_omp"))
+        if other_flags:
+            print("Error: pack 'stress' only supports --gpu; drop the other backend flags.")
+            sys.exit(1)
+        viterbi_flags = "gpu"
+    else:
+        viterbi_flags = flagslib.compute_viterbi_flags(args, conf["type"])
+
+        orphans = params.validate_grid_covered_by_packs(viterbi_flags, args.iterations)
+        if orphans:
+            print("Error: the following grid points have a walltime that falls outside every pack:")
+            for s, d, t, wt in orphans:
+                print(f"  states={s} duration={d} timesteps={t} walltime={wt}")
+            print("Fix walltimes.yaml or the PACKS boundaries in benchlib/params.py.")
+            sys.exit(1)
 
     jobs, skipped = manifest.build_jobs(conf["name"], toolchains, pack, viterbi_flags, args.iterations)
-    manifest.write_manifest(conf["name"], pack, jobs)
-    manifest.print_preview(conf["name"], pack, jobs, conf["scheduler"])
-    print(f"Pack '{pack}': skipped {skipped} job(s) outside the selected walltime range.")
-    return conf, pack, jobs
+
+    # Each toolchain gets its own manifest, so preview them separately too —
+    # a combined total would overstate what any single `bench run
+    # --toolchain <tc>` actually executes (they don't run together).
+    paths = []
+    if multi_toolchain:
+        for tc in toolchains:
+            tc_jobs = [j for j in jobs if j["toolchain"] == tc]
+            paths.append(manifest.write_manifest(conf["name"], pack, tc_jobs, toolchain=tc))
+            print(f"--- toolchain: {tc} ---")
+            manifest.print_preview(conf["name"], pack, tc_jobs, conf["scheduler"])
+    else:
+        paths.append(manifest.write_manifest(conf["name"], pack, jobs))
+        manifest.print_preview(conf["name"], pack, jobs, conf["scheduler"])
+
+    if pack != params.STRESS_PACK:
+        print(f"Pack '{pack}': skipped {skipped} job(s) outside the selected walltime range"
+              f"{' (summed across every planned toolchain)' if multi_toolchain else ''}.")
+    return conf, pack, jobs, paths
 
 
 def cmd_plan(args) -> None:
-    conf, pack, jobs = _plan(args)
-    path = manifest.manifest_path(conf["name"], pack)
-    print(f"Manifest written to {path}")
+    conf, pack, jobs, paths = _plan(args)
+    for path in paths:
+        print(f"Manifest written to {path}")
 
 
 def cmd_run(args) -> None:
     conf = _load_or_die(args.system)
     scheduler = conf["scheduler"]
-
-    if args.pack:
-        pack_names = [params.resolve_pack_name(args.pack)]
-    else:
-        system_dir = RUNS_DIR / conf["name"]
-        pack_names = sorted(p.stem for p in system_dir.glob("*.jsonl")) if system_dir.exists() else []
-        if not pack_names:
-            print(f"No manifest found for system '{conf['name']}'. "
-                  f"Pass --pack, or run `bench plan --system {conf['name']} --pack <pack>` first.")
-            sys.exit(1)
+    # Errors out if the system defines multiple toolchains and none was
+    # picked — same rule `plan`/`check`/`likwid` already enforce, so a
+    # multi-toolchain system's several per-toolchain manifests can never be
+    # run ambiguously.
+    toolchains = _resolve_toolchains_or_die(conf, args.toolchain)
+    multi_toolchain = len(conf["toolchains"]) > 1
 
     def compile_fn(toolchain: str) -> None:
         compileflow.compile_for(conf, toolchain, scheduler, likwid=False)
 
-    for pack in pack_names:
-        path = manifest.manifest_path(conf["name"], pack)
-        if not path.exists():
-            print(f"No manifest for pack '{pack}'. Run "
-                  f"`bench plan --system {conf['name']} --pack {pack} [flags]` first.")
-            sys.exit(1)
-        jobs = manifest.read_manifest(path)
-        execution.run_manifest(
-            jobs, conf, scheduler,
-            force=args.force, only_failed=args.only_failed,
-            jobs_slice=args.jobs, max_hours=args.max_hours,
-            nsys=args.nsys, ncu=args.ncu, compile_fn=compile_fn,
-        )
+    for tc in toolchains:
+        tc_arg = tc if multi_toolchain else None
+        tag = f"{conf['name']}/{tc}" if multi_toolchain else conf["name"]
+        plan_hint = f"--toolchain {tc} " if multi_toolchain else ""
+
+        if args.pack:
+            pack_names = [params.resolve_pack_name(args.pack)]
+        else:
+            tc_dir = manifest.manifest_dir(conf["name"], tc_arg)
+            pack_names = sorted(p.stem for p in tc_dir.glob("*.jsonl")) if tc_dir.exists() else []
+            if not pack_names:
+                print(f"No manifest found for '{tag}'. Pass --pack, or run "
+                      f"`bench plan --system {conf['name']} {plan_hint}--pack <pack>` first.")
+                sys.exit(1)
+
+        for pack in pack_names:
+            path = manifest.manifest_path(conf["name"], pack, tc_arg)
+            if not path.exists():
+                print(f"No manifest for '{tag}' pack '{pack}'. Run "
+                      f"`bench plan --system {conf['name']} {plan_hint}--pack {pack} [flags]` first.")
+                sys.exit(1)
+            jobs = manifest.read_manifest(path)
+            execution.run_manifest(
+                jobs, conf, scheduler,
+                force=args.force, only_failed=args.only_failed,
+                jobs_slice=args.jobs, max_hours=args.max_hours,
+                nsys=args.nsys, ncu=args.ncu, compile_fn=compile_fn,
+            )
 
 
 def cmd_status(args) -> None:

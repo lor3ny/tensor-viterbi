@@ -6,17 +6,20 @@ write the job manifest consumed by `bench run`.
 import json
 from pathlib import Path
 
-from .paths import RUNS_DIR
+from .paths import RUNS_DIR, STRESS_PARAMS_FILE
 from .params import (
-    PACKS, load_benchmark_params, get_walltime, pack_of_walltime, hms_to_seconds,
-    effective_iterations,
+    PACKS, STRESS_PACK, load_benchmark_params, get_walltime, pack_of_walltime,
+    hms_to_seconds, effective_iterations,
 )
 
 
 def build_jobs(system: str, toolchains: list[str], pack: str, viterbi_flags: str,
                iterations: int) -> tuple[list[dict], int]:
     """Returns (jobs, skipped_count)."""
-    states, durations, timesteps = load_benchmark_params()
+    if pack == STRESS_PACK:
+        states, durations, timesteps = load_benchmark_params(STRESS_PARAMS_FILE)
+    else:
+        states, durations, timesteps = load_benchmark_params()
     jobs: list[dict] = []
     skipped = 0
     for toolchain in toolchains:
@@ -25,7 +28,7 @@ def build_jobs(system: str, toolchains: list[str], pack: str, viterbi_flags: str
                 for t in timesteps:
                     iters = effective_iterations(t, iterations)
                     walltime = get_walltime(s, d, t, viterbi_flags, iters)
-                    if pack_of_walltime(walltime) != pack:
+                    if pack != STRESS_PACK and pack_of_walltime(walltime) != pack:
                         skipped += 1
                         continue
                     jobs.append({
@@ -43,12 +46,20 @@ def build_jobs(system: str, toolchains: list[str], pack: str, viterbi_flags: str
     return jobs, skipped
 
 
-def manifest_path(system: str, pack: str) -> Path:
-    return RUNS_DIR / system / f"{pack}.jsonl"
+def manifest_dir(system: str, toolchain: str | None = None) -> Path:
+    """`toolchain` nests manifests under runs/<system>/<toolchain>/ instead of
+    the flat runs/<system>/. Pass it whenever the system defines more than one
+    toolchain, so planning one toolchain doesn't overwrite another toolchain's
+    manifest for the same pack."""
+    return RUNS_DIR / system / toolchain if toolchain else RUNS_DIR / system
 
 
-def write_manifest(system: str, pack: str, jobs: list[dict]) -> Path:
-    path = manifest_path(system, pack)
+def manifest_path(system: str, pack: str, toolchain: str | None = None) -> Path:
+    return manifest_dir(system, toolchain) / f"{pack}.jsonl"
+
+
+def write_manifest(system: str, pack: str, jobs: list[dict], toolchain: str | None = None) -> Path:
+    path = manifest_path(system, pack, toolchain)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         for job in jobs:
@@ -72,8 +83,11 @@ def total_walltime_hours(jobs: list[dict]) -> float:
 
 
 def print_preview(system: str, pack: str, jobs: list[dict], scheduler: str) -> None:
-    lo, hi = PACKS[pack]
-    print(f"Pack selected: {pack} ({lo // 3600}h–{hi // 3600}h walltime range)")
+    if pack == STRESS_PACK:
+        print(f"Pack selected: {pack} (GPU-only stress test, {STRESS_PARAMS_FILE.name})")
+    else:
+        lo, hi = PACKS[pack]
+        print(f"Pack selected: {pack} ({lo // 3600}h–{hi // 3600}h walltime range)")
     print(f"Plan: {len(jobs)} job(s) for system '{system}'.")
     if scheduler == "local":
         hours = total_walltime_hours(jobs)

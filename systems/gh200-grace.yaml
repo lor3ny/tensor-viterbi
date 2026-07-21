@@ -1,17 +1,5 @@
 name: gh200-grace
 type: cpu
-scheduler: slurm
+scheduler: local
 
 cpus: 72
-
-toolchains:
-  gnu:
-    uenv: prgenv-gnu
-    modules: [cuda, python, cmake]
-  gnu14:
-    uenv: prgenv-gnu
-    modules: [cuda, python, cmake, gcc/14.2.0]
-
-slurm:
-  account: g34
-  partition: normal

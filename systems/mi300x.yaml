@@ -2,9 +2,4 @@ name: mi300x
 type: gpu
 gpu_arch: gfx942
 toolchain: amd
-scheduler: slurm
-
-# No slurm account/partition configured yet for this system (matches the
-# state of the old slurm_system.yaml, which never listed mi300x either).
-# `bench check` will warn until this is filled in.
-slurm: {}
+scheduler: local

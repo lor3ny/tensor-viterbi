@@ -11,8 +11,8 @@ import json
 import pytest
 import yaml
 
-from benchlib import execution, flags as flagslib, manifest as manifestlib, params
-from benchlib.systemsconf import SystemConfigError, load_system
+from benchlib import execution, flags as flagslib, manifest as manifestlib, params, status
+from benchlib.systemsconf import SystemConfigError, load_system, select_toolchains
 
 
 # ── per-version walltime table ─────────────────────────────────────────
@@ -48,7 +48,7 @@ def test_get_walltime_is_clamped_to_min_and_max():
     tiny = params.get_walltime(10, 100, 10000, "cpp", 1)
     assert params.hms_to_seconds(tiny) >= params.MIN_WALLTIME_SECONDS
 
-    huge = params.get_walltime(75, 1000, 10000000, "cpp:omp:baseline-cpp:baseline-omp", 6)
+    huge = params.get_walltime(75, 1000, 1000000, "cpp:omp:baseline-cpp:baseline-omp", 1000)
     assert params.hms_to_seconds(huge) == params.MAX_WALLTIME_SECONDS
 
 
@@ -69,12 +69,10 @@ def test_pack_boundaries_match_old_values():
     }
 
 
-@pytest.mark.parametrize("old,new", [
-    ("1h", "small"), ("2h", "medium"), ("4-8h", "large"), ("10-20h", "extra"),
-])
-def test_old_pack_names_are_hidden_aliases(old, new):
-    assert params.resolve_pack_name(old) == new
-    assert params.resolve_pack_name(new) == new
+@pytest.mark.parametrize("old", ["1h", "2h", "4-8h", "10-20h"])
+def test_old_pack_names_are_no_longer_accepted(old):
+    with pytest.raises(SystemExit):
+        params.resolve_pack_name(old)
 
 
 @pytest.mark.parametrize("walltime,expected_pack", [
@@ -85,6 +83,30 @@ def test_old_pack_names_are_hidden_aliases(old, new):
 ])
 def test_pack_of_walltime(walltime, expected_pack):
     assert params.pack_of_walltime(walltime) == expected_pack
+
+
+# ── stress pack ─────────────────────────────────────────────────────────
+
+def test_stress_pack_resolves_and_is_not_a_walltime_bucket():
+    assert params.resolve_pack_name("stress") == params.STRESS_PACK
+    assert params.STRESS_PACK not in params.PACKS
+
+
+def test_stress_params_file_is_the_single_large_configuration():
+    states, durations, timesteps = params.load_benchmark_params(params.STRESS_PARAMS_FILE)
+    assert states == [100]
+    assert durations == [10000]
+    assert timesteps == [10000000]
+
+
+def test_manifest_build_jobs_stress_pack_ignores_walltime_bucketing():
+    jobs, skipped = manifestlib.build_jobs("dummy", ["cuda"], "stress", "gpu", 6)
+    assert skipped == 0
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert (job["states"], job["duration"], job["timesteps"]) == (100, 10000, 10000000)
+    assert job["flags"] == "gpu"
+    assert job["iterations"] == 2  # capped: timesteps >= 1_000_000
 
 
 # ── manifest generation ────────────────────────────────────────────────
@@ -112,6 +134,60 @@ def test_manifest_caps_iterations_for_large_timesteps():
             assert j["iterations"] == 2
         else:
             assert j["iterations"] == 6
+
+
+# ── per-toolchain manifest nesting ──────────────────────────────────────
+
+def test_manifest_path_flat_without_toolchain():
+    path = manifestlib.manifest_path("sysA", "small")
+    assert path == manifestlib.RUNS_DIR / "sysA" / "small.jsonl"
+
+
+def test_manifest_path_nests_under_toolchain_when_given():
+    path = manifestlib.manifest_path("sysA", "small", toolchain="gnu")
+    assert path == manifestlib.RUNS_DIR / "sysA" / "gnu" / "small.jsonl"
+
+
+def test_write_manifest_per_toolchain_does_not_clobber_sibling(tmp_path, monkeypatch):
+    monkeypatch.setattr(manifestlib, "RUNS_DIR", tmp_path)
+
+    gnu_jobs, _ = manifestlib.build_jobs("sysA", ["gnu"], "small", "cpp", 6)
+    cray_jobs, _ = manifestlib.build_jobs("sysA", ["cray"], "small", "cpp", 6)
+    manifestlib.write_manifest("sysA", "small", gnu_jobs, toolchain="gnu")
+    manifestlib.write_manifest("sysA", "small", cray_jobs, toolchain="cray")
+
+    assert manifestlib.read_manifest(tmp_path / "sysA" / "gnu" / "small.jsonl") == gnu_jobs
+    assert manifestlib.read_manifest(tmp_path / "sysA" / "cray" / "small.jsonl") == cray_jobs
+
+
+def test_select_toolchains_requires_explicit_choice_for_multi_toolchain_system(tmp_path):
+    path = _write_system(tmp_path, {
+        "name": "multi", "type": "cpu", "scheduler": "local",
+        "toolchains": {"gnu": {}, "cray": {}},
+    })
+    conf, _ = load_system(str(path))
+    with pytest.raises(SystemConfigError, match="multiple toolchains"):
+        select_toolchains(conf, None)
+    assert select_toolchains(conf, "gnu") == ["gnu"]
+    assert sorted(select_toolchains(conf, "all")) == ["cray", "gnu"]
+
+
+def test_status_all_manifests_finds_nested_toolchain_manifests(tmp_path, monkeypatch):
+    monkeypatch.setattr(status, "RUNS_DIR", tmp_path)
+
+    gnu_jobs, _ = manifestlib.build_jobs("sysA", ["gnu"], "small", "cpp", 6)
+    cray_jobs, _ = manifestlib.build_jobs("sysA", ["cray"], "small", "cpp", 6)
+    (tmp_path / "sysA" / "gnu").mkdir(parents=True)
+    (tmp_path / "sysA" / "cray").mkdir(parents=True)
+    with open(tmp_path / "sysA" / "gnu" / "small.jsonl", "w") as f:
+        f.writelines(json.dumps(j) + "\n" for j in gnu_jobs)
+    with open(tmp_path / "sysA" / "cray" / "small.jsonl", "w") as f:
+        f.writelines(json.dumps(j) + "\n" for j in cray_jobs)
+
+    found = dict(status.all_manifests("sysA"))
+    assert set(found) == {"gnu/small", "cray/small"}
+    assert found["gnu/small"] == gnu_jobs
+    assert found["cray/small"] == cray_jobs
 
 
 def test_manifest_multi_toolchain_doubles_jobs():

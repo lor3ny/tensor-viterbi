@@ -53,7 +53,9 @@ tensor-viterbi/
 │   └── TEMPLATE.yaml
 ├── walltimes.yaml               # (states, duration, timesteps) -> estimated walltime
 ├── benchmark_params.cfg         # The sweep grid (states/durations/timesteps lists)
-├── runs/                        # bench plan output: <system>/<pack>.jsonl manifests (gitignored)
+├── runs/                        # bench plan output: <system>/<pack>.jsonl manifests, or
+│                                 #   <system>/<toolchain>/<pack>.jsonl if the system defines
+│                                 #   more than one toolchain (gitignored)
 ├── benchlib/                    # Implementation behind the `bench` CLI
 ├── bench                        # Entry point: plan / run / status / check / likwid
 ├── run_one.sh / run_one.slurm   # Single shared job-execution script (local + SLURM)
@@ -195,6 +197,14 @@ for a one-shot run `bench run --system <system> --pack <pack> [backend flags]`
 is enough. The scheduler (`local` or `slurm`) is never a CLI flag — it comes
 from `systems/<system>.yaml`.
 
+If a system defines more than one toolchain (e.g. `epyc-7763-bigmem`, which
+has `cray`/`aocc`/`gnu`), each toolchain gets its own manifest —
+`runs/<system>/<toolchain>/<pack>.jsonl` — so planning `gnu` doesn't overwrite
+`cray`'s plan for the same pack. `bench run` then requires `--toolchain
+<tc>|all` on such systems, for the same reason `bench plan` already does:
+there's no single manifest to fall back to. Single-toolchain systems are
+unaffected — their manifests stay at the flat `runs/<system>/<pack>.jsonl`.
+
 **Backend flags** (CPU systems — pick one or more; GPU runs `--gpu` automatically):
 
 | Flag | Backend |
@@ -211,7 +221,7 @@ from `systems/<system>.yaml`.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--toolchain <tc>\|all` | system's only toolchain | Which toolchain(s) to run |
+| `--toolchain <tc>\|all` | system's only toolchain | Which toolchain(s) to run; **required** if the system defines more than one (each toolchain has its own manifest — see below) |
 | `--iterations N` | 6 | Benchmark repetitions per job (capped at 2 for T ≥ 1M); only used if planning implicitly |
 | `--only-failed` | off | Re-run only jobs whose output is incomplete/failed |
 | `--jobs A-B` | all | 1-indexed inclusive slice of the manifest |
@@ -244,20 +254,26 @@ walltimes (`walltimes.yaml`). `--pack` on `bench plan` (and optionally
 `bench run`) lets an evaluator pick how much wall-clock budget they want to
 spend without editing `benchmark_params.cfg`. Jobs outside the selected
 bucket are skipped and a skip count is printed. Buckets follow the natural
-gaps in the walltime table (nothing falls between 8h and 10h). Old pack names
-(`1h`/`2h`/`4-8h`/`10-20h`) still work as hidden aliases:
+gaps in the walltime table (nothing falls between 8h and 10h):
 
-| Pack | Old name | Walltime range | Jobs in default grid |
-|---|---|---|---|
-| `small` | `1h` | ≤ 1 hour | 30 |
-| `medium` | `2h` | 1–2 hours | 16 |
-| `large` | `4-8h` | 2–8 hours | 8 |
-| `extra` | `10-20h` | 8–20 hours | 26 |
+| Pack | Walltime range | Jobs in default grid |
+|---|---|---|
+| `small` | ≤ 1 hour | 36 |
+| `medium` | 1–2 hours | 6 |
+| `large` | 2–8 hours | 11 |
+| `extra` | 8–20 hours | 7 |
 
 There is no way to submit the full unfiltered grid in one invocation — run
 each pack separately if you want to cover everything. See
 [REPRODUCING.md](REPRODUCING.md) for per-job walltimes and slicing flags for
 serial local runs.
+
+There's also a `stress` pack: it isn't a walltime bucket over
+`benchmark_params.cfg` like the ones above, it's a dedicated single-point
+grid (`benchmark_params_stress.cfg`, `states=100`/`durations=10000`/
+`timesteps=10000000`) for GPU-only stress testing. `bench plan --pack stress`
+requires a GPU system and always runs `--gpu` — passing any other backend
+flag alongside it is an error.
 
 ### Running a single file directly
 
@@ -286,21 +302,23 @@ The grid of jobs planned by `bench plan` is controlled by
 ```
 states    = 10, 15, 25, 50, 75
 durations = 100, 250, 500, 1000
-timesteps = 10000, 100000, 1000000, 10000000
+timesteps = 10000, 100000, 1000000
 ```
 
 One job is submitted for every combination. Edit these lists before running to
 change the sweep:
 
 ```
-# Single large configuration
-states    = 100
-durations = 10000
-timesteps = 10000000
-
 # Add an intermediate timestep
 timesteps = 100000, 1000000
+
+# Drop the smaller states
+states = 50, 75
 ```
+
+`timesteps=10000000` is deliberately not in this grid — it only runs through
+the dedicated `stress` pack (`benchmark_params_stress.cfg`, `--pack stress`,
+GPU-only), not by editing this file.
 
 Use `--pack` (see above) to run a size-bounded subset of this grid without
 editing the config file.

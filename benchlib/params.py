@@ -2,11 +2,12 @@
 
 
 import sys
+from pathlib import Path
 
 import yaml
 
 from . import flags as flagslib
-from .paths import PARAMS_FILE, WALLTIMES_FILE
+from .paths import PARAMS_FILE, STRESS_PARAMS_FILE, WALLTIMES_FILE
 
 # A job's total walltime is never requested below this floor (scheduling
 # overhead noise) or above this ceiling (top of the "extra" pack) even if
@@ -14,8 +15,7 @@ from .paths import PARAMS_FILE, WALLTIMES_FILE
 MIN_WALLTIME_SECONDS = 60
 MAX_WALLTIME_SECONDS = 20 * 3600
 
-# New paper-terminology names, with the exact walltime boundaries the old
-# PACKS dict used (30m/1h/2h/4h/5h/6h/8h/10h/14h/16h/20h grid values, with a
+# Walltime buckets (30m/1h/2h/4h/5h/6h/8h/10h/14h/16h/20h grid values, with a
 # natural gap between 8h and 20h/10h so "large" and "extra" don't overlap).
 PACKS: dict[str, tuple[int, int]] = {
     "small":  (0,             1 * 3600),
@@ -24,27 +24,28 @@ PACKS: dict[str, tuple[int, int]] = {
     "extra":  (8 * 3600 + 1, 20 * 3600),
 }
 
-# Hidden aliases for backward compatibility with the old --pack values.
-PACK_ALIASES: dict[str, str] = {
-    "1h":     "small",
-    "2h":     "medium",
-    "4-8h":   "large",
-    "10-20h": "extra",
-}
+# The GPU-only stress-test pack: unlike PACKS above, it isn't a walltime
+# bucket over benchmark_params.cfg — it has its own dedicated grid
+# (benchmark_params_stress.cfg, loaded in full, no walltime filtering) and
+# is only ever run with --gpu. Kept out of PACKS so the normal
+# walltime-bucketing logic (pack_of_walltime, validate_grid_covered_by_packs)
+# stays untouched by it.
+STRESS_PACK = "stress"
 
 
 def resolve_pack_name(pack: str) -> str:
-    canonical = PACK_ALIASES.get(pack, pack)
-    if canonical not in PACKS:
-        valid = ", ".join(list(PACKS) + list(PACK_ALIASES))
+    if pack == STRESS_PACK:
+        return pack
+    if pack not in PACKS:
+        valid = ", ".join(list(PACKS) + [STRESS_PACK])
         print(f"Error: unknown pack '{pack}'. Valid packs: {valid}")
         sys.exit(1)
-    return canonical
+    return pack
 
 
-def load_benchmark_params() -> tuple[list[int], list[int], list[int]]:
+def load_benchmark_params(params_file: Path = PARAMS_FILE) -> tuple[list[int], list[int], list[int]]:
     params: dict[str, list[int]] = {}
-    for line in PARAMS_FILE.read_text().splitlines():
+    for line in params_file.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -53,7 +54,7 @@ def load_benchmark_params() -> tuple[list[int], list[int], list[int]]:
     try:
         return params["states"], params["durations"], params["timesteps"]
     except KeyError as e:
-        print(f"Error: benchmark_params.cfg is missing key {e}")
+        print(f"Error: {params_file.name} is missing key {e}")
         sys.exit(1)
 
 

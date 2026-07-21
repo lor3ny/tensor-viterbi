@@ -91,6 +91,12 @@ bench status --system my-machine                             # done/running/pend
 manifest entry (including its walltime estimate), so `bench run` doesn't
 take them at all; it just executes whatever was planned.
 
+If the system defines more than one toolchain (see the SLURM CPU walkthrough
+below), both `plan` and `run` need `--toolchain <tc>|all`: each toolchain
+gets its own manifest (`runs/<system>/<toolchain>/<pack>.jsonl`) so planning
+one doesn't overwrite another's plan for the same pack, and `run` needs to
+know which one to load.
+
 Re-running `bench run` is always safe: it skips jobs whose output is already
 complete. Use `--force` to re-run everything, `--only-failed` to retry only
 jobs whose output is missing/incomplete, `--jobs A-B` to run a 1-indexed
@@ -159,7 +165,7 @@ slurm:
 ```bash
 bench check --system xeon8480 --toolchain intel
 bench plan --system xeon8480 --toolchain intel --pack medium --cpp --omp --baseline
-bench run  --system xeon8480 --pack medium
+bench run  --system xeon8480 --toolchain intel --pack medium
 bench status --system xeon8480
 ```
 
@@ -212,18 +218,27 @@ rsync -av user@host-b:tensor-viterbi/results/ ./results/
 
 `--pack` buckets the `states × durations × timesteps` grid
 (`benchmark_params.cfg`) by estimated walltime (`walltimes.yaml`), so you can
-choose how much wall-clock budget to spend without editing the grid. Old
-pack names (`1h`/`2h`/`4-8h`/`10-20h`) still work as hidden aliases.
+choose how much wall-clock budget to spend without editing the grid.
 
-| Pack | Walltime range | Jobs (default grid) | Per-job walltime |
-|---|---|---|---|
-| `small`  | ≤ 1 hour   | 30 | 30 min or 1 hour |
-| `medium` | 1–2 hours  | 16 | 2 hours |
-| `large`  | 2–8 hours  | 8  | 4, 6, or 8 hours |
-| `extra`  | 8–20 hours | 26 | 10, 14, 16, or 20 hours |
+| Pack | Walltime range | Jobs (default grid) |
+|---|---|---|
+| `small`  | ≤ 1 hour   | 36 |
+| `medium` | 1–2 hours  | 6  |
+| `large`  | 2–8 hours  | 11 |
+| `extra`  | 8–20 hours | 7  |
 
 Run packs in order — `small` first to sanity-check the pipeline, then work
 up. There's no single invocation that runs the whole grid.
+
+There's also `stress`: a GPU-only pack with its own dedicated grid
+(`benchmark_params_stress.cfg`, one job at `states=100`/`durations=10000`/
+`timesteps=10000000`), not a walltime bucket of the default grid. It requires
+a GPU system and always runs `--gpu`:
+
+```bash
+bench plan --system a100 --pack stress
+bench run  --system a100 --pack stress
+```
 
 **Local runs are strictly serial** — one job at a time, in manifest order.
 `bench plan` prints a total estimated serial walltime for the pack; use:
