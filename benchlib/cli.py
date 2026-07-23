@@ -14,10 +14,12 @@ def _add_system_arg(p: argparse.ArgumentParser) -> None:
                     help="System name (systems/<name>.yaml) or a path to a system YAML file")
 
 
-def _add_toolchain_arg(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--toolchain", "-t", default=None,
-                    help="Toolchain key, or 'all' for every toolchain the system defines "
-                         "(defaults to the system's single toolchain if it only has one)")
+def _add_toolchain_arg(p: argparse.ArgumentParser, allow_all: bool = True) -> None:
+    help_text = "Toolchain key"
+    if allow_all:
+        help_text += ", or 'all' for every toolchain the system defines"
+    help_text += " (defaults to the system's single toolchain if it only has one)"
+    p.add_argument("--toolchain", "-t", default=None, help=help_text)
 
 
 def _add_backend_flag_args(p: argparse.ArgumentParser) -> None:
@@ -48,9 +50,9 @@ def _load_or_die(system_arg: str) -> dict:
     return conf
 
 
-def _resolve_toolchains_or_die(conf: dict, toolchain_arg: str | None) -> list[str]:
+def _resolve_toolchains_or_die(conf: dict, toolchain_arg: str | None, allow_all: bool = True) -> list[str]:
     try:
-        return select_toolchains(conf, toolchain_arg)
+        return select_toolchains(conf, toolchain_arg, allow_all=allow_all)
     except SystemConfigError as e:
         print(str(e))
         sys.exit(1)
@@ -66,8 +68,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_plan = sub.add_parser("plan", help="Build the job manifest and print a preview; runs nothing")
     _add_system_arg(p_plan)
-    _add_toolchain_arg(p_plan)
-    p_plan.add_argument("--pack", required=True,
+    _add_toolchain_arg(p_plan, allow_all=False)
+    p_plan.add_argument("--pack", "-p", required=True,
                          help="small|medium|large|extra|stress (stress is GPU-only and always "
                               "uses --gpu)")
     _add_backend_flag_args(p_plan)
@@ -75,8 +77,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser("run", help="Execute a manifest already produced by `bench plan`")
     _add_system_arg(p_run)
-    _add_toolchain_arg(p_run)
-    p_run.add_argument("--pack", default=None,
+    _add_toolchain_arg(p_run, allow_all=False)
+    p_run.add_argument("--pack", "-p", default=None,
                         help="Pack to run; if omitted, runs every pack already planned for this system")
     p_run.add_argument("--only-failed", action="store_true",
                         help="Re-run only jobs whose outputs exist but are incomplete/failed")
@@ -106,7 +108,7 @@ def _build_parser() -> argparse.ArgumentParser:
                               "system's default (see DEFAULT_TOOLCHAINS in each plot/*.py)")
     p_plot.add_argument("--system", default=None,
                          help="System key for plot_likwid.py, e.g. xeon8480 (requires --toolchain too)")
-    p_plot.add_argument("--toolchain", default=None,
+    p_plot.add_argument("--toolchain", "-t", default=None,
                          help="Toolchain key for plot_likwid.py, e.g. gnu (requires --system too)")
 
     return parser
@@ -115,7 +117,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def _plan(args) -> tuple[dict, str, list[dict], list]:
     """Builds and writes the manifest(s) for `bench plan`. Returns (conf, pack, jobs, paths)."""
     conf = _load_or_die(args.system)
-    toolchains = _resolve_toolchains_or_die(conf, args.toolchain)
+    toolchains = _resolve_toolchains_or_die(conf, args.toolchain, allow_all=False)
     multi_toolchain = len(conf["toolchains"]) > 1
     pack = params.resolve_pack_name(args.pack)
 
@@ -176,7 +178,7 @@ def cmd_run(args) -> None:
     # picked — same rule `plan`/`check`/`likwid` already enforce, so a
     # multi-toolchain system's several per-toolchain manifests can never be
     # run ambiguously.
-    toolchains = _resolve_toolchains_or_die(conf, args.toolchain)
+    toolchains = _resolve_toolchains_or_die(conf, args.toolchain, allow_all=False)
     multi_toolchain = len(conf["toolchains"]) > 1
 
     def compile_fn(toolchain: str) -> None:

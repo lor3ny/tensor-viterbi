@@ -200,10 +200,10 @@ from `systems/<system>.yaml`.
 If a system defines more than one toolchain (e.g. `epyc-7763-bigmem`, which
 has `cray`/`aocc`/`gnu`), each toolchain gets its own manifest —
 `runs/<system>/<toolchain>/<pack>.jsonl` — so planning `gnu` doesn't overwrite
-`cray`'s plan for the same pack. `bench run` then requires `--toolchain
-<tc>|all` on such systems, for the same reason `bench plan` already does:
-there's no single manifest to fall back to. Single-toolchain systems are
-unaffected — their manifests stay at the flat `runs/<system>/<pack>.jsonl`.
+`cray`'s plan for the same pack. `bench run` then requires `--toolchain <tc>`
+on such systems, for the same reason `bench plan` already does: there's no
+single manifest to fall back to. Single-toolchain systems are unaffected —
+their manifests stay at the flat `runs/<system>/<pack>.jsonl`.
 
 **Backend flags** (CPU systems — pick one or more; GPU runs `--gpu` automatically):
 
@@ -221,7 +221,7 @@ unaffected — their manifests stay at the flat `runs/<system>/<pack>.jsonl`.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--toolchain <tc>\|all` | system's only toolchain | Which toolchain(s) to run; **required** if the system defines more than one (each toolchain has its own manifest — see below) |
+| `--toolchain <tc>` | system's only toolchain | Which toolchain to run; **required** if the system defines more than one (each toolchain has its own manifest — see below) |
 | `--iterations N` | 6 | Benchmark repetitions per job (capped at 2 for T ≥ 1M); only used if planning implicitly |
 | `--only-failed` | off | Re-run only jobs whose output is incomplete/failed |
 | `--jobs A-B` | all | 1-indexed inclusive slice of the manifest |
@@ -237,8 +237,8 @@ bench run --system xeon8480 --toolchain intel --pack medium --cpp --omp --baseli
 # SLURM — GPU node (--gpu selected automatically)
 bench run --system a100 --pack small
 
-# SLURM — all toolchains for a node
-bench run --system epyc-7763-bigmem --toolchain all --pack large --cpp --omp
+# SLURM — one toolchain of a multi-toolchain node
+bench run --system epyc-7763-bigmem --toolchain gnu --pack large --cpp --omp
 
 # Local machine
 bench run --system workstation --pack small --cpp --omp

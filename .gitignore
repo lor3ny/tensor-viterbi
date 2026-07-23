@@ -60,18 +60,18 @@ src/tensor-viterbi
 # results/
 
 # generated data
-data/
+#data/
 
 # old plots
 plot_old/
 
 # bench plot / plot_all.py output (generated PNGs, not source)
-plot/bars/
-plot/heatmaps/
-plot/likwid/
+#plot/bars/
+#plot/heatmaps/
+#plot/likwid/
 
 # bench plan manifests (local orchestration state, not source)
-runs/
+#runs/
 
 # Python caches
 __pycache__/

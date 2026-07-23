@@ -202,7 +202,7 @@ def list_available_systems() -> list[str]:
     return sorted(p.stem for p in SYSTEMS_DIR.glob("*.yaml") if p.stem != "TEMPLATE")
 
 
-def select_toolchains(conf: dict, requested: str | None) -> list[str]:
+def select_toolchains(conf: dict, requested: str | None, allow_all: bool = True) -> list[str]:
     """Resolve --toolchain <tc>|all|None against a loaded system config."""
     available = conf["toolchains"]
     if requested is None or requested == "":
@@ -210,9 +210,15 @@ def select_toolchains(conf: dict, requested: str | None) -> list[str]:
             return list(available)
         raise SystemConfigError(
             f"System '{conf['name']}' defines multiple toolchains "
-            f"({', '.join(sorted(available))}); pass --toolchain <tc>|all."
+            f"({', '.join(sorted(available))}); pass --toolchain "
+            f"{'<tc>|all' if allow_all else '<tc>'}."
         )
     if requested == "all":
+        if not allow_all:
+            raise SystemConfigError(
+                "'all' is not supported for --toolchain here; pass one of "
+                f"{', '.join(sorted(available))}."
+            )
         if not available:
             raise SystemConfigError(f"No toolchains defined for system '{conf['name']}'.")
         return sorted(available)

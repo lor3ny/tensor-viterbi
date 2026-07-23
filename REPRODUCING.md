@@ -92,7 +92,7 @@ manifest entry (including its walltime estimate), so `bench run` doesn't
 take them at all; it just executes whatever was planned.
 
 If the system defines more than one toolchain (see the SLURM CPU walkthrough
-below), both `plan` and `run` need `--toolchain <tc>|all`: each toolchain
+below), both `plan` and `run` need `--toolchain <tc>`: each toolchain
 gets its own manifest (`runs/<system>/<toolchain>/<pack>.jsonl`) so planning
 one doesn't overwrite another's plan for the same pack, and `run` needs to
 know which one to load.
