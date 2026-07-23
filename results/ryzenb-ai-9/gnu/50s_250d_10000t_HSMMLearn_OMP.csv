@@ -1,4 +1,0 @@
-function,n_states,timesteps,max_duration,iteration,elapsed_s
-HSMMLearn_OMP,50,10000,250,0,5.359851
-HSMMLearn_OMP,50,10000,250,1,5.229357
-HSMMLearn_OMP,50,10000,250,2,5.244870
