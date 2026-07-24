@@ -484,13 +484,7 @@ def test_dispatch_local_stubbed(monkeypatch, tmp_path):
     assert kwargs["env"]["SYS_NAME"] == "sysA/gnu"
 
 
-# ── run_manifest: resume/skip, --force, --only-failed, --jobs slicing ──
-
-def test_parse_jobs_slice():
-    assert execution.parse_jobs_slice("2-4", 10) == (1, 4)
-    assert execution.parse_jobs_slice("5-", 10) == (4, 10)
-    assert execution.parse_jobs_slice("1-100", 10) == (0, 10)
-
+# ── run_manifest: resume/skip, --force, --only-failed ──
 
 def _fake_jobs(n):
     return [
@@ -514,7 +508,7 @@ def test_run_manifest_skips_done_reruns_failed_by_default(monkeypatch, tmp_path)
                          lambda job, conf, results_dir, nsys, ncu: dispatched.append(job["stem"]))
 
     execution.run_manifest(jobs, _conf(), "local", force=False, only_failed=False,
-                            jobs_slice=None, max_hours=None, nsys=False, ncu=False,
+                            nsys=False, ncu=False,
                             compile_fn=lambda tc: None)
 
     assert dispatched == ["job1", "job2"]  # job0 skipped (done), job1+job2 run
@@ -531,7 +525,7 @@ def test_run_manifest_only_failed_skips_pending(monkeypatch, tmp_path):
                          lambda job, conf, results_dir, nsys, ncu: dispatched.append(job["stem"]))
 
     execution.run_manifest(jobs, _conf(), "local", force=False, only_failed=True,
-                            jobs_slice=None, max_hours=None, nsys=False, ncu=False,
+                            nsys=False, ncu=False,
                             compile_fn=lambda tc: None)
 
     assert dispatched == ["job0"]
@@ -548,24 +542,10 @@ def test_run_manifest_force_reruns_done(monkeypatch, tmp_path):
                          lambda job, conf, results_dir, nsys, ncu: dispatched.append(job["stem"]))
 
     execution.run_manifest(jobs, _conf(), "local", force=True, only_failed=False,
-                            jobs_slice=None, max_hours=None, nsys=False, ncu=False,
+                            nsys=False, ncu=False,
                             compile_fn=lambda tc: None)
 
     assert dispatched == ["job0"]
-
-
-def test_run_manifest_jobs_slice(monkeypatch, tmp_path):
-    jobs = _fake_jobs(5)
-    monkeypatch.setattr(execution, "results_dir_for", lambda system, tc: tmp_path)
-    dispatched = []
-    monkeypatch.setattr(execution, "dispatch_local",
-                         lambda job, conf, results_dir, nsys, ncu: dispatched.append(job["stem"]))
-
-    execution.run_manifest(jobs, _conf(), "local", force=False, only_failed=False,
-                            jobs_slice="2-3", max_hours=None, nsys=False, ncu=False,
-                            compile_fn=lambda tc: None)
-
-    assert dispatched == ["job1", "job2"]  # 1-indexed inclusive slice [2,3] -> 0-indexed jobs[1:3]
 
 
 def test_run_manifest_compiles_once_per_toolchain(monkeypatch, tmp_path):
@@ -575,7 +555,7 @@ def test_run_manifest_compiles_once_per_toolchain(monkeypatch, tmp_path):
     compiled = []
 
     execution.run_manifest(jobs, _conf(), "local", force=False, only_failed=False,
-                            jobs_slice=None, max_hours=None, nsys=False, ncu=False,
+                            nsys=False, ncu=False,
                             compile_fn=lambda tc: compiled.append(tc))
 
     assert compiled == ["gnu"]  # all 3 jobs share toolchain "gnu" -> compiled once

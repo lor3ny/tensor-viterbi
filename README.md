@@ -224,8 +224,6 @@ their manifests stay at the flat `runs/<system>/<pack>.jsonl`.
 | `--toolchain <tc>` | system's only toolchain | Which toolchain to run; **required** if the system defines more than one (each toolchain has its own manifest — see below) |
 | `--iterations N` | 6 | Benchmark repetitions per job (capped at 2 for T ≥ 1M); only used if planning implicitly |
 | `--only-failed` | off | Re-run only jobs whose output is incomplete/failed |
-| `--jobs A-B` | all | 1-indexed inclusive slice of the manifest |
-| `--max-hours H` | none | Local only: stop once the cumulative walltime estimate would exceed H |
 | `--force` | off | Re-run jobs even if already complete |
 | `--nsys` / `--ncu` | off | Wrap runs with Nsight Systems / Nsight Compute (`--ncu` wins if both given) |
 

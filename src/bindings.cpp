@@ -72,7 +72,15 @@ static py::array_t<int> _run(
 }
 
 
-PYBIND11_MODULE(_native, m) {
+// NATIVE_MODULE_NAME is injected by CMake as <system>_<toolchain> (see
+// CMakeLists.txt) so each system/toolchain build produces a distinctly named
+// extension module instead of every build shipping an identical `_native`
+// symbol/file that Python's module cache can't tell apart.
+#ifndef NATIVE_MODULE_NAME
+#define NATIVE_MODULE_NAME _native
+#endif
+
+PYBIND11_MODULE(NATIVE_MODULE_NAME, m) {
     m.doc() = "Native C++/CUDA HSMM Viterbi decoders";
 
     m.def("decode_tensor_viterbi_cpp",

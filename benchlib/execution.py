@@ -129,31 +129,10 @@ def dispatch_slurm(job: dict, conf: dict, results_dir: Path, sbatch_flags: list[
 
 # ── Manifest driver (bench run) ──────────────────────────────────────────
 
-def parse_jobs_slice(spec: str, n: int) -> tuple[int, int]:
-    """'A-B' (1-indexed, inclusive) -> 0-indexed [start, end) for slicing."""
-    a, _, b = spec.partition("-")
-    lo = int(a)
-    hi = int(b) if b else n
-    lo = max(lo, 1)
-    hi = min(hi, n)
-    return lo - 1, hi
-
-
 def run_manifest(jobs: list[dict], conf: dict, scheduler: str, *, force: bool,
-                  only_failed: bool, jobs_slice: str | None, max_hours: float | None,
-                  nsys: bool, ncu: bool, compile_fn) -> None:
-    from .params import hms_to_seconds
-
-    if jobs_slice:
-        start, end = parse_jobs_slice(jobs_slice, len(jobs))
-        jobs = jobs[start:end]
-
+                  only_failed: bool, nsys: bool, ncu: bool, compile_fn) -> None:
     sbatch_flags = build_sbatch_flags(conf) if scheduler == "slurm" else []
     compiled: set[str] = set()
-
-    budget_seconds = max_hours * 3600 if max_hours is not None else None
-    spent_seconds = 0
-    remaining_after_budget: list[dict] = []
 
     for job in jobs:
         results_dir = results_dir_for(conf["name"], job["toolchain"])
@@ -170,13 +149,6 @@ def run_manifest(jobs: list[dict], conf: dict, scheduler: str, *, force: bool,
                 print(f"Skipping {job['stem']} ({job['toolchain']}): already complete")
                 continue
 
-        if scheduler == "local" and budget_seconds is not None:
-            job_seconds = hms_to_seconds(job["walltime"])
-            if spent_seconds + job_seconds > budget_seconds:
-                remaining_after_budget.append(job)
-                continue
-            spent_seconds += job_seconds
-
         if job["toolchain"] not in compiled:
             print(f"=== Compiling {conf['name']} / {job['toolchain']} ===")
             compile_fn(job["toolchain"])
@@ -190,9 +162,3 @@ def run_manifest(jobs: list[dict], conf: dict, scheduler: str, *, force: bool,
             dispatch_local(job, conf, results_dir, nsys, ncu)
         else:
             dispatch_slurm(job, conf, results_dir, sbatch_flags, nsys, ncu)
-
-    if remaining_after_budget:
-        print(f"--max-hours reached: {len(remaining_after_budget)} job(s) not started "
-              f"(re-run with a larger --max-hours, or without it, to continue):")
-        for job in remaining_after_budget:
-            print(f"  {job['toolchain']}/{job['stem']} (walltime {job['walltime']})")

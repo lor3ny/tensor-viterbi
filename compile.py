@@ -77,6 +77,8 @@ def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict,
     system_dir    = f"{system}_likwid" if likwid else system
     sys_name      = f"{system_dir}/{toolchain}"
     build_dir     = SCRIPT_DIR / "build" / system_dir / toolchain
+    hsmmlearn_dir     = SCRIPT_DIR / "hsmmlearn"     / "build" / system_dir / toolchain
+    hsmmlearn_omp_dir = SCRIPT_DIR / "hsmmlearn_omp" / "build" / system_dir / toolchain
 
     # For local systems only: if a uenv is required and we are not already inside
     # it, re-exec under it. Slurm systems handle uenv inside the srun script.
@@ -127,10 +129,19 @@ def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict,
 
     # hsmmlearn baselines: CPU only, compiled with the same toolchain to avoid
     # OMP runtime mismatches between the baseline and the native extension.
+    #
+    # Installed with --target into a directory keyed by system/toolchain
+    # rather than `pip install --force-reinstall` into the shared environment
+    # site-packages: the latter would make every recompile for a different
+    # system/toolchain silently uninstall and replace the previous build,
+    # so only the most-recently-compiled system/toolchain would ever be
+    # usable. Each combination now gets its own isolated, coexisting install
+    # tree; validation/baseline_paths.py puts the right one on sys.path
+    # at runtime based on the --system/--toolchain the benchmark was run with.
     hsmmlearn_build = ""
     if sys_type == "cpu":
         hsmmlearn_build = textwrap.dedent(f"""\
-            echo "Building hsmmlearn with CC={cc} CXX={cxx} ..."
+            echo "Building hsmmlearn baselines with CC={cc} CXX={cxx} ..."
             "$PYTHON_EXE" -m pip install --quiet wheel setuptools
 
             if [ "{int(likwid)}" -eq 1 ]; then
@@ -149,17 +160,22 @@ def compile_system(system: str, toolchain: str, sys_conf: dict, tc_conf: dict,
                 LIKWID_LIB=""
             fi
 
-            CC={cc} CXX={cxx} \\
-            USE_LIKWID=$USE_LIKWID \\
-            LIKWID_INCLUDE_DIR=$LIKWID_INC \\
-            LIKWID_LIB_DIR=$LIKWID_LIB \\
-            "$PYTHON_EXE" -m pip install --no-build-isolation --force-reinstall --no-deps "{SCRIPT_DIR}/hsmmlearn"
+            rm -rf "{hsmmlearn_dir}" "{hsmmlearn_omp_dir}"
+            mkdir -p "{hsmmlearn_dir}" "{hsmmlearn_omp_dir}"
 
             CC={cc} CXX={cxx} \\
             USE_LIKWID=$USE_LIKWID \\
             LIKWID_INCLUDE_DIR=$LIKWID_INC \\
             LIKWID_LIB_DIR=$LIKWID_LIB \\
-            "$PYTHON_EXE" -m pip install --no-build-isolation --force-reinstall --no-deps "{SCRIPT_DIR}/hsmmlearn_omp"
+            "$PYTHON_EXE" -m pip install --no-build-isolation --no-deps \\
+                --target "{hsmmlearn_dir}" "{SCRIPT_DIR}/hsmmlearn"
+
+            CC={cc} CXX={cxx} \\
+            USE_LIKWID=$USE_LIKWID \\
+            LIKWID_INCLUDE_DIR=$LIKWID_INC \\
+            LIKWID_LIB_DIR=$LIKWID_LIB \\
+            "$PYTHON_EXE" -m pip install --no-build-isolation --no-deps \\
+                --target "{hsmmlearn_omp_dir}" "{SCRIPT_DIR}/hsmmlearn_omp"
         """)
 
     script = f"""\

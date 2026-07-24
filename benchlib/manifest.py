@@ -84,13 +84,15 @@ def total_walltime_hours(jobs: list[dict]) -> float:
 
 def print_preview(system: str, pack: str, jobs: list[dict], scheduler: str) -> None:
     if pack == STRESS_PACK:
-        print(f"Pack selected: {pack} (GPU-only stress test, {STRESS_PARAMS_FILE.name})")
+        print(f"Pack selected : {pack} (GPU-only stress test, {STRESS_PARAMS_FILE.name})")
     else:
         lo, hi = PACKS[pack]
-        print(f"Pack selected: {pack} ({lo // 3600}h–{hi // 3600}h walltime range)")
-    print(f"Plan: {len(jobs)} job(s) for system '{system}'.")
+        print(f"Pack selected : {pack} ({lo // 3600}h–{hi // 3600}h walltime range)")
+    print(f"System        : {system}")
+    print(f"Jobs planned  : {len(jobs)}")
+
     if scheduler == "local":
         hours = total_walltime_hours(jobs)
+        print()
         print(f"Estimated total serial walltime (local, sequential): {hours:.1f}h")
-        print("  Local runs execute one job at a time. Use --jobs A-B to run a slice, "
-              "or --max-hours H to stop once the cumulative estimate would exceed H.")
+        print("  Local runs execute one job at a time.")

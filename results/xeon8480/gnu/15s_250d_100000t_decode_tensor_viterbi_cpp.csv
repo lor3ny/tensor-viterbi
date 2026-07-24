@@ -1,7 +1,0 @@
-function,n_states,timesteps,max_duration,iteration,elapsed_s
-decode_tensor_viterbi_cpp,15,100000,250,0,7.622707
-decode_tensor_viterbi_cpp,15,100000,250,1,7.620687
-decode_tensor_viterbi_cpp,15,100000,250,2,7.616483
-decode_tensor_viterbi_cpp,15,100000,250,3,7.619115
-decode_tensor_viterbi_cpp,15,100000,250,4,7.619862
-decode_tensor_viterbi_cpp,15,100000,250,5,7.620435

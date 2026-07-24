@@ -98,10 +98,8 @@ one doesn't overwrite another's plan for the same pack, and `run` needs to
 know which one to load.
 
 Re-running `bench run` is always safe: it skips jobs whose output is already
-complete. Use `--force` to re-run everything, `--only-failed` to retry only
-jobs whose output is missing/incomplete, `--jobs A-B` to run a 1-indexed
-slice of the manifest, and `--max-hours H` (local only) to run jobs in
-manifest order until the cumulative walltime estimate would exceed `H`.
+complete. Use `--force` to re-run everything, or `--only-failed` to retry only
+jobs whose output is missing/incomplete.
 
 ---
 
@@ -241,12 +239,7 @@ bench run  --system a100 --pack stress
 ```
 
 **Local runs are strictly serial** — one job at a time, in manifest order.
-`bench plan` prints a total estimated serial walltime for the pack; use:
-
-- `--jobs A-B` to run only a slice of the manifest (e.g. split a pack across
-  several terminal sessions or days: `--jobs 1-15` then `--jobs 16-30`), or
-- `--max-hours H` to run as much of the pack as fits in `H` hours and report
-  what's left.
+`bench plan` prints a total estimated serial walltime for the pack.
 
 SLURM runs don't have this constraint — each job is an independent `sbatch`
 submission the scheduler can run concurrently, subject to your allocation.

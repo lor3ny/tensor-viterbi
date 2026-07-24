@@ -82,10 +82,6 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Pack to run; if omitted, runs every pack already planned for this system")
     p_run.add_argument("--only-failed", action="store_true",
                         help="Re-run only jobs whose outputs exist but are incomplete/failed")
-    p_run.add_argument("--jobs", default=None, metavar="A-B",
-                        help="1-indexed inclusive slice of the manifest to run")
-    p_run.add_argument("--max-hours", type=float, default=None, metavar="H",
-                        help="Local only: stop once the cumulative walltime estimate would exceed H")
     p_run.add_argument("--force", action="store_true",
                         help="Re-run jobs even if their output is already complete")
     _add_profiler_args(p_run)
@@ -150,7 +146,9 @@ def _plan(args) -> tuple[dict, str, list[dict], list]:
     # --toolchain <tc>` actually executes (they don't run together).
     paths = []
     if multi_toolchain:
-        for tc in toolchains:
+        for i, tc in enumerate(toolchains):
+            if i > 0:
+                print()
             tc_jobs = [j for j in jobs if j["toolchain"] == tc]
             paths.append(manifest.write_manifest(conf["name"], pack, tc_jobs, toolchain=tc))
             print(f"--- toolchain: {tc} ---")
@@ -160,6 +158,7 @@ def _plan(args) -> tuple[dict, str, list[dict], list]:
         manifest.print_preview(conf["name"], pack, jobs, conf["scheduler"])
 
     if pack != params.STRESS_PACK:
+        print()
         print(f"Pack '{pack}': skipped {skipped} job(s) outside the selected walltime range"
               f"{' (summed across every planned toolchain)' if multi_toolchain else ''}.")
     return conf, pack, jobs, paths
@@ -167,6 +166,7 @@ def _plan(args) -> tuple[dict, str, list[dict], list]:
 
 def cmd_plan(args) -> None:
     conf, pack, jobs, paths = _plan(args)
+    print()
     for path in paths:
         print(f"Manifest written to {path}")
 
@@ -209,7 +209,6 @@ def cmd_run(args) -> None:
             execution.run_manifest(
                 jobs, conf, scheduler,
                 force=args.force, only_failed=args.only_failed,
-                jobs_slice=args.jobs, max_hours=args.max_hours,
                 nsys=args.nsys, ncu=args.ncu, compile_fn=compile_fn,
             )
 
