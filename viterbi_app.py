@@ -177,8 +177,6 @@ def main():
 
     # ── Baselines (produce the reference .npy from last iteration) ────────────
     if _run_baseline_cpp:
-        from validation.baseline_paths import configure_hsmmlearn
-        configure_hsmmlearn(args.system, args.toolchain)
         from validation.hsmmlearn_viterbi import load_sleep_model_hsmmlearn
         model, obs_seq = load_sleep_model_hsmmlearn(data_path)
         ref_states = _bench_baseline("HSMMLearn C++ (baseline)", "HSMMLearn_CPP",
@@ -187,8 +185,6 @@ def main():
         print(f"  {GRAY}reference{R}  saved → {WHITE}{ref_path}{R}\n")
 
     if _run_baseline_omp:
-        from validation.baseline_paths import configure_hsmmlearn_omp
-        configure_hsmmlearn_omp(args.system, args.toolchain)
         from validation.hsmmlearn_omp_viterbi import load_sleep_model_hsmmlearn as load_omp
         model_omp, obs_seq_omp = load_omp(data_path)
         ref_states_omp = _bench_baseline("HSMMLearn OMP (baseline)", "HSMMLearn_OMP",

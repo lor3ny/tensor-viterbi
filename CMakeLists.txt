@@ -15,15 +15,6 @@ if(NOT SYSTEM_NAME)
     message(FATAL_ERROR "SYSTEM_NAME must be set (e.g. -DSYSTEM_NAME=mi250x)")
 endif()
 
-# The extension module/file name must be unique per system+toolchain (not just
-# its directory) so that two builds loaded in the same interpreter can never
-# collide in Python's by-name module cache (sys.modules). SYSTEM_NAME is
-# "<system>/<toolchain>" (e.g. "xeon8480/gnu" or "xeon8480_likwid/intel");
-# sanitize it into a valid C identifier / file basename.
-string(REPLACE "/" "_" _native_module_name "${SYSTEM_NAME}")
-string(REPLACE "-" "_" _native_module_name "${_native_module_name}")
-set(NATIVE_MODULE_NAME "_native_${_native_module_name}")
-
 # --- LIKWID marker API (optional) ---
 option(USE_LIKWID "Enable LIKWID marker API instrumentation" OFF)
 if(USE_LIKWID)
@@ -128,18 +119,16 @@ execute_process(COMMAND ${PYTHON_EXECUTABLE} -c "import sysconfig; print(sysconf
 execute_process(COMMAND ${PYTHON_EXECUTABLE} -c "import pybind11; print(pybind11.get_include())" OUTPUT_VARIABLE PYBIND_INC OUTPUT_STRIP_TRAILING_WHITESPACE)
 
 # --- Extension module ---
-add_library(${NATIVE_MODULE_NAME} SHARED src/bindings.cpp ${NATIVE_SOURCES})
+add_library(_native SHARED src/bindings.cpp ${NATIVE_SOURCES})
 
-set_target_properties(${NATIVE_MODULE_NAME} PROPERTIES
+set_target_properties(_native PROPERTIES
     PREFIX ""
-    OUTPUT_NAME "${NATIVE_MODULE_NAME}"
+    OUTPUT_NAME "_native"
     SUFFIX ".so"
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/tensor_viterbi/viterbi/${SYSTEM_NAME}
 )
 
-target_compile_definitions(${NATIVE_MODULE_NAME} PRIVATE NATIVE_MODULE_NAME=${NATIVE_MODULE_NAME})
-
-target_compile_options(${NATIVE_MODULE_NAME} PRIVATE
+target_compile_options(_native PRIVATE
     # CXX Logic (Host Code)
     $<$<COMPILE_LANGUAGE:CXX>:
         $<$<CXX_COMPILER_ID:NVHPC>:-O3 -Ofast -tp=native -Wall>
@@ -160,27 +149,27 @@ target_compile_options(${NATIVE_MODULE_NAME} PRIVATE
 )
 
 if(BUILD_GPU AND GPU_PLATFORM STREQUAL "ROCM")
-    target_include_directories(${NATIVE_MODULE_NAME} BEFORE PRIVATE ${HIPIFY_OUT_DIR})
+    target_include_directories(_native BEFORE PRIVATE ${HIPIFY_OUT_DIR})
 endif()
 
-target_include_directories(${NATIVE_MODULE_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_include_directories(${NATIVE_MODULE_NAME} SYSTEM PRIVATE ${PYTHON_INC} ${PYBIND_INC})
+target_include_directories(_native PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(_native SYSTEM PRIVATE ${PYTHON_INC} ${PYBIND_INC})
 
 # For ROCm (clang-based): link with -fopenmp so clang picks up its own LLVM
 # OpenMP runtime (libomp, which provides __kmpc_fork_call etc.) rather than
 # the GCC/Cray libgomp found by find_package(OpenMP) for the CXX compiler.
 if(BUILD_GPU AND GPU_PLATFORM STREQUAL "ROCM")
-    target_link_options(${NATIVE_MODULE_NAME} PRIVATE -fopenmp)
-    target_link_libraries(${NATIVE_MODULE_NAME} PRIVATE hip::host)
+    target_link_options(_native PRIVATE -fopenmp)
+    target_link_libraries(_native PRIVATE hip::host)
 else()
-    target_link_libraries(${NATIVE_MODULE_NAME} PRIVATE OpenMP::OpenMP_CXX)
+    target_link_libraries(_native PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
 
 if(USE_LIKWID)
-    target_compile_definitions(${NATIVE_MODULE_NAME} PRIVATE LIKWID_PERFMON)
-    target_include_directories(${NATIVE_MODULE_NAME} SYSTEM PRIVATE ${LIKWID_INCLUDE_DIR})
-    target_link_libraries(${NATIVE_MODULE_NAME} PRIVATE ${LIKWID_LIB})
+    target_compile_definitions(_native PRIVATE LIKWID_PERFMON)
+    target_include_directories(_native SYSTEM PRIVATE ${LIKWID_INCLUDE_DIR})
+    target_link_libraries(_native PRIVATE ${LIKWID_LIB})
 endif()
 
 
