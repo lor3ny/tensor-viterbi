@@ -73,6 +73,9 @@ plot_old/
 # bench plan manifests (local orchestration state, not source)
 #runs/
 
+# bench run's cross-invocation lock (see benchlib/lock.py)
+runs/.bench_run.lock
+
 # Python caches
 __pycache__/
 .pytest_cache/

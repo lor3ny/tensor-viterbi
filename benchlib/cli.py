@@ -3,7 +3,7 @@
 import argparse
 import sys
 
-from . import compileflow, execution, flags as flagslib, likwid as likwidlib, manifest, params, status
+from . import compileflow, execution, flags as flagslib, likwid as likwidlib, lock, manifest, params, status
 from .paths import require_python_version, require_repo_root
 from .requirements import check_requirements
 from .systemsconf import SystemConfigError, load_system, select_toolchains
@@ -199,18 +199,24 @@ def cmd_run(args) -> None:
                       f"`bench plan --system {conf['name']} {plan_hint}--pack <pack>` first.")
                 sys.exit(1)
 
-        for pack in pack_names:
-            path = manifest.manifest_path(conf["name"], pack, tc_arg)
-            if not path.exists():
-                print(f"No manifest for '{tag}' pack '{pack}'. Run "
-                      f"`bench plan --system {conf['name']} {plan_hint}--pack {pack} [flags]` first.")
-                sys.exit(1)
-            jobs = manifest.read_manifest(path)
-            execution.run_manifest(
-                jobs, conf, scheduler,
-                force=args.force, only_failed=args.only_failed,
-                nsys=args.nsys, ncu=args.ncu, compile_fn=compile_fn,
-            )
+        if scheduler == "local":
+            lock.acquire(conf["name"], tc)
+        try:
+            for pack in pack_names:
+                path = manifest.manifest_path(conf["name"], pack, tc_arg)
+                if not path.exists():
+                    print(f"No manifest for '{tag}' pack '{pack}'. Run "
+                          f"`bench plan --system {conf['name']} {plan_hint}--pack {pack} [flags]` first.")
+                    sys.exit(1)
+                jobs = manifest.read_manifest(path)
+                execution.run_manifest(
+                    jobs, conf, scheduler,
+                    force=args.force, only_failed=args.only_failed,
+                    nsys=args.nsys, ncu=args.ncu, compile_fn=compile_fn,
+                )
+        finally:
+            if scheduler == "local":
+                lock.release()
 
 
 def cmd_status(args) -> None:
